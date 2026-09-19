@@ -11,11 +11,14 @@ context: |
   TypeScript/Vue may be used for UI. Historical Python/Top100/24h artifacts
   belong only to the old repository and are not architecture decisions here.
   Product stages: (1) research, (2) interactive prototype, (3) implementation.
-  Research stage was archived on 2026-09-19; prototype awaits user initiation.
+  The initial and detailed end-to-end blueprint research changes were archived
+  on 2026-09-19. The prototype still awaits explicit user initiation.
   Each stage gets its own OpenSpec change; do not mark future stages done prematurely.
   Target universe: top 200 USDT swaps by a defined ranking measure, adjustable
   rolling 12h quote turnover > 10,000,000 USDT; discovery about every 5s,
   incremental active-universe updates, independent long and short scores.
+  Latest research source is docs/blueprint/README.md (feature matrix, runtime,
+  scoring, OSS/data sources), superseding draft formulas in the initial report.
   Keep scoring auditable and test with out-of-sample data; score is not a trade.
   Read-only account access may be considered later; no order placement in research
   or prototype. Never inspect or expose local credentials or account information.

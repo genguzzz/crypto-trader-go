@@ -17,7 +17,7 @@
 2. **原型（另开 change）**：高保真桌面/手机交互原型，用固定脱敏样本驱动扫描、详情、仓位、异常/空/断线态；评审后再冻结可实现的数据契约。不访问真实账户。
 3. **实现（另开 change，按切片）**：优先 Go 模块化单体（OKX REST bootstrap + 公共 WS → 时序与质量控制 → 12h universe → feature/score → API → Vue/TS 页面），从只读行情走到只读仓位；回测/前瞻验证后才讨论独立执行系统。初版尽量不引入 Redis/微服务/完整交易框架；数据规模验证后再决定 SQLite 与 PostgreSQL 的边界。
 
-阶段 2 等用户评审/启动，不自动跨阶段执行。阶段 1 归档于 `openspec/changes/archive/2026-09-19-go-okx-personal-trading-research/`。以 `docs/go-okx-personal-trading-research-2026-09-19.md` 为阶段 1 结论源、`openspec/config.yaml` 为项目上下文。若报告与后来经实测/官方更新的资料冲突，更新 OpenSpec 决策并注明日期，不悄悄改写历史归档。
+阶段 1 初版和端到端研究蓝图均已归档，后者位于 `openspec/changes/archive/2026-09-19-end-to-end-trading-tool-blueprint/`。阶段 2 等用户评审/启动，不自动跨阶段执行。阶段 1 归档于 `openspec/changes/archive/2026-09-19-go-okx-personal-trading-research/`。以 `docs/blueprint/README.md` 及其逐功能/运行/评分/开源专题为阶段 1 的**最新**决策入口；`docs/go-okx-personal-trading-research-2026-09-19.md` 是初版历史研究、`openspec/config.yaml` 为项目上下文。若报告与后来经实测/官方更新的资料冲突，更新 OpenSpec 决策并注明日期，不悄悄改写历史归档。新蓝图中同分数模型的跨品种可比性、缺失特征的预验证 fallback 与线上/回放一致性约束优先于旧报告示例公式。
 
 ## 工作约束
 
