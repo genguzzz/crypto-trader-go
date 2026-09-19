@@ -1,0 +1,21 @@
+# Local credentials and account data
+.env
+.env.*
+!.env.example
+credentials*
+secrets*
+*.key
+*.pem
+*.p12
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Build and temporary artifacts
+/tmp/
+bin/
+dist/
+node_modules/
+.DS_Store
+*.log

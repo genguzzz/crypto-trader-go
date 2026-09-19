@@ -1,0 +1,30 @@
+schema: spec-driven
+
+# Shown to AI when creating OpenSpec artifacts (proposal, design, tasks, specs).
+context: |
+  Repository: crypto-trader-go, a clean, independent Go-first project at
+  /Users/gugen/Code/crypto-trader-go. The old cryptoBot repository is
+  read-only reference material; do not modify or import its code/secrets.
+  Current product direction (from 2026-09-19): a PERSONAL OKX USDT perpetual
+  scanner, explanatory long/short opportunity ranking, instrument detail charts,
+  and read-only position/exit analysis. The NEW platform is Go-first (backend);
+  TypeScript/Vue may be used for UI. Historical Python/Top100/24h artifacts
+  belong only to the old repository and are not architecture decisions here.
+  Product stages: (1) research, (2) interactive prototype, (3) implementation.
+  Research stage was archived on 2026-09-19; prototype awaits user initiation.
+  Each stage gets its own OpenSpec change; do not mark future stages done prematurely.
+  Target universe: top 200 USDT swaps by a defined ranking measure, adjustable
+  rolling 12h quote turnover > 10,000,000 USDT; discovery about every 5s,
+  incremental active-universe updates, independent long and short scores.
+  Keep scoring auditable and test with out-of-sample data; score is not a trade.
+  Read-only account access may be considered later; no order placement in research
+  or prototype. Never inspect or expose local credentials or account information.
+  Check OKX response code and field units against current official docs.
+
+rules:
+  proposal:
+    - State the stage and explicit non-goals.
+  design:
+    - State data-source provenance, field units, freshness, and failure handling.
+  tasks:
+    - Separate completed tasks for this stage from pending work in future changes.
