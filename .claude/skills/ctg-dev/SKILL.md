@@ -26,13 +26,14 @@ pkill -f 'bin/ctg -addr'; GOMEMLIMIT=160MiB nohup ./bin/ctg -addr 127.0.0.1:8686
 until grep -q 'bootstrap complete' data/server.log; do sleep 2; done   # 重启约 1 分钟
 curl -s localhost:8686/api/v1/health                                 # phase=live、stale=0
 ```
+上线：`deploy/deploy.sh`（约 30 秒，失败自动回滚）；`--status` 看日志，`--rollback` 回退；改了 compose 文件再跑 `--init`。服务器数据库是唯一真源，不要用本机库覆盖。
 前后端分开：`./bin/ctg -web=false` + `cd web && npm run dev`（Vite 代理 /api）。
 
 ## 验证页面（必须做）
 用 playwright-core 驱动本机 Chrome（`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`），打开页面等 4–5 秒后截图并检查 `pageerror`；桌面 1600×900 与手机 400×860 各看一次。不要用 Chrome `--headless --virtual-time-budget`（SSE 长连接会卡住）。
 
 ## 坑
-- 本机 shell 有 Surge 代理环境变量，Go 默认 Transport 会走它；NAS 上需 `CTG_PROXY`（OpenClash 需认证且 okx.com 被错误直连，见 docs/operations.md）。
+- 本机 shell 有 Surge 代理环境变量，Go 默认 Transport 会走它；old-server 直连 OKX 无需代理。无法直连的网络用 `CTG_PROXY`/`-doh`。
 - go.mod 要求 Go 1.25（modernc sqlite 依赖）。
 - 1m 内存是 1500 分钟环形缓冲，更早的只在 SQLite；图表查询走 DB + 内存合并。
 - OKX `/market/candles` 1m 只给最近 1440 根，更早用 `/market/history-candles`（每页 300，单独限频）。

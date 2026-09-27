@@ -1,0 +1,25 @@
+# crypto-trader-go on a server: a stock 2 MB runtime image + the static Go binary bind-mounted from
+# ./bin. Upgrades never rebuild an image — deploy.sh swaps ./bin/ctg and restarts the container.
+# Lives at /opt/ctg/docker-compose.yml on the server (next to bin/, data/, ctg.env).
+name: ctg
+services:
+  ctg:
+    image: gcr.io/distroless/static-debian12:nonroot   # CA certs + tzdata + nonroot user, nothing else
+    container_name: ctg
+    restart: unless-stopped
+    network_mode: host                                 # listens on 127.0.0.1:8686; host nginx proxies it
+    user: "65532:65532"
+    entrypoint: ["/app/ctg"]
+    command: ["-addr", "127.0.0.1:8686", "-db", "/data/ctg.db"]
+    env_file: [ctg.env]                                # CTG_AUTH=user:pass (optional CTG_PROXY), mode 600
+    environment:
+      GOMEMLIMIT: 180MiB
+      GOGC: "75"
+    volumes:
+      - ./bin:/app:ro                                  # the only thing replaced on upgrade
+      - ./data:/data                                   # SQLite + icon cache (settings/rules live in the DB)
+    mem_limit: 400m
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

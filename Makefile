@@ -1,5 +1,5 @@
 # crypto-trader-go: recorder + scanner (public OKX data only)
-.PHONY: web build test run arm64 clean
+.PHONY: web build test run linux deploy clean
 
 web:
 	cd web && npm ci --no-audit --no-fund && npm run build
@@ -15,9 +15,13 @@ test:
 run: build
 	./bin/ctg -addr 127.0.0.1:8686 -db data/ctg.db
 
-# Home NAS / N1 (iStoreOS, aarch64); pure-Go SQLite, no CGO.
-arm64: web
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o bin/ctg-linux-arm64 ./cmd/server
+# Static linux binary (pure-Go SQLite, no CGO) used by the server container.
+linux: web
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o bin/ctg-linux-amd64 ./cmd/server
+
+# Build, upload, hot-swap and health-check on old-server (see docs/operations.md).
+deploy:
+	deploy/deploy.sh
 
 clean:
 	rm -rf bin web/dist/assets web/dist/index.html
