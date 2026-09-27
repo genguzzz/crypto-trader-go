@@ -33,7 +33,7 @@
 * { box-sizing: border-box; }
 /* Pointer states: hover styles only exist for mouse (@media (hover: hover) in each component);
    touch screens get a press state instead and no grey tap flash. */
-html { -webkit-tap-highlight-color: transparent; }
+html { -webkit-tap-highlight-color: transparent; touch-action: pan-x pan-y; } /* no browser pinch / double-tap zoom: pinch belongs to the charts (they read touch events themselves) */
 @media (hover: none) {
   button:active, .chip:active, .fchip:active, .seg-i:active, .sel-trigger:active { filter: brightness(1.25); }
   .pressable:active, tbody tr:active, .card.clickable:active { background: var(--bg-2); }
