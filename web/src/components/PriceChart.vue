@@ -5,6 +5,7 @@ import { api, type Candle, type FlowBar } from '../api'
 import { chartTime, price as fmtPrice, usd, time as fmtTime } from '../fmt'
 import { baseChart, precisionFor } from './charts'
 import { Footprint, type FootBar } from './charts/footprint'
+import { LocateFixed } from 'lucide-vue-next'
 
 const props = defineProps<{ id: string; hasSpot: boolean }>()
 const bar = ref(localStorage.getItem('bar') || '15m')
@@ -67,16 +68,29 @@ async function load(fit = false) {
       spot = undefined
       chart.applyOptions({ leftPriceScale: { visible: false } })
     }
-    if (fit) {
-      if (layer.value === 'foot') {
-        // wide enough for numbers on PC; on a phone favour more bars (pinch to zoom in for numbers)
-        chart.timeScale().applyOptions({ barSpacing: Math.max(40, Math.min(72, (el.value?.clientWidth ?? 600) / 10)) })
-        chart.timeScale().scrollToRealTime()
-      } else chart.timeScale().fitContent()
-    }
+    if (fit) resetView()
+    requestAnimationFrame(() => { if (chart) axisWidth.value = chart.priceScale('right').width() })
     err.value = ''
   } catch (e: any) {
     err.value = e.message
+  }
+}
+
+// ---- reset: latest bars at a readable width, every price scale back to auto ----
+function resetView() {
+  if (!chart) return
+  const ts = chart.timeScale(), n = bars.value.length, w = el.value?.clientWidth ?? 600
+  chart.panes().forEach((_, i) => {
+    for (const id of ['right', 'left']) chart!.priceScale(id, i).applyOptions({ autoScale: true })
+  })
+  chart.priceScale('vol').applyOptions({ autoScale: true })
+  if (layer.value === 'foot') {
+    // wide enough for numbers on PC; on a phone favour more bars (pinch to zoom in for numbers)
+    ts.applyOptions({ barSpacing: Math.max(40, Math.min(72, w / 10)) })
+    ts.scrollToRealTime()
+  } else if (n) {
+    const show = Math.min(n, Math.max(40, Math.round(w / 7))) // ~7px per candle: bodies stay visible
+    ts.setVisibleLogicalRange({ from: n - show, to: n + 2 })
   }
 }
 
@@ -206,7 +220,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
       </label>
     </h3>
     <div class="wrap" :class="{ tall: layer !== 'k' }">
-      <div ref="el" class="chart"></div>
+      <div ref="el" class="chart" @dblclick="resetView"></div>
+      <button type="button" class="reset" title="回到最新、自动缩放（PC 也可双击图表）" aria-label="重置视图" :style="{ right: axisWidth + 6 + 'px' }" @click="resetView"><LocateFixed :size="15" /></button>
       <div class="legend tnum" v-if="shown">
         <span class="muted">{{ fmtTime(shown.c.t, true) }}</span>
         <span>开 <b>{{ fmtPrice(shown.c.o) }}</b></span><span>高 <b>{{ fmtPrice(shown.c.h) }}</b></span>
@@ -240,6 +255,11 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
 
 <style scoped>
 .wrap { position: relative; }
+.reset { all: unset; box-sizing: border-box; position: absolute; bottom: 34px; z-index: 4; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px;
+  background: rgba(17, 21, 28, .8); border: 1px solid var(--line-2); color: var(--text-2); cursor: pointer; }
+@media (hover: hover) { .reset:hover { color: var(--text-1); border-color: var(--accent); } }
+.reset:active { background: var(--bg-3); }
+.reset:focus-visible { outline: 2px solid var(--accent); }
 .chart { height: 340px; }
 .wrap.tall .chart { height: 450px; }
 h3 { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
