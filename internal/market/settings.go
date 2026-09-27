@@ -12,10 +12,11 @@ import (
 // Settings are the user-editable runtime parameters (settings page), persisted in SQLite.
 // Command-line flags only provide first-run defaults; saved settings take precedence.
 type Settings struct {
-	Threshold   float64  `json:"threshold"`   // 12h USDT turnover, strictly greater
-	TopN        int      `json:"topN"`        // pool cap
-	Categories  []string `json:"categories"`  // instCategory: 1 crypto, 3 stock/ETF, 4 commodity
-	DefaultRule string   `json:"defaultRule"` // rule used by default in the scanner
+	Threshold    float64  `json:"threshold"`    // 12h USDT turnover, strictly greater
+	TopN         int      `json:"topN"`         // pool cap
+	Categories   []string `json:"categories"`   // instCategory: 1 crypto, 3 stock/ETF, 4 commodity
+	DefaultRule  string   `json:"defaultRule"`  // rule used by default in the scanner
+	StorageCapMB int      `json:"storageCapMB"` // SQLite size cap (retention.go); 0 = default
 }
 
 var allCategories = []string{"1", "3", "4"}
@@ -45,7 +46,7 @@ func (e *Engine) Settings() Settings {
 			def = rs[0].ID
 		}
 	}
-	return Settings{Threshold: c.Threshold, TopN: c.TopN, Categories: cats, DefaultRule: def}
+	return Settings{Threshold: c.Threshold, TopN: c.TopN, Categories: cats, DefaultRule: def, StorageCapMB: int(c.StorageCap >> 20)}
 }
 
 func (e *Engine) loadSettings() {
@@ -63,6 +64,12 @@ func (e *Engine) loadSettings() {
 }
 
 func (s *Settings) validate(e *Engine) error {
+	if s.StorageCapMB == 0 {
+		s.StorageCapMB = int(e.conf().StorageCap >> 20) // older clients / saved settings without the field
+	}
+	if s.StorageCapMB < 512 || s.StorageCapMB > 100*1024 {
+		return fmt.Errorf("存储上限需在 512 MB ~ 100 GB 之间")
+	}
 	if s.Threshold < 100_000 || s.Threshold > 10_000_000_000 {
 		return fmt.Errorf("阈值需在 10 万 ~ 100 亿 USDT 之间")
 	}
@@ -96,6 +103,9 @@ func (e *Engine) applySettings(s Settings) (poolChanged, catsChanged bool) {
 	e.cfgMu.Lock()
 	old := e.cfg
 	e.cfg.Threshold, e.cfg.TopN, e.cfg.Categories = s.Threshold, s.TopN, cats
+	if s.StorageCapMB > 0 {
+		e.cfg.StorageCap = int64(s.StorageCapMB) << 20
+	}
 	if s.DefaultRule != "" {
 		e.defaultRule = s.DefaultRule
 	}
@@ -127,7 +137,11 @@ func (e *Engine) UpdateSettings(ctx context.Context, s Settings) (Settings, erro
 	if err := e.st.PutSetting("runtime", string(b)); err != nil {
 		return e.Settings(), err
 	}
+	oldCap := e.conf().StorageCap
 	poolChanged, catsChanged := e.applySettings(s)
+	if e.conf().StorageCap < oldCap {
+		e.requestRetention()
+	}
 	if catsChanged {
 		if err := e.refreshInstruments(ctx); err == nil {
 			e.updateSubscriptions()

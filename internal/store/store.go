@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS score_snapshots(kind TEXT NOT NULL, rule_id TEXT NOT 
   PRIMARY KEY(kind, rule_id, rule_version, ts, inst_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS watchlist(inst_id TEXT PRIMARY KEY, added_at INTEGER);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS inst_views(inst_id TEXT PRIMARY KEY, viewed_at INTEGER NOT NULL);
 `
 
 func Open(path string) (*Store, error) {
@@ -398,15 +399,106 @@ func (s *Store) SetWatch(id string, on bool) error {
 	return err
 }
 
-// Prune applies retention: 1m candles and OI samples older than `keep`; hourly data is kept.
-func (s *Store) Prune(keep time.Duration) error {
-	cut := time.Now().Add(-keep).UnixMilli()
-	for _, q := range []string{`DELETE FROM candles_1m WHERE ts<?`, `DELETE FROM oi_samples WHERE ts<?`, `DELETE FROM universe_snapshots WHERE ts<?`} {
-		if _, err := s.DB.Exec(q, cut); err != nil {
-			return err
-		}
+// ---- retention support ----
+
+// PutView records when an instrument's detail was last opened (retention tier "viewed").
+func (s *Store) PutView(id string, at int64) error {
+	_, err := s.DB.Exec(`INSERT OR REPLACE INTO inst_views VALUES(?,?)`, id, at)
+	return err
+}
+
+func (s *Store) Views() (map[string]int64, error) {
+	return s.idTimes(`SELECT inst_id, viewed_at FROM inst_views`)
+}
+
+// LastInPool returns each instrument's latest active-pool minute since `since` (universe snapshots).
+func (s *Store) LastInPool(since int64) (map[string]int64, error) {
+	return s.idTimes(`SELECT inst_id, MAX(ts) FROM universe_snapshots WHERE ts>=? GROUP BY inst_id`, since)
+}
+
+func (s *Store) idTimes(q string, args ...any) (map[string]int64, error) {
+	rows, err := s.DB.Query(q, args...)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var ts int64
+		if err := rows.Scan(&id, &ts); err != nil {
+			return nil, err
+		}
+		out[id] = ts
+	}
+	return out, rows.Err()
+}
+
+// InstIDs lists the distinct instruments present in a per-instrument table (catches delisted ones).
+func (s *Store) InstIDs(table string) ([]string, error) {
+	rows, err := s.DB.Query(`SELECT DISTINCT inst_id FROM ` + table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// DeleteBefore removes one instrument's rows older than ts (primary-key range, cheap). `where` is an
+// optional extra condition (e.g. "settled=1").
+func (s *Store) DeleteBefore(table, instID string, ts int64, where string) (int64, error) {
+	q := `DELETE FROM ` + table + ` WHERE inst_id=? AND ts<?`
+	if where != "" {
+		q += ` AND ` + where
+	}
+	res, err := s.DB.Exec(q, instID, ts)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PruneUniverse drops pool-membership snapshots older than ts.
+func (s *Store) PruneUniverse(ts int64) error {
+	_, err := s.DB.Exec(`DELETE FROM universe_snapshots WHERE ts<?`, ts)
+	return err
+}
+
+// TableBytes returns the bytes of pages used by each table including its indexes (SQLite dbstat).
+func (s *Store) TableBytes() (map[string]int64, error) {
+	rows, err := s.DB.Query(`SELECT d.name, d.pgsize, COALESCE(m.tbl_name, d.name) FROM dbstat AS d
+		LEFT JOIN sqlite_schema AS m ON m.name=d.name WHERE d.aggregate=1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var name, tbl string
+		var n int64
+		if err := rows.Scan(&name, &n, &tbl); err != nil {
+			return nil, err
+		}
+		out[tbl] += n
+	}
+	return out, rows.Err()
+}
+
+// FileBytes returns the database file size and the part of it on the free list (reusable).
+func (s *Store) FileBytes() (total, free int64) {
+	var ps, pc, fc int64
+	s.DB.QueryRow(`PRAGMA page_size`).Scan(&ps)
+	s.DB.QueryRow(`PRAGMA page_count`).Scan(&pc)
+	s.DB.QueryRow(`PRAGMA freelist_count`).Scan(&fc)
+	return ps * pc, ps * fc
 }
 
 func (s *Store) Counts() map[string]int64 {

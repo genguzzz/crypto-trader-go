@@ -30,13 +30,13 @@ var bookCache = struct {
 // OrderBook fetches up to 400 levels per side via REST, cached ~800ms per instrument so many
 // open views don't multiply requests. Detail views poll it once per second.
 func (e *Engine) OrderBook(ctx context.Context, id string) (OrderBook, error) {
-	e.mu.RLock()
-	in := e.insts[id]
+	in := e.instFor(id)
 	ctVal := 0.0
 	if in != nil {
+		e.mu.RLock()
 		ctVal = in.CtVal
+		e.mu.RUnlock()
 	}
-	e.mu.RUnlock()
 	if in == nil || ctVal <= 0 {
 		return OrderBook{}, fmt.Errorf("unknown instrument or contract value")
 	}

@@ -7,6 +7,7 @@ export interface Row {
   active: boolean; rank?: number; turnover12h: number; provisional?: boolean; have: number
   last: number; values: Record<string, number> | null; pct: Record<string, number> | null
   scores?: Record<string, Score>; watch?: boolean; hasSpot: boolean; listTime: number; freshnessMs: number
+  eligible?: boolean
 }
 export interface Removed { instId: string; reason: string; at: number; turnover12h: number }
 export interface Coverage { eligible: number; ready: number; warming: number; stale: number; new: number; active: number }
@@ -22,7 +23,17 @@ export interface Rule {
 /** Level = [price, usdt notional, contracts] */
 export type BookLevel = [number, number, number]
 export interface OrderBook { instId: string; ts: number; receivedAt: number; ctVal: number; mid: number; bestBid: number; bestAsk: number; spreadBps: number; bids: BookLevel[]; asks: BookLevel[] }
-export interface Settings { threshold: number; topN: number; categories: string[]; defaultRule: string }
+export interface Settings { threshold: number; topN: number; categories: string[]; defaultRule: string; storageCapMB: number }
+/** One live OKX USDT-margined perpetual (search catalog; no history is fetched until opened). */
+export interface CatalogItem {
+  instId: string; category: string; listTime: number; preMarket?: boolean; recorded: boolean
+  active?: boolean; rank?: number; watch?: boolean; last: number; open24h: number
+}
+export interface TableUsage { name: string; table: string; bytes: number; budget: number; ages: string[]; tight: boolean }
+export interface Storage {
+  at: number; tookMs: number; capBytes: number; fileBytes: number; freeBytes: number; usedBytes: number
+  deleted: Record<string, number>; tables: TableUsage[]; tiers: Record<string, number>; tierNames: string[]; error?: string
+}
 export interface Meta { fields: Field[]; rules: Rule[]; settings: Settings; categories: Record<string, string> }
 export interface Candle { t: number; o: number; h: number; l: number; c: number; q: number; x: boolean }
 export interface Stats {
@@ -36,6 +47,7 @@ export interface InstrumentInfo {
   instId: string; category: string; spotId?: string; listTime: number; last: number; bid: number; ask: number; tickTs: number
   spotLast?: number; fundingRate: number; fundingTime: number; fundingIntervalH: number
   oiCcy: number; oiUsd: number; oiTs: number; row?: Row
+  watch: boolean; eligible: boolean; tier: string; syncing: boolean; syncMsg?: string
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -49,6 +61,8 @@ export const api = {
   meta: () => req<Meta>('/api/v1/meta'),
   universe: (scope = 'active') => req<Snapshot>(`/api/v1/universe?scope=${scope}`),
   instrument: (id: string) => req<InstrumentInfo>(`/api/v1/instruments/${encodeURIComponent(id)}`),
+  catalog: () => req<{ items: CatalogItem[] }>('/api/v1/catalog'),
+  storage: () => req<Storage | null>('/api/v1/storage'),
   candles: (id: string, bar: string, limit = 300, market = 'swap') =>
     req<Candle[]>(`/api/v1/candles?instId=${encodeURIComponent(id)}&bar=${bar}&limit=${limit}&market=${market}`),
   compare: (id: string, bar: string, limit = 300) =>

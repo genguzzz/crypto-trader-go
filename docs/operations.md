@@ -62,12 +62,12 @@ make test                      # go vet + go test -race + vue-tsc
 | `-db` / `CTG_DB` | `data/ctg.db` | SQLite 路径 |
 | `-threshold` / `-top` / `-categories` | 5,000,000 / 200 / 全部 | 仅首次运行默认值；之后以设置页保存的为准 |
 | `-replay-hours` | 336 | 规则历史回放深度（14 天） |
-| `-retain-1m` | 720h | 1m K 线与 OI 分钟样本保留期；1H、资金费、评分快照长期保留 |
+| `-storage-cap-mb` | 2048 | 仅首次运行默认的存储上限；之后以设置页“数据存储”为准。各类数据按合约分层保留，规则见 [架构 §3](architecture.md#3-关键算法摘要) |
 | `-web` | true | false 时只提供 API |
 | `CTG_PROXY` / `-doh` | — / off | 无法直连 OKX 的网络：出站 HTTP 代理（可带凭据）、DoH 解析 |
 | `GOMEMLIMIT` | compose 中 180MiB | 常驻约 175 MB；容器 `mem_limit: 400m` |
 
-全池 1m 约 60 MB/天；当前库约 450 MB。
+全池 1m 约 60 MB/天；淘汰任务每 30 分钟运行，把库控制在存储上限内（“设置 → 数据存储”看各表占用与生效保留期）。删除的空间在文件内复用，文件不会缩小。
 
 ## 排查
 

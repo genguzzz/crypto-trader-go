@@ -23,7 +23,7 @@ type Config struct {
 	TopN        int             // cap of the active pool
 	Categories  map[string]bool // instCategory filter; nil = all
 	ReplayHours int             // hourly replay depth for rule records
-	Retain1m    time.Duration   // SQLite retention of 1m candles / OI samples
+	StorageCap  int64           // bytes; SQLite size cap split across tables (retention.go)
 }
 
 type Row struct {
@@ -40,6 +40,7 @@ type Row struct {
 	Pct         map[string]float64     `json:"pct"`
 	Scores      map[string]rules.Score `json:"scores,omitempty"`
 	Watch       bool                   `json:"watch,omitempty"`
+	Eligible    bool                   `json:"eligible"` // in the recording universe (else: watched adhoc)
 	HasSpot     bool                   `json:"hasSpot"`
 	ListTime    int64                  `json:"listTime"`
 	Freshness   int64                  `json:"freshnessMs"` // now - last confirmed bar close
@@ -98,13 +99,17 @@ type Engine struct {
 	pub           *okx.WS
 	biz           *okx.WS
 
-	mu      sync.RWMutex
-	insts   map[string]*Inst
-	spotIDs map[string]bool
-	watch   map[string]bool
-	lastMin int64
-	removed map[string]Removed
-	prevAct map[string]float64
+	mu       sync.RWMutex
+	insts    map[string]*Inst
+	spotIDs  map[string]bool
+	watch    map[string]bool
+	catalog  map[string]okx.Instrument // every live USDT-margined linear swap (search)
+	tickers  map[string]okx.Ticker     // latest SWAP tickers (30s REST)
+	views    map[string]int64          // detail last opened (retention tier, adhoc streaming)
+	lastPool map[string]int64          // last decision minute in the active pool
+	lastMin  int64
+	removed  map[string]Removed
+	prevAct  map[string]float64
 
 	rmu   sync.RWMutex
 	rules map[string]*rules.Rule
@@ -129,11 +134,18 @@ type Engine struct {
 
 	trackMu    sync.Mutex
 	trackCache map[string]trackEntry
+
+	eff       atomic.Pointer[effAges]
+	retReport atomic.Pointer[RetentionReport]
+	retKick   chan struct{}
+	dbIDs     map[string]bool // instruments present in the DB (refreshed every 6h by retention)
+	dbIDsAt   time.Time
 }
 
 func New(cfg Config, rest *okx.REST, st *store.Store) *Engine {
 	e := &Engine{cfg: cfg, rest: rest, st: st, insts: map[string]*Inst{}, spotIDs: map[string]bool{},
-		watch: map[string]bool{}, removed: map[string]Removed{}, prevAct: map[string]float64{},
+		watch: map[string]bool{}, catalog: map[string]okx.Instrument{}, tickers: map[string]okx.Ticker{}, views: map[string]int64{},
+		lastPool: map[string]int64{}, retKick: make(chan struct{}, 1), removed: map[string]Removed{}, prevAct: map[string]float64{},
 		rules: map[string]*rules.Rule{}, barCh: make(chan store.InstBar, 20000), oiCh: make(chan store.OISample, 20000),
 		fdCh: make(chan store.FundingSample, 5000), subs: map[chan Event]bool{}, trackCache: map[string]trackEntry{}, started: time.Now()}
 	e.phase.Store("starting")
@@ -163,8 +175,15 @@ func (e *Engine) Start(ctx context.Context) error {
 			e.watch[id] = true
 		}
 	}
+	if v, err := e.st.Views(); err == nil {
+		e.views = v
+	}
+	if p, err := e.st.LastInPool(time.Now().Add(-PoolGrace).UnixMilli()); err == nil {
+		e.lastPool = p
+	}
 	go e.writer(ctx)
 	go e.bootstrap(ctx)
+	go e.retentionLoop(ctx)
 	return nil
 }
 
@@ -220,9 +239,15 @@ func (e *Engine) refreshInstruments(ctx context.Context) error {
 			e.spotIDs[s.InstID] = true
 		}
 	}
+	e.catalog = map[string]okx.Instrument{}
+	for _, i := range sw {
+		if catalogOK(i) {
+			e.catalog[i.InstID] = i
+		}
+	}
 	seen := map[string]bool{}
 	for _, i := range sw {
-		ok := i.State == "live" && i.SettleCcy == "USDT" && i.CtType == "linear" && i.RuleType != "pre_market"
+		ok := catalogOK(i) && i.RuleType != "pre_market"
 		if e.conf().Categories != nil && !e.conf().Categories[i.Category] {
 			ok = false
 		}
@@ -245,6 +270,9 @@ func (e *Engine) refreshInstruments(ctx context.Context) error {
 	for id, in := range e.insts {
 		if !seen[id] {
 			in.Eligible = false
+			if i, ok := e.catalog[id]; ok { // adhoc (search/watch): keep metadata current
+				in.Category, in.ListTime, in.CtVal = i.Category, i.ListTime, i.CtVal
+			}
 		}
 	}
 	return nil
@@ -625,10 +653,21 @@ func (e *Engine) onReconnect(downSince time.Time) {
 func (e *Engine) updateSubscriptions() {
 	e.mu.RLock()
 	ids := e.eligibleIDs()
+	now := time.Now().UnixMilli()
+	for id, in := range e.insts { // adhoc: watched or viewed recently
+		if !in.Eligible && e.recording(in, now) {
+			ids = append(ids, id)
+		}
+	}
 	snap := e.snap.Load()
 	tick := map[string]bool{}
 	for id := range e.watch {
 		tick[id] = true
+	}
+	for id, t := range e.views {
+		if now-t < RecordViewed.Milliseconds() {
+			tick[id] = true
+		}
 	}
 	for _, r := range snap.Rows {
 		if r.Active {
@@ -654,12 +693,12 @@ func (e *Engine) periodic(ctx context.Context) {
 	spotT := time.NewTicker(15 * time.Second)
 	swapT := time.NewTicker(30 * time.Second)
 	instT := time.NewTicker(5 * time.Minute)
-	pruneT := time.NewTicker(6 * time.Hour)
+	subT := time.NewTicker(5 * time.Minute) // drop adhoc streams whose view expired
 	priceT := time.NewTicker(2 * time.Second)
 	defer spotT.Stop()
 	defer swapT.Stop()
 	defer instT.Stop()
-	defer pruneT.Stop()
+	defer subT.Stop()
 	defer priceT.Stop()
 	for {
 		select {
@@ -674,10 +713,8 @@ func (e *Engine) periodic(ctx context.Context) {
 				e.updateSubscriptions()
 				e.backfillNew(ctx)
 			}
-		case <-pruneT.C:
-			if err := e.st.Prune(e.conf().Retain1m); err != nil {
-				log.Printf("prune: %v", err)
-			}
+		case <-subT.C:
+			e.updateSubscriptions()
 		case <-priceT.C:
 			e.broadcastPrices()
 		}
@@ -712,6 +749,7 @@ func (e *Engine) refreshTickers(ctx context.Context) {
 	}
 	e.mu.Lock()
 	for _, t := range ts {
+		e.tickers[t.InstID] = t
 		if in := e.insts[t.InstID]; in != nil && t.Ts > in.tickTs {
 			in.last, in.bid, in.ask, in.tickTs = t.Last, t.Bid, t.Ask, t.Ts
 		}

@@ -51,7 +51,7 @@ onUnmounted(() => clearInterval(timer))
       </div>
       <div class="panel">
         <h3>SQLite 记录 <InfoTip>
-          行数每分钟刷新一次。1m K 线与 OI 分钟样本保留 {{ s.config.retain1mDays }} 天；1H K 线、资金费、评分快照、规则长期保留。<br />
+          行数每分钟刷新一次。各类数据按合约分层保留，总大小受存储上限（{{ s.config.storageCapMB }} MB）约束，规则与占用见“设置 → 数据存储”；评分快照、规则长期保留。<br />
           全池 1m 约 60 MB/天。
         </InfoTip></h3>
         <table><tbody><tr v-for="(v, k) in s.db" :key="k"><td>{{ k }}</td><td class="num">{{ v?.toLocaleString() }}</td></tr></tbody></table>

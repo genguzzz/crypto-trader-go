@@ -65,8 +65,8 @@ const spread = computed(() => {
 })
 const statusText: Record<string, string> = { live: '实时', stale: '数据缺口，补洞中', warming: '预热中', new: '上市不足 12h' }
 async function toggleWatch() {
-  if (!row.value) return
-  await api.watch(props.id, !row.value.watch)
+  if (!info.value) return
+  await api.watch(props.id, !info.value.watch)
   load()
 }
 </script>
@@ -84,8 +84,10 @@ async function toggleWatch() {
           </div>
           <span class="tag" :class="row?.status === 'live' ? 'good' : 'warn'"><span class="dot" :class="row?.status === 'live' ? 'ok' : 'warn'"></span>{{ statusText[row?.status || ''] || '未知' }}</span>
           <span class="tag info" v-if="row?.active">活跃 #{{ row.rank }}</span>
-          <span class="tag" v-else title="未达 12h 阈值或数据不全">非活跃</span>
-          <button class="watch" :class="{ on: row?.watch }" @click="toggleWatch">{{ row?.watch ? '★ 已自选' : '☆ 自选' }}</button>
+          <span class="tag" v-else-if="info.eligible" title="未达 12h 阈值或数据不全">非活跃</span>
+          <span class="tag" v-else title="不在全池录制范围（类别未选或盘前）：查看期间实时录制，加自选后长期保留">未录制</span>
+          <span class="tag info" v-if="info.syncing" :title="info.syncMsg">同步历史中</span>
+          <button class="watch" :class="{ on: info.watch }" @click="toggleWatch">{{ info.watch ? '★ 已自选' : '☆ 自选' }}</button>
         </div>
 
         <div class="h-price">

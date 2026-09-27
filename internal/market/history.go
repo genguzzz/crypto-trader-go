@@ -7,12 +7,11 @@ import (
 	"sort"
 	"sync/atomic"
 	"time"
-
-	"crypto-trader-go/internal/store"
 )
 
 // HistoryDays of 1m candles backfilled (SQLite only) for instruments that were in the pool during
-// the replay window, plus watchlist and current pool — used by charts and future research.
+// the replay window, plus watchlist and current pool — used by charts and future research. The
+// actual depth per instrument is capped by its retention tier (retention.go).
 const HistoryDays = 7
 
 // deepHistory pages /market/history-candles backwards from the earliest stored 1m bar down to
@@ -54,9 +53,6 @@ func (e *Engine) deepHistory(ctx context.Context, cands []string) {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	now := time.Now().UnixMilli()
-	floor := now/minuteMs*minuteMs - int64(HistoryDays)*24*hourMs
-	want := HistoryDays * 1440
 	var done, bars atomic.Int64
 	start := time.Now()
 	e.historyMsg.Store(fmt.Sprintf("1m 回补 0/%d 个合约", len(ids)))
@@ -65,36 +61,15 @@ func (e *Engine) deepHistory(ctx context.Context, cands []string) {
 			d := done.Add(1)
 			e.historyMsg.Store(fmt.Sprintf("1m 回补 %d/%d 个合约（已写 %d 根，%s）", d, len(ids), bars.Load(), time.Since(start).Round(time.Second)))
 		}()
+		// depth follows the retention tier (pool/watch 7 days, others less) so it never fights eviction
 		e.mu.RLock()
-		lt := e.insts[id].ListTime
+		keep := e.keep1mFor(e.tierOf(id, time.Now().UnixMilli()))
 		e.mu.RUnlock()
-		lo := max(floor, lt)
-		earliest, n, err := e.st.Span("candles_1m", id, lo)
-		if err != nil || (n >= want*99/100) || (earliest > 0 && earliest <= lo+minuteMs && n > 0) {
-			return
+		n, err := e.historyFill(ctx, id, keep, false)
+		if err != nil {
+			log.Printf("history %s: %v", id, err)
 		}
-		after := earliest
-		if after == 0 {
-			after = now
-		}
-		for after > lo {
-			cs, err := e.rest.HistoryCandles(ctx, id, "1m", after, 300)
-			if err != nil || len(cs) == 0 {
-				return
-			}
-			batch := make([]store.InstBar, 0, len(cs))
-			for _, c := range cs {
-				if c.Confirmed && c.Ts >= lo {
-					batch = append(batch, store.InstBar{InstID: id, Bar: store.Bar{Ts: c.Ts, O: c.O, H: c.H, L: c.L, C: c.C, Vol: c.Vol, VolCcy: c.VolCcy, Quote: c.VolCcyQuote}})
-				}
-			}
-			if err := e.st.PutBars("candles_1m", batch); err != nil {
-				log.Printf("history %s: %v", id, err)
-				return
-			}
-			bars.Add(int64(len(batch)))
-			after = cs[len(cs)-1].Ts
-		}
+		bars.Add(int64(n))
 	})
 	e.historyMsg.Store(fmt.Sprintf("完成：%d 个合约近 %d 天 1m K 线，新写入 %d 根，用时 %s", len(ids), HistoryDays, bars.Load(), time.Since(start).Round(time.Second)))
 	log.Printf("deep history: %d instruments, %d bars in %s", len(ids), bars.Load(), time.Since(start).Round(time.Second))

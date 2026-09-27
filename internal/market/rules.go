@@ -114,11 +114,11 @@ func (e *Engine) DeleteRule(id string) error {
 }
 
 func (e *Engine) SetWatch(id string, on bool) error {
-	e.mu.Lock()
-	if _, ok := e.insts[id]; !ok {
-		e.mu.Unlock()
+	in := e.instFor(id)
+	if in == nil && on {
 		return fmt.Errorf("unknown instrument")
 	}
+	e.mu.Lock()
 	if on {
 		e.watch[id] = true
 	} else {
@@ -129,6 +129,9 @@ func (e *Engine) SetWatch(id string, on bool) error {
 		return err
 	}
 	e.updateSubscriptions()
+	if on {
+		e.Touch(id) // download history now; the watch tier keeps it
+	}
 	e.rescore()
 	return nil
 }
