@@ -5,7 +5,7 @@
 | 项 | 值 |
 |---|---|
 | 地址 | https://ctg.gugenzzz.top（暂无登录，公开可访问；登录见待办） |
-| 机器 | zouter（`root@zouter.gugenzzz.top`，Debian 12，1C/1G，x86_64，可直连 OKX） |
+| 机器 | zouter（本机 SSH 别名 `zouter`，地址只在 `~/.ssh/config` 与 GitHub Secrets 中；Debian 12，1C/1G，x86_64，可直连 OKX） |
 | 进程 | Docker 容器 `ctg`（compose 项目 `/opt/ctg`），`network_mode: host`，监听 `127.0.0.1:8686` |
 | 入口 | nginx stream 按 SNI 默认把 `*.gugenzzz.top` 送到 `127.0.0.1:8444` → `/etc/nginx/conf.d/gateway-ctg.conf` 反代到 8686（SSE 关缓冲）；80 跳 443；证书为已有 `*.gugenzzz.top` 通配符 |
 | DNS | Cloudflare `ctg.gugenzzz.top` A/AAAA → zouter，灰云直连 |
@@ -21,7 +21,15 @@
 └── data/                # 属主 65532（容器 nonroot 用户）
 ```
 
-## 更新代码到线上（日常）
+## 自动部署（GitHub Actions）
+
+push 到 `main`（纯文档改动除外）→ `.github/workflows/deploy.yml`：测试（vet / race / typecheck）→ 构建 → `deploy/deploy.sh` 热替换 → 公网健康检查。失败时脚本自动回滚到上一版。也可手动触发：`gh workflow run deploy`，查看：`gh run list -w deploy`、`gh run watch`。
+
+- 服务器地址、专用部署私钥、主机公钥只存在 GitHub Secrets（`DEPLOY_HOST` / `DEPLOY_SSH_KEY` / `DEPLOY_KNOWN_HOSTS`），日志里自动打码；仓库为私有。
+- 一次性配置（在能 SSH 到服务器的机器上）：`deploy/setup-ci.sh`；吊销：`deploy/setup-ci.sh --revoke`。
+- 适合云端会话：改代码 → `make test` → push → `gh run watch` → 访问线上验证，全程不需要 SSH。
+
+## 手动部署（本机）
 
 ```bash
 deploy/deploy.sh               # 构建前端 + linux/amd64 二进制 → 上传 → 替换 → 重启容器 → 健康检查（失败自动回滚）

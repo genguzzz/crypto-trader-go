@@ -1,0 +1,68 @@
+# Push to main → test → build → hot-swap the binary on the server (deploy/deploy.sh).
+# Server address, SSH key and host key live only in GitHub Secrets (masked in logs):
+#   DEPLOY_HOST         server hostname or IP (no user)
+#   DEPLOY_SSH_KEY      private key of the dedicated deploy key (ed25519)
+#   DEPLOY_KNOWN_HOSTS  ssh-keyscan output of the server
+# One-time setup from a machine that can SSH to the server: deploy/setup-ci.sh
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'research/**', 'openspec/**', '.claude/**']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: cd web && npm ci
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: cd web && npm run typecheck
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: cd web && npm ci
+      - name: Configure SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf 'Host zouter\n  HostName %s\n  User root\n  IdentityFile ~/.ssh/deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ConnectTimeout 15\n' "$DEPLOY_HOST" > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+      - name: Deploy (build, upload, swap, restart, health-check, auto-rollback)
+        run: deploy/deploy.sh
+      - name: Public check
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS -m 5 https://ctg.gugenzzz.top/api/v1/health >/dev/null; then echo "public endpoint OK"; exit 0; fi
+            sleep 3
+          done
+          echo "public endpoint not reachable"; exit 1
+      - if: always()
+        run: rm -f ~/.ssh/deploy_key ~/.ssh/config
