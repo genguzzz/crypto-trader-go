@@ -94,7 +94,7 @@ async function save() {
         <span>默认评分规则（扫描页/详情页默认使用）</span>
         <USelect v-model="s.defaultRule" :options="ruleOptions()" width="320px" aria-label="默认规则" />
       </label>
-      <table>
+      <div class="table-scroll"><table>
         <thead><tr><th>规则</th><th>多头权重</th><th>空头权重</th><th>点差门槛</th><th></th></tr></thead>
         <tbody>
           <tr v-for="r in store.meta?.rules || []" :key="r.id">
@@ -105,7 +105,7 @@ async function save() {
             <td><RouterLink :to="`/rules/${r.id}`">编辑 / 战绩 →</RouterLink></td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </div>
 
     <div class="actions">

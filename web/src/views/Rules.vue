@@ -156,7 +156,7 @@ const H = (h: number) => `${h}h`
           <label>点差门槛 (bps，0=不限) <input type="number" step="1" min="0" v-model.number="draft.gates.maxSpreadBps" /></label>
           <label class="full">说明 <input v-model="draft.description" /></label>
         </div>
-        <table class="weights">
+        <div class="table-scroll"><table class="weights">
           <thead><tr><th>字段</th><th class="num">多头权重</th><th class="num">空头权重</th><th class="hide-sm">定义</th></tr></thead>
           <tbody>
             <tr v-for="f in scorable" :key="f.key">
@@ -166,7 +166,7 @@ const H = (h: number) => `${h}h`
               <td class="muted small hide-sm wrap">{{ f.desc }}</td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
         <div class="actions">
           <button class="primary" @click="save(false)">保存为 {{ cur.id }} v{{ cur.version + 1 }}</button>
           <input v-model="newId" placeholder="新规则 ID，如 my-rule" />
@@ -185,9 +185,10 @@ const H = (h: number) => `${h}h`
 .item { display: block; padding: 6px 8px; border-radius: 6px; color: var(--text); }
 .item.on, .item:hover { background: var(--panel2); }
 .small { font-size: 11px; }
-.main { display: grid; gap: 12px; min-width: 0; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .desc { margin: 0; }
-.tables { display: grid; gap: 10px; overflow-x: auto; }
+.tables { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.tables > div { overflow-x: auto; }
 .kh { font-weight: 600; margin: 6px 0 2px; }
 .cum { height: 180px; margin-top: 8px; }
 tr.empty td:not(:first-child):not(:last-child) { color: transparent; }
@@ -199,5 +200,5 @@ tr.empty td:nth-child(2) { color: var(--muted); }
 .wrap { white-space: normal; }
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-@media (max-width: 900px) { .rules { grid-template-columns: 1fr; } .list { position: static; } .form { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .rules { grid-template-columns: minmax(0, 1fr); } .list { position: static; } .form { grid-template-columns: 1fr; } }
 </style>

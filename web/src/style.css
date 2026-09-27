@@ -78,10 +78,11 @@ button.on, .chip.on { background: var(--accent-bg); border-color: var(--accent);
 .panel { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
 .panel h3 { margin: 0 0 12px; font-size: var(--fs-lg); font-weight: 600; color: var(--text-1); }
 .panel h3 .hint, .panel-sub { font-size: var(--fs-sm); font-weight: 400; color: var(--text-3); }
-.page { padding: 16px; max-width: 1400px; margin: 0 auto; display: grid; gap: 12px; }
+.page { padding: 16px; max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .note { font-size: var(--fs-sm); color: var(--text-3); line-height: 1.6; }
 
 /* tables */
+.table-scroll { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
 table { border-collapse: collapse; width: 100%; }
 th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 th { color: var(--text-3); font-weight: 500; text-align: left; font-size: var(--fs-xs); letter-spacing: .2px; }
