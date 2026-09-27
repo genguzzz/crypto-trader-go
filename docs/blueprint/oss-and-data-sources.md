@@ -1,5 +1,7 @@
 # GitHub 开源复用、OKX 数据与第三方来源决策
 
+> **2026-09-26 修订：**本文部分假设已被公共接口实测修正（候选池规模、股票/商品永续、tickers 带宽、评分方向、preview 分、交付顺序等），冲突处以[蓝图修订](revision-2026-09-26.md)为准。
+
 > 调研日 2026-09-19。GitHub 的 `pushed_at`/星数会变、README 支持声明不是集成通过；以下未下载密钥/未实测 200 路或真实仓位。**默认依赖候选 ≠ 已安装依赖。** 许可摘要不构成法律意见，落地时需审阅原始 LICENSE 和NOTICE、锁版本、做安全评估。`gh search repos 'okx trading language:go'`、原 README/仓库 license/官方 API 互证；不把一个“支持 OKX”当作全部 USDT 永续功能可用。
 
 ## 1. 框架 vs SDK vs 独立适配器：实际怎么选
