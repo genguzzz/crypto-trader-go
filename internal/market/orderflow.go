@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"sync"
@@ -484,4 +485,20 @@ func mergeLevels(rows []store.FlowRow) ([][3]float64, float64) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i][0] < out[j][0] })
 	return out, step
+}
+
+// migrate runs one-time data fixes (flag in settings).
+func (e *Engine) migrate() {
+	// 2026-09-27: the first order-flow build failed to decode every OKX trade push (numeric seqId)
+	// and stored all-zero minutes; everything recorded before the fixed build is invalid.
+	const key, fixedAt = "migrated.orderflow-seqid", int64(1_790_526_600_000) // 2026-09-27 16:30 UTC, just after the fixed build went live
+	if _, done := e.st.Setting(key); done {
+		return
+	}
+	if _, err := e.st.DB.Exec(`DELETE FROM orderflow_1m WHERE ts < ?`, fixedAt); err != nil {
+		log.Printf("migrate %s: %v", key, err)
+		return
+	}
+	e.st.PutSetting(key, "1")
+	log.Printf("migrate %s: removed order-flow minutes recorded before the decode fix", key)
 }

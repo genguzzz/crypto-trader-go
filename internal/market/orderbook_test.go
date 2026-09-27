@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"crypto-trader-go/internal/okx"
-	"crypto-trader-go/internal/store"
 )
 
 func TestOrderBookUSDTNotional(t *testing.T) {
@@ -21,7 +19,7 @@ func TestOrderBookUSDTNotional(t *testing.T) {
 		}}})
 	}))
 	defer srv.Close()
-	st, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	st := openStore(t)
 	rest := okx.NewREST()
 	rest.BaseURL = srv.URL
 	e := New(Config{Threshold: 1, TopN: 1}, rest, st)

@@ -7,7 +7,6 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -27,7 +26,7 @@ func tradeMsg(id string, trades ...[3]any) okx.Message { // [ts ms, px, "buy"/"s
 }
 
 func TestTradesAggregatePerCompleteMinute(t *testing.T) {
-	st, _ := store.Open(filepath.Join(t.TempDir(), "f.db"))
+	st := openStore(t)
 	e := New(Config{Threshold: 1, TopN: 10}, okx.NewREST(), st)
 	id := "X-USDT-SWAP"
 	in := newInst(id)
@@ -81,7 +80,21 @@ func TestMergeLevelsBoundsLevelCount(t *testing.T) {
 // Bars fully covered by recorded trades use them; other ≥5m bars fall back to rubik taker volume;
 // partially recorded bars are never mixed.
 func TestOrderFlowMergesTradesAndRubik(t *testing.T) {
+	for try := 0; try < 3; try++ { // bars are aligned to the wall clock: redo if a 5m boundary passed mid-test
+		if orderFlowMerge(t) {
+			return
+		}
+	}
+	t.Fatal("clock kept crossing 5m boundaries")
+}
+
+func orderFlowMerge(t *testing.T) (settled bool) {
 	now := time.Now().UnixMilli()
+	defer func() {
+		if time.Now().UnixMilli()/(5*minuteMs) != now/(5*minuteMs) {
+			settled = false
+		}
+	}()
 	cur := now / (5 * minuteMs) * (5 * minuteMs)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var data [][]string
@@ -93,7 +106,7 @@ func TestOrderFlowMergesTradesAndRubik(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"code": "0", "data": data})
 	}))
 	defer srv.Close()
-	st, _ := store.Open(filepath.Join(t.TempDir(), "o.db"))
+	st := openStore(t)
 	rest := okx.NewREST()
 	rest.BaseURL = srv.URL
 	e := New(Config{Threshold: 1, TopN: 10}, rest, st)
@@ -114,6 +127,9 @@ func TestOrderFlowMergesTradesAndRubik(t *testing.T) {
 	for _, b := range resp.Bars {
 		by[b.T] = b
 	}
+	if time.Now().UnixMilli()/(5*minuteMs) != now/(5*minuteMs) {
+		return false
+	}
 	if b := by[full]; b.Src != "trades" || b.Buy != 500 {
 		t.Fatalf("recorded bar: %+v", b)
 	}
@@ -123,4 +139,5 @@ func TestOrderFlowMergesTradesAndRubik(t *testing.T) {
 	if _, ok := by[cur]; ok {
 		t.Fatal("forming bar without trades must be unknown")
 	}
+	return true
 }

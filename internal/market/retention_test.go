@@ -2,7 +2,6 @@ package market
 
 import (
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,10 +11,7 @@ import (
 
 func retentionEngine(t *testing.T, capBytes int64) (*Engine, *store.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "r.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := openStore(t)
 	e := New(Config{Threshold: 1, TopN: 10, StorageCap: capBytes}, okx.NewREST(), st)
 	e.phase.Store("live")
 	return e, st

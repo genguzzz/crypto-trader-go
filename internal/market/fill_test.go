@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,10 +39,7 @@ func fakeOKX(t *testing.T, last int64, requests *int) *httptest.Server {
 }
 
 func TestFillMinutesRepairsDeepGap(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := openStore(t)
 	last := time.Now().UnixMilli()/minuteMs*minuteMs - minuteMs
 	reqs := 0
 	srv := fakeOKX(t, last, &reqs)
@@ -51,9 +47,8 @@ func TestFillMinutesRepairsDeepGap(t *testing.T) {
 	rest := okx.NewREST()
 	rest.BaseURL = srv.URL
 	e := New(Config{Threshold: 1, TopN: 10}, rest, st)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go e.writer(ctx)
+	ctx := context.Background()
+	runWriter(t, e)
 	in := newInst("X-USDT-SWAP")
 	e.insts[in.ID] = in
 	for k := int64(0); k < 720; k++ {
