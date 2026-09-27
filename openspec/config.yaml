@@ -17,7 +17,11 @@ context: |
   Target universe: top 200 USDT swaps by a defined ranking measure, adjustable
   rolling 12h quote turnover > 10,000,000 USDT; discovery about every 5s,
   incremental active-universe updates, independent long and short scores.
-  Latest research source is docs/blueprint/README.md (feature matrix, runtime,
+  2026-09-26 evidence revision (docs/blueprint/revision-2026-09-26.md, probes in
+  research/poc/) supersedes older blueprint details: all contract categories
+  enter the pool, >10M 12h threshold bounds its size, no preset factor direction
+  (fact panel + user rules + out-of-sample record), I0 recorder first on home NAS/N1.
+  Earlier research source is docs/blueprint/README.md (feature matrix, runtime,
   scoring, OSS/data sources), superseding draft formulas in the initial report.
   Keep scoring auditable and test with out-of-sample data; score is not a trade.
   Read-only account access may be considered later; no order placement in research

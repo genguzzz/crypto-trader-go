@@ -1,0 +1,71 @@
+{
+ "bytes": 136570436,
+ "candleConfirmPerMinute": [
+  {
+   "barOpen": "16:29",
+   "confirmed": 473,
+   "lagMaxms": 1464,
+   "lagP50ms": 713,
+   "lagP95ms": 1361,
+   "of": 473
+  },
+  {
+   "barOpen": "16:30",
+   "confirmed": 473,
+   "lagMaxms": 1315,
+   "lagP50ms": 706,
+   "lagP95ms": 1282,
+   "of": 473
+  },
+  {
+   "barOpen": "16:31",
+   "confirmed": 473,
+   "lagMaxms": 1419,
+   "lagP50ms": 712,
+   "lagP95ms": 1183,
+   "of": 473
+  },
+  {
+   "barOpen": "16:32",
+   "confirmed": 473,
+   "lagMaxms": 1364,
+   "lagP50ms": 703,
+   "lagP95ms": 1188,
+   "of": 473
+  }
+ ],
+ "channels": {
+  "candle1m": {
+   "instrumentsSeen": 473,
+   "intervalP50ms": 2898,
+   "intervalP95ms": 10311,
+   "messages": 26738
+  },
+  "funding-rate": {
+   "instrumentsSeen": 473,
+   "intervalP50ms": 51026,
+   "intervalP95ms": 80011,
+   "messages": 2423
+  },
+  "open-interest": {
+   "instrumentsSeen": 473,
+   "intervalP50ms": 6851,
+   "intervalP95ms": 15973,
+   "messages": 16325
+  },
+  "tickers": {
+   "instrumentsSeen": 473,
+   "intervalP50ms": 230,
+   "intervalP95ms": 1006,
+   "messages": 353080
+  }
+ },
+ "errors": null,
+ "events": {
+  "business-candle1m:subscribe": 473,
+  "public-funding:subscribe": 473,
+  "public-oi:subscribe": 473,
+  "public-tickers:subscribe": 473
+ },
+ "instruments": 473
+}
