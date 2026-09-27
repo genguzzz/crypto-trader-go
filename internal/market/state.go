@@ -51,6 +51,11 @@ type Inst struct {
 	provTurnover float64 // 5m-bootstrap estimate of 12h turnover
 	backfilled   bool
 	gapQueuedAt  int64
+
+	// on-demand sync (detail opened / watched; see catalog.go)
+	syncing  bool
+	syncedAt int64
+	syncMsg  string
 }
 
 func newInst(id string) *Inst {

@@ -30,6 +30,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/meta", s.meta)
 	mux.HandleFunc("GET /api/v1/universe", s.universe)
 	mux.HandleFunc("GET /api/v1/instruments/{id}", s.instrument)
+	mux.HandleFunc("GET /api/v1/catalog", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"items": s.E.Catalog()})
+	})
+	mux.HandleFunc("GET /api/v1/storage", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.E.Retention()) })
 	mux.HandleFunc("GET /api/v1/candles", s.candles)
 	mux.HandleFunc("GET /api/v1/compare", s.compare)
 	mux.HandleFunc("GET /api/v1/orderbook", func(w http.ResponseWriter, r *http.Request) {
@@ -209,6 +213,9 @@ func (s *Server) turnovers(w http.ResponseWriter, r *http.Request) {
 	snap := s.E.Snapshot()
 	rows := make([][4]any, 0, len(snap.Rows))
 	for _, x := range snap.Rows {
+		if !x.Eligible { // watched instrument outside the recording universe
+			continue
+		}
 		live := 0
 		if x.Status == "live" {
 			live = 1

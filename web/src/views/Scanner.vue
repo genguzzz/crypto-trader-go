@@ -7,7 +7,7 @@ import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka
 import SearchInput from '../components/ui/SearchInput.vue'
 import FilterChip from '../components/ui/FilterChip.vue'
 import ChipGroup from '../components/ui/ChipGroup.vue'
-import { api, type Row } from '../api'
+import { api, type Row, type CatalogItem } from '../api'
 import { usd, price, logPct, fundingH, catLabel, time, sign } from '../fmt'
 import InstrumentDetail from '../components/InstrumentDetail.vue'
 import ScoreChip from '../components/ScoreChip.vue'
@@ -110,12 +110,38 @@ function sortBy(k: string) {
   if (sortKey.value === k) sortDesc.value = !sortDesc.value
   else { sortKey.value = k; sortDesc.value = true }
 }
-function open(r: Row) {
+function open(r: { instId: string }) {
   if (narrow.value) router.push(`/instrument/${r.instId}`)
   else router.replace({ query: { ...route.query, sel: r.instId } })
 }
 async function toggleWatch(r: Row) {
   await api.watch(r.instId, !r.watch)
+}
+
+// Search also covers every live OKX USDT perpetual (catalog: metadata + 30s ticker, no history).
+// Matches outside the current list are shown below it; opening one downloads its history on demand.
+const catalog = ref<CatalogItem[]>([])
+let catalogAt = 0
+async function loadCatalog() {
+  if (Date.now() - catalogAt < 60_000) return
+  catalogAt = Date.now()
+  try { catalog.value = (await api.catalog()).items } catch { catalogAt = 0 }
+}
+watch(q, v => { if (v) loadCatalog() })
+const others = computed(() => {
+  const s = q.value.trim().toLowerCase()
+  if (!s || onlyWatch.value || onlyPass.value) return []
+  const listed = new Set((store.snap?.rows || []).map(r => r.instId))
+  return catalog.value
+    .filter(c => !listed.has(c.instId) && catSel.value.includes(c.category) && c.instId.toLowerCase().includes(s))
+    .sort((a, b) => Number(a.instId.toLowerCase().startsWith(s) ? 0 : 1) - Number(b.instId.toLowerCase().startsWith(s) ? 0 : 1) || a.instId.localeCompare(b.instId))
+    .slice(0, 50)
+})
+const chg24 = (c: CatalogItem) => (c.last > 0 && c.open24h > 0 ? Math.log(c.last / c.open24h) : null)
+async function watchOther(c: CatalogItem) {
+  await api.watch(c.instId, true)
+  catalogAt = 0
+  loadCatalog()
 }
 function livePrice(r: Row) {
   return store.prices[r.instId]?.[0] ?? r.last
@@ -200,7 +226,29 @@ const cols = [
             </tr>
           </tbody>
         </table>
-        <div class="note pad" v-if="!rows.length">暂无数据：{{ store.snap?.phase === 'live' ? '当前筛选下没有合约' : '正在建池…' }}</div>
+        <div class="note pad" v-if="!rows.length && !others.length">暂无数据：{{ store.snap?.phase === 'live' ? '当前筛选下没有合约' : '正在建池…' }}</div>
+        <template v-if="others.length">
+          <div class="oh">OKX 其他合约 <span class="muted tnum">{{ others.length }}</span>
+            <InfoTip>不在当前列表里的 OKX USDT 永续（全部类别，含盘前）。列表只保存合约信息和 30 秒一次的行情；<b>点开后</b>才按需下载近 7 天 1m、30 天 1H、持仓量与资金费历史，并在查看期间实时录制。加自选后长期保留（数据保留规则见“设置 → 数据存储”）。</InfoTip>
+          </div>
+          <table class="others">
+            <tbody>
+              <tr v-for="c in others" :key="c.instId" :class="{ sel: c.instId === selected }" @click="open(c)">
+                <td @click.stop="watchOther(c)" class="star" title="加入自选">☆</td>
+                <td>
+                  <CoinIcon :inst-id="c.instId" class="ic" />
+                  <b class="symb">{{ sym(c.instId) }}</b>
+                  <span class="tag" v-if="c.category !== '1'">{{ catLabel[c.category] || c.category }}</span>
+                  <span class="tag warn" v-if="c.preMarket">盘前</span>
+                  <span class="tag" v-if="!c.recorded" title="不在全池录制范围（类别未选或盘前），点开后按需下载">未录制</span>
+                  <span class="tag" v-else title="全池录制中，但不在活跃池">池外</span>
+                </td>
+                <td class="num px">{{ price(c.last) }}</td>
+                <td class="num" :class="sign(chg24(c) ?? 0)"><small class="muted">24h </small>{{ logPct(chg24(c)) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
       </div>
 
       <!-- mobile cards -->
@@ -221,6 +269,24 @@ const cols = [
             <span class="muted">{{ usd(r.turnover12h) }}</span>
           </div>
         </div>
+        <div class="note pad" v-if="!rows.length && !others.length">暂无数据：{{ store.snap?.phase === 'live' ? '当前筛选下没有合约' : '正在建池…' }}</div>
+        <template v-if="others.length">
+          <div class="oh">OKX 其他合约 <span class="muted tnum">{{ others.length }}</span>
+            <InfoTip>不在当前列表里的 OKX USDT 永续。点开后才按需下载近 7 天历史；加自选后长期保留。</InfoTip>
+          </div>
+          <div v-for="c in others" :key="c.instId" class="card" @click="open(c)">
+            <div class="l1">
+              <CoinIcon :inst-id="c.instId" :size="22" />
+              <b>{{ sym(c.instId) }}</b>
+              <span class="tag" v-if="c.category !== '1'">{{ catLabel[c.category] || c.category }}</span>
+              <span class="tag warn" v-if="c.preMarket">盘前</span>
+              <span class="tag" v-if="!c.recorded">未录制</span>
+              <span class="star" @click.stop="watchOther(c)">☆</span>
+              <span class="px num">{{ price(c.last) }}</span>
+            </div>
+            <div class="l2"><span :class="sign(chg24(c) ?? 0)">24h {{ logPct(chg24(c)) }}</span></div>
+          </div>
+        </template>
       </div>
     </section>
 
@@ -275,6 +341,9 @@ td.up { color: var(--up); } td.down { color: var(--down); }
 .card .l1 { display: flex; gap: 6px; align-items: center; }
 .card .px { margin-left: auto; font-weight: 600; }
 .card .l2 { display: flex; gap: 12px; align-items: center; font-size: 12px; }
+.oh { display: flex; align-items: center; gap: 6px; padding: 14px 12px 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); border-top: 1px solid var(--line-2); }
+table.others { width: 100%; }
+table.others td:first-child { width: 24px; }
 .hide-lg { display: none; }
 .narrow .hide-lg { display: inline-block; }
 </style>

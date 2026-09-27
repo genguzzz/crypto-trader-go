@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { api, type Settings } from '../api'
+import { api, type Settings, type Storage } from '../api'
 import { store, refreshMeta, setRule, ruleOptions } from '../store'
-import { usd, catLabel } from '../fmt'
+import { usd, catLabel, time } from '../fmt'
 import ChipGroup from '../components/ui/ChipGroup.vue'
 
 // Render immediately from settings already loaded with /meta; refresh in the background.
@@ -18,7 +18,22 @@ const thresholdWan = computed({
 onMounted(() => {
   if (!s.value) api.settings().then(x => (s.value = x))
   api.turnovers().then(x => (all.value = x.rows)) // compact (~10 KB) list for the live estimate
+  api.storage().then(x => (storage.value = x)).catch(() => {})
 })
+
+// ---- data storage (retention.go) ----
+const storage = ref<Storage | null>(null)
+const capGB = computed({
+  get: () => (s.value ? +(s.value.storageCapMB / 1024).toFixed(2) : 0),
+  set: v => { if (s.value) s.value.storageCapMB = Math.round(Number(v) * 1024) },
+})
+const bytes = (b?: number) => (b == null ? '—' : b >= 1 << 30 ? (b / (1 << 30)).toFixed(2) + ' GB' : (b / (1 << 20)).toFixed(0) + ' MB')
+const tableLabel: Record<string, string> = {
+  candles_1m: '1m K 线', oi_samples: '持仓量样本', candles_1h: '1H K 线', funding_settled: '资金费（已结算）', funding_obs: '资金费（盘中观测）', other: '规则 / 评分快照 / 其他',
+}
+// columns high → low priority; report ages are indexed none, base, viewed, pool, watch
+const tierCols: [number, string][] = [[4, '自选'], [3, '活跃池'], [2, '最近查看'], [1, '全池录制'], [0, '未跟踪']]
+const tierCount = (i: number) => storage.value?.tiers?.[storage.value.tierNames[i]] ?? 0
 
 // Live estimate from the latest confirmed 12h turnover of every instrument.
 const estimate = computed(() => {
@@ -78,6 +93,40 @@ async function save() {
     </div>
 
     <div class="panel">
+      <h3>数据存储 <InfoTip>
+        <b>分层</b>（取最高）：<b>自选</b> ＞ <b>活跃池</b>（在池内或离池不满 7 天）＞ <b>最近查看</b>（3 天内打开过详情）＞ <b>全池录制</b>（设置类别内、未进池）＞ <b>未跟踪</b>（已下线/类别外且未查看）。<br />
+        <b>按周期分别维护</b>：1m K 线、持仓量、1H K 线、资金费行数差几个数量级，各自有保留期和容量配额（上限 × 55% / 15% / 15% / 5%，其余 10% 给规则与评分快照）。<br />
+        <b>淘汰</b>：每 30 分钟先按下表保留期删除；某类数据超出配额时，从最低层开始逐步缩短保留期（每次 ×2/3），直到回到配额的 90%，但不低于保底（1m/持仓量 26 小时，自选 3 天；1H 21 天），被收紧的格子会标出。<br />
+        <b>下载</b>：打开详情或加自选时按需补近 7 天 1m（不超过该层保留期），离开列表的币按新层级自动淘汰。评分快照（战绩）永不删除。<br />
+        删除后的空间在库文件内复用，文件本身不缩小。
+      </InfoTip></h3>
+      <div class="grid">
+        <label>
+          <span>存储上限（GB）</span>
+          <input type="number" min="0.5" max="100" step="0.5" v-model.number="capGB" />
+          <Segmented :model-value="capGB" size="sm" aria-label="上限预设" :options="[1, 2, 5, 10].map(v => ({ value: v, label: v + ' GB' }))" @update:model-value="v => (capGB = v)" />
+        </label>
+      </div>
+      <template v-if="storage">
+        <p class="est">已用 <b>{{ bytes(storage.usedBytes) }}</b> / {{ bytes(storage.capBytes) }}
+          <span class="muted">（库文件 {{ bytes(storage.fileBytes) }}，其中可复用 {{ bytes(storage.freeBytes) }}；{{ time(storage.at) }} 检查）</span>
+        </p>
+        <div class="table-scroll"><table class="st">
+          <thead><tr><th>数据</th><th class="num">占用 / 配额</th><th v-for="[i, l] in tierCols" :key="i" class="num">{{ l }}<br /><small class="muted">{{ tierCount(i) }} 个</small></th></tr></thead>
+          <tbody>
+            <tr v-for="t in storage.tables" :key="t.name">
+              <td>{{ tableLabel[t.name] || t.name }} <span class="tag warn" v-if="t.tight" title="超出配额，已从低层开始缩短保留期">已收紧</span></td>
+              <td class="num">{{ t.name === 'funding_obs' ? '（同上）' : bytes(t.bytes) + ' / ' + bytes(t.budget) }}</td>
+              <td v-for="[i] in tierCols" :key="i" class="num">{{ t.ages?.[i] ?? '长期' }}</td>
+            </tr>
+          </tbody>
+        </table></div>
+        <p class="note" v-if="storage.error">{{ storage.error }}</p>
+      </template>
+      <p class="note" v-else>存储检查在服务启动约 2 分钟后首次运行。</p>
+    </div>
+
+    <div class="panel">
       <h3>入场规则 <InfoTip>
         这里选择扫描页和详情页<b>默认使用</b>的评分规则；每个人也可以在扫描页临时切换。<br />
         权重、点差门槛、新建规则在“规则与战绩”页编辑；每次保存都会发布新版本，旧版本的战绩保留，便于比较。<br /><br />
@@ -118,4 +167,5 @@ input[type=number] { width: 160px; }
 .est { margin: 12px 0 4px; }
 .small { font-size: 12px; white-space: normal; }
 .actions { display: flex; gap: 12px; align-items: center; }
+.st th small { font-weight: 400; }
 </style>

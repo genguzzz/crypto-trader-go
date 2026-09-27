@@ -179,6 +179,7 @@ type Ticker struct {
 	InstID            string
 	Last, Bid, Ask    float64
 	VolCcy24h, Vol24h float64
+	Open24h           float64
 	Ts                int64
 }
 
@@ -245,7 +246,7 @@ func (c *REST) Tickers(ctx context.Context, instType string) ([]Ticker, error) {
 	out := make([]Ticker, 0, len(raw))
 	for _, m := range raw {
 		out = append(out, Ticker{InstID: m["instId"], Last: f(m["last"]), Bid: f(m["bidPx"]), Ask: f(m["askPx"]),
-			VolCcy24h: f(m["volCcy24h"]), Vol24h: f(m["vol24h"]), Ts: i64(m["ts"])})
+			VolCcy24h: f(m["volCcy24h"]), Vol24h: f(m["vol24h"]), Open24h: f(m["open24h"]), Ts: i64(m["ts"])})
 	}
 	return out, nil
 }

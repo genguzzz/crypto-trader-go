@@ -46,12 +46,11 @@ func (e *Engine) Candles(id, bar string, limit int) ([]Candle, error) {
 			base[b.Ts] = b
 		}
 	}
-	e.mu.RLock()
-	in := e.insts[id]
+	in := e.instFor(id)
 	if in == nil {
-		e.mu.RUnlock()
 		return nil, fmt.Errorf("unknown instrument")
 	}
+	e.mu.RLock()
 	if baseStep == hourMs {
 		for ts, b := range in.hourly {
 			if ts >= from {
@@ -126,13 +125,13 @@ func aggregate(base map[int64]store.Bar, step, from, now int64) []Candle {
 
 // SpotCandles proxies OKX spot candles for the overlay (cached 20s; not recorded).
 func (e *Engine) SpotCandles(ctx context.Context, id, bar string, limit int) ([]Candle, error) {
-	e.mu.RLock()
-	in := e.insts[id]
+	in := e.instFor(id)
 	spot := ""
 	if in != nil {
+		e.mu.RLock()
 		spot = in.SpotID
+		e.mu.RUnlock()
 	}
-	e.mu.RUnlock()
 	if spot == "" {
 		return nil, fmt.Errorf("no OKX USDT spot mapping for %s", id)
 	}
@@ -279,34 +278,51 @@ type InstrumentInfo struct {
 	OiCcy       float64 `json:"oiCcy"`
 	OiUsd       float64 `json:"oiUsd"`
 	OiTs        int64   `json:"oiTs"`
+	Watch       bool    `json:"watch"`
+	Eligible    bool    `json:"eligible"` // in the full-pool recording universe
+	Tier        string  `json:"tier"`     // retention tier: none | base | viewed | pool | watch
+	Syncing     bool    `json:"syncing"`  // on-demand history download running
+	SyncMsg     string  `json:"syncMsg,omitempty"`
 	Row         *Row    `json:"row,omitempty"`
 }
 
+// Instrument returns the detail for any catalog instrument; opening it counts as a view (starts
+// live streaming and background history download for instruments outside the recording universe).
 func (e *Engine) Instrument(id string) (InstrumentInfo, bool) {
-	e.mu.RLock()
-	in := e.insts[id]
+	in := e.Touch(id)
 	if in == nil {
-		e.mu.RUnlock()
 		return InstrumentInfo{}, false
 	}
+	e.mu.RLock()
 	info := InstrumentInfo{InstID: id, Category: in.Category, SpotID: in.SpotID, ListTime: in.ListTime, Last: in.price(),
 		Bid: in.bid, Ask: in.ask, TickTs: max(in.tickTs, in.liveRecv), SpotLast: in.spotLast, FundingRate: in.fund.Rate,
-		FundingTime: in.fund.FundingTime, IntervalH: in.fund.IntervalH, OiCcy: in.oiNow.OiCcy, OiUsd: in.oiNow.OiUsd, OiTs: in.oiNow.Ts}
+		FundingTime: in.fund.FundingTime, IntervalH: in.fund.IntervalH, OiCcy: in.oiNow.OiCcy, OiUsd: in.oiNow.OiUsd, OiTs: in.oiNow.Ts,
+		Watch: e.watch[id], Eligible: in.Eligible, Tier: tierNames[e.tierOf(id, time.Now().UnixMilli())], Syncing: in.syncing, SyncMsg: in.syncMsg}
 	e.mu.RUnlock()
-	for _, r := range e.snap.Load().Rows {
+	snap := e.snap.Load()
+	var row *Row
+	for _, r := range snap.Rows {
 		if r.InstID == id {
 			r := r
-			if r.Scores == nil { // not active/watched: score on demand for the detail page
-				e.rmu.RLock()
-				r.Scores = map[string]rules.Score{}
-				for rid, rule := range e.rules {
-					pct := func(k string) (float64, bool) { p, ok := r.Pct[k]; return p, ok }
-					r.Scores[rid] = rule.Apply(pct, r.Values)
-				}
-				e.rmu.RUnlock()
-			}
-			info.Row = &r
+			row = &r
+			break
 		}
+	}
+	if row == nil {
+		row = e.adhocRow(id, snap)
+	}
+	if row != nil {
+		r := *row
+		if r.Scores == nil { // not active/watched: score on demand for the detail page
+			e.rmu.RLock()
+			r.Scores = map[string]rules.Score{}
+			for rid, rule := range e.rules {
+				pct := func(k string) (float64, bool) { p, ok := r.Pct[k]; return p, ok }
+				r.Scores[rid] = rule.Apply(pct, r.Values)
+			}
+			e.rmu.RUnlock()
+		}
+		info.Row = &r
 	}
 	return info, true
 }
@@ -369,5 +385,5 @@ func (e *Engine) Status() Status {
 		RestRateHits: e.rest.RateHits.Load(), WS: wss, Coverage: s.Coverage, AsOfMinute: s.AsOfMinute, ComputedAt: s.ComputedAt,
 		Replay: e.replayMsg.Load().(string), History: e.historyMsg.Load().(string), DB: counts,
 		Config: map[string]any{"threshold": e.conf().Threshold, "topN": e.conf().TopN, "categories": cats, "replayHours": e.conf().ReplayHours,
-			"retain1mDays": e.conf().Retain1m.Hours() / 24, "takerFeeBps": 5, "replaySpreadBpsAssumed": ReplaySpreadBps}}
+			"storageCapMB": e.conf().StorageCap >> 20, "takerFeeBps": 5, "replaySpreadBpsAssumed": ReplaySpreadBps}}
 }

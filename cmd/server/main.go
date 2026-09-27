@@ -31,7 +31,7 @@ func main() {
 	topN := flag.Int("top", 200, "active pool cap")
 	cats := flag.String("categories", "", "comma list of instCategory to include (empty = all: 1 crypto, 3 stock/ETF, 4 commodity)")
 	replayH := flag.Int("replay-hours", 336, "hourly replay depth for rule records")
-	retain := flag.Duration("retain-1m", 30*24*time.Hour, "retention of 1m candles / OI samples")
+	capMB := flag.Int("storage-cap-mb", market.DefaultCapMB, "first-run default SQLite size cap in MB (settings page overrides); see retention.go")
 	serveWeb := flag.Bool("web", true, "also serve the embedded web UI (false = API only, e.g. behind a separate frontend container)")
 	doh := flag.Bool("doh", os.Getenv("CTG_DOH") == "1", "resolve OKX hosts via DNS-over-HTTPS (for polluted DNS)")
 	flag.Parse()
@@ -62,7 +62,7 @@ func main() {
 			catSet[strings.TrimSpace(c)] = true
 		}
 	}
-	cfg := market.Config{Threshold: *threshold, TopN: *topN, Categories: catSet, ReplayHours: *replayH, Retain1m: *retain}
+	cfg := market.Config{Threshold: *threshold, TopN: *topN, Categories: catSet, ReplayHours: *replayH, StorageCap: int64(*capMB) << 20}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

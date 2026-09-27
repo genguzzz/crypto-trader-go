@@ -63,7 +63,7 @@ func (e *Engine) computeUniverse(m int64) {
 	// minute OI sample from the latest WS/REST value (bounded staleness)
 	var oiBatch []store.OISample
 	for _, in := range e.insts {
-		if in.Eligible && in.oiNow.Ts > 0 && T-in.oiNow.Ts < 2*minuteMs {
+		if e.recording(in, now) && in.oiNow.Ts > 0 && T-in.oiNow.Ts < 2*minuteMs {
 			s := store.OISample{InstID: in.ID, Ts: T, OiCcy: in.oiNow.OiCcy, OiUsd: in.oiNow.OiUsd}
 			in.addOI(s)
 			oiBatch = append(oiBatch, s)
@@ -84,56 +84,42 @@ func (e *Engine) computeUniverse(m int64) {
 	}
 
 	rows := make([]Row, 0, len(e.insts))
-	btc := e.insts[BTC]
 	var gapIDs []string
 	var cov Coverage
-	for _, id := range e.eligibleIDs() {
+	ids := e.eligibleIDs()
+	for id, in := range e.insts { // watched instruments outside the recording universe get a row too
+		if !in.Eligible && e.watch[id] {
+			ids = append(ids, id)
+		}
+	}
+	for _, id := range ids {
 		in := e.insts[id]
-		sum, have := in.window12h(m)
-		r := Row{InstID: id, Category: in.Category, Have: have, HasSpot: in.SpotID != "", ListTime: in.ListTime,
-			Watch: e.watch[id], Last: in.price()}
-		if in.lastBar > 0 {
-			r.Freshness = now - (in.lastBar + minuteMs)
-		}
-		switch {
-		case in.ListTime > m-719*minuteMs:
-			r.Status = "new"
-			cov.New++
-		case have == 720:
-			r.Status = "live"
-			r.Turnover12h = sum
-			cov.Ready++
-		case !in.backfilled:
-			r.Status = "warming"
-			cov.Warming++
-			if in.provTurnover > 0 {
-				r.Turnover12h, r.Provisional = in.provTurnover, true
-			}
-		default:
-			r.Status = "stale"
-			cov.Stale++
-			if now-in.gapQueuedAt > 2*minuteMs {
-				in.gapQueuedAt = now
-				gapIDs = append(gapIDs, id)
+		r := e.buildRow(in, m, now)
+		if in.Eligible {
+			cov.Eligible++
+			switch r.Status {
+			case "new":
+				cov.New++
+			case "live":
+				cov.Ready++
+			case "warming":
+				cov.Warming++
+			case "stale":
+				cov.Stale++
 			}
 		}
-		if r.Status == "live" || r.Status == "stale" || r.Provisional {
-			var bs features.Series
-			if btc != nil {
-				bs = liveSeries{btc}
-			}
-			r.Values = features.Compute(liveSeries{in}, bs, T)
-			in.liveValues(r.Values, r.Turnover12h)
+		if r.Status == "stale" && now-in.gapQueuedAt > 2*minuteMs {
+			in.gapQueuedAt = now
+			gapIDs = append(gapIDs, id)
 		}
 		rows = append(rows, r)
 	}
-	cov.Eligible = len(rows)
 	e.mu.Unlock()
 
 	// pool: threshold strictly greater, turnover desc, instId asc, cap N
 	var cand []int
 	for i, r := range rows {
-		if (r.Status == "live" || r.Provisional) && r.Turnover12h > e.conf().Threshold {
+		if r.Eligible && (r.Status == "live" || r.Provisional) && r.Turnover12h > e.conf().Threshold {
 			cand = append(cand, i)
 		}
 	}
@@ -161,6 +147,9 @@ func (e *Engine) computeUniverse(m int64) {
 
 	// membership transitions
 	e.mu.Lock()
+	for id := range active {
+		e.lastPool[id] = T
+	}
 	for id, turn := range e.prevAct {
 		if _, still := active[id]; !still {
 			reason := "跌出前 N"
@@ -287,6 +276,21 @@ func (in *Inst) liveValues(v features.Values, turnover float64) {
 
 // fillPercentiles ranks every row's values against the active pool's distribution.
 func (e *Engine) fillPercentiles(rows []Row) {
+	fns := activePctFns(rows)
+	for i := range rows {
+		rows[i].Pct = map[string]float64{}
+		for k, v := range rows[i].Values {
+			if fn, ok := fns[k]; ok && finite(v) {
+				rows[i].Pct[k] = roundPct(fn(v))
+			}
+		}
+	}
+}
+
+func roundPct(p float64) float64 { return math.Round(p*10) / 10 }
+
+// activePctFns returns, per field, the percentile function of the active pool's values.
+func activePctFns(rows []Row) map[string]func(float64) float64 {
 	pools := map[string][]float64{}
 	for _, r := range rows {
 		if r.Active {
@@ -301,14 +305,7 @@ func (e *Engine) fillPercentiles(rows []Row) {
 	for k, xs := range pools {
 		fns[k] = features.Percentiles(xs)
 	}
-	for i := range rows {
-		rows[i].Pct = map[string]float64{}
-		for k, v := range rows[i].Values {
-			if fn, ok := fns[k]; ok && finite(v) {
-				rows[i].Pct[k] = math.Round(fn(v)*10) / 10
-			}
-		}
-	}
+	return fns
 }
 
 func (e *Engine) scoreRows(s *Snapshot) {
@@ -335,12 +332,29 @@ func (e *Engine) rescore() {
 		return
 	}
 	s := *old
-	s.Rows = append([]Row(nil), old.Rows...)
+	s.Rows = make([]Row, 0, len(old.Rows)+1)
+	have := map[string]bool{}
 	e.mu.RLock()
-	for i := range s.Rows {
-		s.Rows[i].Watch = e.watch[s.Rows[i].InstID]
+	for _, r := range old.Rows {
+		r.Watch = e.watch[r.InstID]
+		if !r.Eligible && !r.Watch { // unwatched instrument outside the universe: drop its row
+			continue
+		}
+		have[r.InstID] = true
+		s.Rows = append(s.Rows, r)
+	}
+	var add []string
+	for id := range e.watch {
+		if in := e.insts[id]; in != nil && !in.Eligible && !have[id] {
+			add = append(add, id)
+		}
 	}
 	e.mu.RUnlock()
+	for _, id := range add { // newly watched outside the universe: add its row now
+		if r := e.adhocRow(id, old); r != nil {
+			s.Rows = append(s.Rows, *r)
+		}
+	}
 	s.Seq = e.seq.Add(1)
 	e.scoreRows(&s)
 	e.snap.Store(&s)
