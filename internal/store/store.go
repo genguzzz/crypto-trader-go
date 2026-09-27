@@ -1,0 +1,420 @@
+// Package store persists recorded public market data and user rules in a single SQLite (WAL) file.
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+type Store struct{ DB *sql.DB }
+
+const schema = `
+CREATE TABLE IF NOT EXISTS candles_1m(inst_id TEXT NOT NULL, ts INTEGER NOT NULL,
+  o REAL, h REAL, l REAL, c REAL, vol REAL, vol_ccy REAL, quote REAL, PRIMARY KEY(inst_id, ts)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS candles_1h(inst_id TEXT NOT NULL, ts INTEGER NOT NULL,
+  o REAL, h REAL, l REAL, c REAL, vol REAL, vol_ccy REAL, quote REAL, PRIMARY KEY(inst_id, ts)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS oi_samples(inst_id TEXT NOT NULL, ts INTEGER NOT NULL, oi_ccy REAL, oi_usd REAL,
+  PRIMARY KEY(inst_id, ts)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS funding_samples(inst_id TEXT NOT NULL, ts INTEGER NOT NULL, rate REAL,
+  funding_time INTEGER, next_funding_time INTEGER, settled INTEGER, PRIMARY KEY(inst_id, ts)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS universe_snapshots(ts INTEGER NOT NULL, inst_id TEXT NOT NULL, turnover REAL, rank INTEGER,
+  PRIMARY KEY(ts, inst_id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS rules(id TEXT PRIMARY KEY, body TEXT NOT NULL, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS score_snapshots(kind TEXT NOT NULL, rule_id TEXT NOT NULL, rule_version INTEGER NOT NULL,
+  ts INTEGER NOT NULL, inst_id TEXT NOT NULL, long REAL, short REAL, close REAL, spread_bps REAL,
+  PRIMARY KEY(kind, rule_id, rule_version, ts, inst_id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS watchlist(inst_id TEXT PRIMARY KEY, added_at INTEGER);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER);
+`
+
+func Open(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(4)
+	if _, err := db.Exec(schema); err != nil {
+		return nil, fmt.Errorf("schema: %w", err)
+	}
+	return &Store{DB: db}, nil
+}
+
+type Bar struct {
+	Ts                 int64
+	O, H, L, C         float64
+	Vol, VolCcy, Quote float64
+}
+
+func (s *Store) tx(fn func(*sql.Tx) error) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+type InstBar struct {
+	InstID string
+	Bar
+}
+
+func (s *Store) PutBars(table string, bars []InstBar) error {
+	if len(bars) == 0 {
+		return nil
+	}
+	return s.tx(func(tx *sql.Tx) error {
+		st, err := tx.Prepare(`INSERT OR REPLACE INTO ` + table + ` VALUES(?,?,?,?,?,?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		for _, b := range bars {
+			if _, err := st.Exec(b.InstID, b.Ts, b.O, b.H, b.L, b.C, b.Vol, b.VolCcy, b.Quote); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// Bars returns bars with ts in [from, to], ascending.
+func (s *Store) Bars(table, instID string, from, to int64) ([]Bar, error) {
+	rows, err := s.DB.Query(`SELECT ts,o,h,l,c,vol,vol_ccy,quote FROM `+table+` WHERE inst_id=? AND ts>=? AND ts<=? ORDER BY ts`, instID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Bar
+	for rows.Next() {
+		var b Bar
+		if err := rows.Scan(&b.Ts, &b.O, &b.H, &b.L, &b.C, &b.Vol, &b.VolCcy, &b.Quote); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// EachBarSince streams all instruments' bars since `from` (used on restart; no big allocation).
+func (s *Store) EachBarSince(table string, from int64, fn func(string, Bar)) (int, error) {
+	rows, err := s.DB.Query(`SELECT inst_id,ts,o,h,l,c,vol,vol_ccy,quote FROM `+table+` WHERE ts>=?`, from)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var id string
+		var b Bar
+		if err := rows.Scan(&id, &b.Ts, &b.O, &b.H, &b.L, &b.C, &b.Vol, &b.VolCcy, &b.Quote); err != nil {
+			return n, err
+		}
+		fn(id, b)
+		n++
+	}
+	return n, rows.Err()
+}
+
+// AllBarsSince loads all instruments' bars since `from`.
+func (s *Store) AllBarsSince(table string, from int64) (map[string][]Bar, error) {
+	rows, err := s.DB.Query(`SELECT inst_id,ts,o,h,l,c,vol,vol_ccy,quote FROM `+table+` WHERE ts>=? ORDER BY inst_id, ts`, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]Bar{}
+	for rows.Next() {
+		var id string
+		var b Bar
+		if err := rows.Scan(&id, &b.Ts, &b.O, &b.H, &b.L, &b.C, &b.Vol, &b.VolCcy, &b.Quote); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], b)
+	}
+	return out, rows.Err()
+}
+
+// Span returns the earliest bar time and bar count for an instrument since `from`.
+func (s *Store) Span(table, instID string, from int64) (earliest int64, n int, err error) {
+	var e sql.NullInt64
+	err = s.DB.QueryRow(`SELECT MIN(ts), COUNT(*) FROM `+table+` WHERE inst_id=? AND ts>=?`, instID, from).Scan(&e, &n)
+	return e.Int64, n, err
+}
+
+type OISample struct {
+	InstID       string
+	Ts           int64
+	OiCcy, OiUsd float64
+}
+
+func (s *Store) PutOI(xs []OISample) error {
+	if len(xs) == 0 {
+		return nil
+	}
+	return s.tx(func(tx *sql.Tx) error {
+		st, err := tx.Prepare(`INSERT OR REPLACE INTO oi_samples VALUES(?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		for _, x := range xs {
+			if _, err := st.Exec(x.InstID, x.Ts, x.OiCcy, x.OiUsd); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) OI(instID string, from, to int64) ([]OISample, error) {
+	rows, err := s.DB.Query(`SELECT ts, oi_ccy, oi_usd FROM oi_samples WHERE inst_id=? AND ts>=? AND ts<=? ORDER BY ts`, instID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OISample
+	for rows.Next() {
+		x := OISample{InstID: instID}
+		if err := rows.Scan(&x.Ts, &x.OiCcy, &x.OiUsd); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AllOISince(from int64) (map[string][]OISample, error) {
+	rows, err := s.DB.Query(`SELECT inst_id, ts, oi_ccy, oi_usd FROM oi_samples WHERE ts>=? ORDER BY inst_id, ts`, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]OISample{}
+	for rows.Next() {
+		var x OISample
+		if err := rows.Scan(&x.InstID, &x.Ts, &x.OiCcy, &x.OiUsd); err != nil {
+			return nil, err
+		}
+		out[x.InstID] = append(out[x.InstID], x)
+	}
+	return out, rows.Err()
+}
+
+type FundingSample struct {
+	InstID                   string
+	Ts                       int64
+	Rate                     float64
+	FundingTime, NextFunding int64
+	Settled                  bool
+}
+
+func (s *Store) PutFunding(xs []FundingSample) error {
+	if len(xs) == 0 {
+		return nil
+	}
+	return s.tx(func(tx *sql.Tx) error {
+		st, err := tx.Prepare(`INSERT OR REPLACE INTO funding_samples VALUES(?,?,?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		for _, x := range xs {
+			settled := 0
+			if x.Settled {
+				settled = 1
+			}
+			if _, err := st.Exec(x.InstID, x.Ts, x.Rate, x.FundingTime, x.NextFunding, settled); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) Funding(instID string, from, to int64) ([]FundingSample, error) {
+	rows, err := s.DB.Query(`SELECT ts, rate, funding_time, next_funding_time, settled FROM funding_samples WHERE inst_id=? AND ts>=? AND ts<=? ORDER BY ts`, instID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FundingSample
+	for rows.Next() {
+		x := FundingSample{InstID: instID}
+		var settled int
+		if err := rows.Scan(&x.Ts, &x.Rate, &x.FundingTime, &x.NextFunding, &settled); err != nil {
+			return nil, err
+		}
+		x.Settled = settled == 1
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) PutUniverse(ts int64, ids []string, turnover []float64) error {
+	return s.tx(func(tx *sql.Tx) error {
+		st, err := tx.Prepare(`INSERT OR REPLACE INTO universe_snapshots VALUES(?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		for i, id := range ids {
+			if _, err := st.Exec(ts, id, turnover[i], i+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ---- rules / snapshots / watchlist ----
+
+func (s *Store) Rules() (map[string]string, error) {
+	rows, err := s.DB.Query(`SELECT id, body FROM rules`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, body string
+		if err := rows.Scan(&id, &body); err != nil {
+			return nil, err
+		}
+		out[id] = body
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) PutRule(id, body string) error {
+	_, err := s.DB.Exec(`INSERT OR REPLACE INTO rules VALUES(?,?,?)`, id, body, time.Now().UnixMilli())
+	return err
+}
+
+func (s *Store) DeleteRule(id string) error {
+	_, err := s.DB.Exec(`DELETE FROM rules WHERE id=?`, id)
+	return err
+}
+
+type ScoreRow struct {
+	Kind, RuleID  string
+	RuleVersion   int
+	Ts            int64
+	InstID        string
+	Long, Short   *float64
+	Close, Spread float64
+}
+
+func (s *Store) PutScores(rows []ScoreRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return s.tx(func(tx *sql.Tx) error {
+		st, err := tx.Prepare(`INSERT OR REPLACE INTO score_snapshots VALUES(?,?,?,?,?,?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		for _, r := range rows {
+			if _, err := st.Exec(r.Kind, r.RuleID, r.RuleVersion, r.Ts, r.InstID, r.Long, r.Short, r.Close, r.Spread); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) DeleteScores(kind, ruleID string, version int) error {
+	_, err := s.DB.Exec(`DELETE FROM score_snapshots WHERE kind=? AND rule_id=? AND rule_version=?`, kind, ruleID, version)
+	return err
+}
+
+func (s *Store) Scores(kind, ruleID string, version int) ([]ScoreRow, error) {
+	rows, err := s.DB.Query(`SELECT ts, inst_id, long, short, close, spread_bps FROM score_snapshots
+		WHERE kind=? AND rule_id=? AND rule_version=? ORDER BY ts`, kind, ruleID, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ScoreRow
+	for rows.Next() {
+		r := ScoreRow{Kind: kind, RuleID: ruleID, RuleVersion: version}
+		var l, sh sql.NullFloat64
+		if err := rows.Scan(&r.Ts, &r.InstID, &l, &sh, &r.Close, &r.Spread); err != nil {
+			return nil, err
+		}
+		if l.Valid {
+			r.Long = &l.Float64
+		}
+		if sh.Valid {
+			r.Short = &sh.Float64
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) Setting(key string) (string, bool) {
+	var v string
+	if err := s.DB.QueryRow(`SELECT value FROM settings WHERE key=?`, key).Scan(&v); err != nil {
+		return "", false
+	}
+	return v, true
+}
+
+func (s *Store) PutSetting(key, value string) error {
+	_, err := s.DB.Exec(`INSERT OR REPLACE INTO settings VALUES(?,?,?)`, key, value, time.Now().UnixMilli())
+	return err
+}
+
+func (s *Store) Watchlist() ([]string, error) {
+	rows, err := s.DB.Query(`SELECT inst_id FROM watchlist ORDER BY added_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetWatch(id string, on bool) error {
+	var err error
+	if on {
+		_, err = s.DB.Exec(`INSERT OR IGNORE INTO watchlist VALUES(?,?)`, id, time.Now().UnixMilli())
+	} else {
+		_, err = s.DB.Exec(`DELETE FROM watchlist WHERE inst_id=?`, id)
+	}
+	return err
+}
+
+// Prune applies retention: 1m candles and OI samples older than `keep`; hourly data is kept.
+func (s *Store) Prune(keep time.Duration) error {
+	cut := time.Now().Add(-keep).UnixMilli()
+	for _, q := range []string{`DELETE FROM candles_1m WHERE ts<?`, `DELETE FROM oi_samples WHERE ts<?`, `DELETE FROM universe_snapshots WHERE ts<?`} {
+		if _, err := s.DB.Exec(q, cut); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) Counts() map[string]int64 {
+	out := map[string]int64{}
+	for _, t := range []string{"candles_1m", "candles_1h", "oi_samples", "funding_samples", "score_snapshots"} {
+		var n int64
+		s.DB.QueryRow(`SELECT COUNT(*) FROM ` + t).Scan(&n)
+		out[t] = n
+	}
+	return out
+}
