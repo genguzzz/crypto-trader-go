@@ -363,6 +363,7 @@ type MemStats struct {
 	Goroutines  int     `json:"goroutines"`
 	NumGC       uint32  `json:"numGC"`
 	Insts       int     `json:"insts"` // instruments held in memory
+	FlowErrs    int64   `json:"flowDecodeErrors"`
 }
 
 func (e *Engine) memStats() MemStats {
@@ -372,7 +373,7 @@ func (e *Engine) memStats() MemStats {
 	n := len(e.insts)
 	e.mu.RUnlock()
 	mb := func(b uint64) float64 { return math.Round(float64(b)/(1<<20)*10) / 10 }
-	return MemStats{HeapAllocMB: mb(m.HeapAlloc), HeapSysMB: mb(m.HeapSys), SysMB: mb(m.Sys), Goroutines: runtime.NumGoroutine(), NumGC: m.NumGC, Insts: n}
+	return MemStats{HeapAllocMB: mb(m.HeapAlloc), HeapSysMB: mb(m.HeapSys), SysMB: mb(m.Sys), Goroutines: runtime.NumGoroutine(), NumGC: m.NumGC, Insts: n, FlowErrs: flowDecodeErrs.Load()}
 }
 
 type WSStatus struct {

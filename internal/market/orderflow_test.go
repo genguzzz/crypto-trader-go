@@ -15,10 +15,12 @@ import (
 	"crypto-trader-go/internal/store"
 )
 
+// tradeMsg builds a push in OKX's real shape (all strings except the numeric seqId).
 func tradeMsg(id string, trades ...[3]any) okx.Message { // [ts ms, px, "buy"/"sell"] with sz 1
-	var xs []map[string]string
-	for _, t := range trades {
-		xs = append(xs, map[string]string{"instId": id, "ts": fmt.Sprint(t[0]), "px": fmt.Sprint(t[1]), "sz": "1", "side": t[2].(string)})
+	var xs []map[string]any
+	for i, t := range trades {
+		xs = append(xs, map[string]any{"instId": id, "tradeId": fmt.Sprint(1000 + i), "ts": fmt.Sprint(t[0]), "px": fmt.Sprint(t[1]),
+			"sz": "1", "side": t[2].(string), "count": "1", "source": "0", "seqId": 123456789 + i})
 	}
 	b, _ := json.Marshal(xs)
 	return okx.Message{Arg: okx.Arg{Channel: "trades", InstID: id}, Data: b}
