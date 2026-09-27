@@ -7,15 +7,16 @@
 #   deploy/deploy.sh --rollback   restore the previous binary (bin/ctg.prev) and restart
 #   deploy/deploy.sh --status     container state, health and last log lines
 #
-# Env: CTG_HOST (default root@old-server), CTG_DIR (default /opt/ctg), CTG_ARCH (default amd64)
+# Env: CTG_HOST (default: ssh alias "old-server" from ~/.ssh/config; CI passes a secret), CTG_DIR (default /opt/ctg), CTG_ARCH (default amd64)
 set -euo pipefail
-HOST=${CTG_HOST:-root@old-server}
+HOST=${CTG_HOST:-old-server}
 DIR=${CTG_DIR:-/opt/ctg}
 ARCH=${CTG_ARCH:-amd64}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BIN="$ROOT/bin/ctg-linux-$ARCH"
 
-remote() { ssh -o BatchMode=yes "$HOST" "$@" 2> >(grep -v -E 'post-quantum|store now|upgraded' >&2); }
+SSH_OPTS=${CTG_SSH_OPTS:-}
+remote() { ssh -o BatchMode=yes $SSH_OPTS "$HOST" "$@" 2> >(grep -v -E 'post-quantum|store now|upgraded' >&2); }
 
 # The API answers within seconds of start; phase becomes "live" after the gap fill (~1 min).
 wait_healthy() {
@@ -41,7 +42,7 @@ case "${1:-}" in
         echo '  migrated from systemd'
       fi
       chown -R 65532:65532 $DIR/data"
-    scp -q "$ROOT/deploy/docker-compose.yml" "$HOST:$DIR/docker-compose.yml"
+    scp -q $SSH_OPTS "$ROOT/deploy/docker-compose.yml" "$HOST:$DIR/docker-compose.yml"
     remote "cd $DIR && docker compose pull -q && if [ -f bin/ctg ]; then docker compose up -d; else echo '  no binary yet: run deploy/deploy.sh'; fi"
     if [ "$(remote "test -f $DIR/bin/ctg && echo y || true")" = y ]; then wait_healthy; fi
     exit ;;
@@ -54,8 +55,8 @@ if [ "${1:-}" != --skip-build ]; then
   (cd "$ROOT/web" && npm run build >/dev/null)
   (cd "$ROOT" && GOOS=linux GOARCH=$ARCH CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" ./cmd/server)
 fi
-echo "▸ uploading $(du -h "$BIN" | cut -f1) → $HOST:$DIR/bin/ctg.new"
-scp -q "$BIN" "$HOST:$DIR/bin/ctg.new"
+echo "▸ uploading $(du -h "$BIN" | cut -f1) → server:$DIR/bin/ctg.new"
+scp -q $SSH_OPTS "$BIN" "$HOST:$DIR/bin/ctg.new"
 echo "▸ swapping binary and restarting container"
 remote "set -e; cd $DIR; chmod 755 bin/ctg.new; if [ -f bin/ctg ]; then cp -p bin/ctg bin/ctg.prev; fi; mv bin/ctg.new bin/ctg
   rm -f bin/ctg.bad; docker compose up -d --no-recreate >/dev/null 2>&1; docker compose restart ctg >/dev/null 2>&1"

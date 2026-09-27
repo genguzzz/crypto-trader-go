@@ -66,6 +66,8 @@ cd web && npm run dev          # Vite 开发服务器，/api 代理到 :8686
 
 ## 部署
 
+push 到 `main` 后 GitHub Actions 自动测试并部署（`.github/workflows/deploy.yml`，首次需运行 `deploy/setup-ci.sh` 配置密钥）。本机手动部署：
+
 ```bash
 deploy/deploy.sh               # 构建 → 上传二进制 → 替换 → 重启容器 → 健康检查（失败自动回滚），约 30 秒
 deploy/deploy.sh --rollback    # 回到上一版

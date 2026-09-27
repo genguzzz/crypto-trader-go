@@ -26,7 +26,7 @@ pkill -f 'bin/ctg -addr'; GOMEMLIMIT=160MiB nohup ./bin/ctg -addr 127.0.0.1:8686
 until grep -q 'bootstrap complete' data/server.log; do sleep 2; done   # 重启约 1 分钟
 curl -s localhost:8686/api/v1/health                                 # phase=live、stale=0
 ```
-上线：`deploy/deploy.sh`（约 30 秒，失败自动回滚）；`--status` 看日志，`--rollback` 回退；改了 compose 文件再跑 `--init`。服务器数据库是唯一真源，不要用本机库覆盖。
+上线：`deploy/deploy.sh`（约 30 秒，失败自动回滚）；`--status` 看日志，`--rollback` 回退；改了 compose 文件再跑 `--init`。服务器数据库是唯一真源，不要用本机库覆盖。push 到 `main` 会触发 GitHub Actions 自动部署（`.github/workflows/deploy.yml`，只改文档不触发）；`gh run list -w deploy` / `gh run watch` 查看。
 前后端分开：`./bin/ctg -web=false` + `cd web && npm run dev`（Vite 代理 /api）。
 
 ## 验证页面（必须做）
