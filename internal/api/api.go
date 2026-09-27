@@ -45,6 +45,19 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, ob)
 	})
 	mux.HandleFunc("GET /api/v1/series", s.series)
+	mux.HandleFunc("GET /api/v1/orderflow", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		bar := q.Get("bar")
+		if bar == "" {
+			bar = "15m"
+		}
+		out, err := s.E.OrderFlow(r.Context(), q.Get("instId"), bar, atoiDefault(q.Get("limit"), 300), q.Get("levels") == "1")
+		if err != nil {
+			httpErr(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, out)
+	})
 	mux.HandleFunc("GET /api/v1/rules", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.E.Rules()) })
 	mux.HandleFunc("POST /api/v1/rules", s.saveRule)
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.deleteRule)

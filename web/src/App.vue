@@ -109,7 +109,7 @@ const pulse = computed(() =>
   display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 11px; border-radius: 8px; color: var(--text-3);
   font-weight: 500; text-decoration: none !important; transition: color .12s, background .12s;
 }
-.nav-i:hover { color: var(--text-1); background: rgba(255, 255, 255, .04); }
+@media (hover: hover) { .nav-i:hover { color: var(--text-1); background: rgba(255, 255, 255, .04); } }
 .nav-i .ni { transition: color .12s; }
 .nav-i.router-link-active:not(.exact), .nav-i.exact.router-link-exact-active {
   color: var(--text-1); background: var(--bg-3); box-shadow: 0 0 0 1px var(--line-2) inset;
@@ -119,7 +119,7 @@ const pulse = computed(() =>
 .right { margin-left: auto; display: flex; align-items: center; gap: 10px; min-width: 0; }
 .pulse { display: flex; gap: 4px; }
 .pp { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 8px; color: var(--text-2); font-size: var(--fs-sm); text-decoration: none !important; }
-.pp:hover { background: rgba(255, 255, 255, .04); }
+@media (hover: hover) { .pp:hover { background: rgba(255, 255, 255, .04); } }
 .pp .ps { color: var(--text-3); font-weight: 600; font-size: var(--fs-xs); }
 .pp .pv { color: var(--text-1); font-weight: 600; }
 .pp .pr { font-size: var(--fs-xs); font-weight: 600; }

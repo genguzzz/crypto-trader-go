@@ -26,7 +26,7 @@ const def = computed(() => statDetails.find(d => d.key === props.active))
 <style scoped>
 .tabs { display: flex; gap: 4px; margin: -4px 0 14px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
 .tabs button { display: inline-flex; align-items: center; gap: 6px; border: none; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-3); padding: 6px 10px; white-space: nowrap; font-weight: 500; }
-.tabs button:hover { color: var(--text-1); }
+@media (hover: hover) { .tabs button:hover { color: var(--text-1); } }
 .tabs button.on { color: var(--text-1); border-bottom-color: var(--accent); }
 .body { min-height: 320px; }
 </style>

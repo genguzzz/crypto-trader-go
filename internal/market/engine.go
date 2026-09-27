@@ -12,6 +12,7 @@ import (
 
 	"crypto-trader-go/internal/features"
 	"crypto-trader-go/internal/okx"
+	"crypto-trader-go/internal/refdata"
 	"crypto-trader-go/internal/rules"
 	"crypto-trader-go/internal/store"
 )
@@ -125,15 +126,18 @@ type Engine struct {
 	replayMsg  atomic.Value
 	historyMsg atomic.Value
 
-	barCh chan store.InstBar
-	oiCh  chan store.OISample
-	fdCh  chan store.FundingSample
+	barCh  chan store.InstBar
+	oiCh   chan store.OISample
+	fdCh   chan store.FundingSample
+	flowCh chan store.FlowRow
 
 	subMu sync.Mutex
 	subs  map[chan Event]bool
 
 	trackMu    sync.Mutex
 	trackCache map[string]trackEntry
+
+	Ref *refdata.Cache // optional CoinGecko market cap / supply (display only)
 
 	eff       atomic.Pointer[effAges]
 	retReport atomic.Pointer[RetentionReport]
@@ -147,7 +151,7 @@ func New(cfg Config, rest *okx.REST, st *store.Store) *Engine {
 		watch: map[string]bool{}, catalog: map[string]okx.Instrument{}, tickers: map[string]okx.Ticker{}, views: map[string]int64{},
 		lastPool: map[string]int64{}, retKick: make(chan struct{}, 1), removed: map[string]Removed{}, prevAct: map[string]float64{},
 		rules: map[string]*rules.Rule{}, barCh: make(chan store.InstBar, 20000), oiCh: make(chan store.OISample, 20000),
-		fdCh: make(chan store.FundingSample, 5000), subs: map[chan Event]bool{}, trackCache: map[string]trackEntry{}, started: time.Now()}
+		fdCh: make(chan store.FundingSample, 5000), flowCh: make(chan store.FlowRow, 20000), subs: map[chan Event]bool{}, trackCache: map[string]trackEntry{}, started: time.Now()}
 	e.phase.Store("starting")
 	e.replayMsg.Store("等待实时数据就绪")
 	e.historyMsg.Store("等待实时数据就绪")
@@ -156,6 +160,7 @@ func New(cfg Config, rest *okx.REST, st *store.Store) *Engine {
 	e.pub.OnMessage = e.onPublic
 	e.biz.OnMessage = e.onBusiness
 	e.biz.OnConnect = e.onReconnect
+	e.pub.OnConnect = e.onPublicReconnect
 	e.snap.Store(&Snapshot{Phase: "starting", Threshold: cfg.Threshold, TopN: cfg.TopN})
 	return e
 }
@@ -184,6 +189,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	go e.writer(ctx)
 	go e.bootstrap(ctx)
 	go e.retentionLoop(ctx)
+	go e.flowLoop(ctx)
 	return nil
 }
 
@@ -260,7 +266,7 @@ func (e *Engine) refreshInstruments(ctx context.Context) error {
 			in = newInst(i.InstID)
 			e.insts[i.InstID] = in
 		}
-		in.Category, in.ListTime, in.Eligible, in.CtVal = i.Category, i.ListTime, true, i.CtVal
+		in.Category, in.ListTime, in.Eligible, in.CtVal, in.TickSz = i.Category, i.ListTime, true, i.CtVal, i.TickSz
 		if e.spotIDs[spotOf(i.InstID)] {
 			in.SpotID = spotOf(i.InstID)
 		} else {
@@ -271,7 +277,7 @@ func (e *Engine) refreshInstruments(ctx context.Context) error {
 		if !seen[id] {
 			in.Eligible = false
 			if i, ok := e.catalog[id]; ok { // adhoc (search/watch): keep metadata current
-				in.Category, in.ListTime, in.CtVal = i.Category, i.ListTime, i.CtVal
+				in.Category, in.ListTime, in.CtVal, in.TickSz = i.Category, i.ListTime, i.CtVal, i.TickSz
 			}
 		}
 	}
@@ -564,6 +570,8 @@ func (e *Engine) onBusiness(m okx.Message) {
 
 func (e *Engine) onPublic(m okx.Message) {
 	switch m.Arg.Channel {
+	case "trades":
+		e.onTrades(m)
 	case "tickers":
 		var xs []map[string]string
 		if json.Unmarshal(m.Data, &xs) != nil {
@@ -674,8 +682,13 @@ func (e *Engine) updateSubscriptions() {
 			tick[r.InstID] = true
 		}
 	}
+	flow := e.flowIDs(now)
 	e.mu.RUnlock()
+	e.syncFlowStates(flow)
 	var bizArgs, pubArgs []okx.Arg
+	for id := range flow {
+		pubArgs = append(pubArgs, okx.Arg{Channel: "trades", InstID: id})
+	}
 	for _, id := range ids {
 		bizArgs = append(bizArgs, okx.Arg{Channel: "candle1m", InstID: id})
 		pubArgs = append(pubArgs, okx.Arg{Channel: "open-interest", InstID: id}, okx.Arg{Channel: "funding-rate", InstID: id})
@@ -802,7 +815,12 @@ func (e *Engine) writer(ctx context.Context) {
 	var bars []store.InstBar
 	var ois []store.OISample
 	var fds []store.FundingSample
+	var flows []store.FlowRow
 	flush := func() {
+		if err := e.st.PutFlow(flows); err != nil {
+			log.Printf("persist order flow: %v", err)
+		}
+		flows = flows[:0]
 		if err := e.st.PutBars("candles_1m", bars); err != nil {
 			log.Printf("persist bars: %v", err)
 		}
@@ -828,6 +846,8 @@ func (e *Engine) writer(ctx context.Context) {
 			ois = append(ois, o)
 		case f := <-e.fdCh:
 			fds = append(fds, f)
+		case r := <-e.flowCh:
+			flows = append(flows, r)
 		case <-t.C:
 			flush()
 		}

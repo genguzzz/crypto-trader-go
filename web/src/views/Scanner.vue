@@ -88,7 +88,30 @@ function sortVal(r: Row): number | null {
     default: return r.values?.[sortKey.value] ?? null
   }
 }
+// The list re-sorts on every snapshot (10s preview scores) — while a finger/mouse is down or the
+// page is scrolling, keep the previous order so the row under the pointer can't move away before
+// the click lands (missed / wrong taps on mobile).
+const holding = ref(false)
+let holdTimer: number | undefined
+let lastOrder: string[] = []
+function hold() { holding.value = true; clearTimeout(holdTimer) }
+function release(delay = 700) { clearTimeout(holdTimer); holdTimer = window.setTimeout(() => (holding.value = false), delay) }
+const onScroll = () => { hold(); release(400) }
+onMounted(() => window.addEventListener('scroll', onScroll, { passive: true, capture: true }))
+onUnmounted(() => { window.removeEventListener('scroll', onScroll, { capture: true }); clearTimeout(holdTimer) })
+
 const rows = computed(() => {
+  const xs = sortedRows.value
+  if (holding.value && lastOrder.length) {
+    const byId = new Map(xs.map(r => [r.instId, r]))
+    const kept = lastOrder.map(id => byId.get(id)).filter((r): r is Row => !!r)
+    const known = new Set(lastOrder)
+    return kept.concat(xs.filter(r => !known.has(r.instId)))
+  }
+  lastOrder = xs.map(r => r.instId)
+  return xs
+})
+const sortedRows = computed(() => {
   const xs = (store.snap?.rows || []).filter(r => {
     if (!catSel.value.includes(r.category)) return false
     if (onlyWatch.value && !r.watch) return false
@@ -157,7 +180,7 @@ const cols = [
 
 <template>
   <div class="scanner" :class="{ narrow }" :style="gridStyle">
-    <section class="list">
+    <section class="list" @pointerdown="hold()" @pointerup="release()" @pointercancel="release()">
       <div class="controls">
         <div class="row r1">
           <SearchInput v-model="q" placeholder="搜索合约" class="grow" />
@@ -253,7 +276,7 @@ const cols = [
 
       <!-- mobile cards -->
       <div v-else class="cards">
-        <div v-for="r in rows" :key="r.instId" class="card" @click="open(r)">
+        <div v-for="r in rows" :key="r.instId" class="card pressable" @click="open(r)">
           <div class="l1">
             <span class="dot" :class="r.status === 'live' ? 'ok' : r.status === 'stale' ? 'bad' : 'warn'"></span>
             <CoinIcon :inst-id="r.instId" :size="22" />
@@ -274,7 +297,7 @@ const cols = [
           <div class="oh">OKX 其他合约 <span class="muted tnum">{{ others.length }}</span>
             <InfoTip>不在当前列表里的 OKX USDT 永续。点开后才按需下载近 7 天历史；加自选后长期保留。</InfoTip>
           </div>
-          <div v-for="c in others" :key="c.instId" class="card" @click="open(c)">
+          <div v-for="c in others" :key="c.instId" class="card pressable" @click="open(c)">
             <div class="l1">
               <CoinIcon :inst-id="c.instId" :size="22" />
               <b>{{ sym(c.instId) }}</b>
@@ -302,19 +325,19 @@ const cols = [
 .scanner { display: grid; grid-template-columns: minmax(760px, 50%) 6px 1fr; height: 100%; }
 .scanner.narrow { display: block; height: auto; }
 .divider { cursor: col-resize; background: var(--line); opacity: 0.5; transition: background 0.15s; }
-.divider:hover { background: var(--accent); opacity: 1; }
+@media (hover: hover) { .divider:hover { background: var(--accent); opacity: 1; } }
 .list { display: flex; flex-direction: column; min-height: 0; }
 .controls { padding: 12px 14px 10px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); background: var(--bg-1); }
 .controls .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .grow { flex: 1; }
 .rule { display: inline-flex; align-items: center; gap: 2px; }
 .icon-link { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; color: var(--text-3); }
-.icon-link:hover { background: var(--bg-2); color: var(--accent); text-decoration: none; }
+@media (hover: hover) { .icon-link:hover { background: var(--bg-2); color: var(--accent); text-decoration: none; } }
 .vsep { width: 1px; height: 18px; background: var(--line-2); margin: 0 2px; }
 .spacer { flex: 1; }
 .count { font-size: var(--fs-sm); color: var(--text-1); font-weight: 600; }
 .clear { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border: none; background: transparent; color: var(--text-3); font-size: var(--fs-xs); }
-.clear:hover { color: var(--text-1); background: var(--bg-2); }
+@media (hover: hover) { .clear:hover { color: var(--text-1); background: var(--bg-2); } }
 .tablewrap { overflow: auto; flex: 1; }
 thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 .sortable { cursor: pointer; user-select: none; }
@@ -323,7 +346,7 @@ tbody td:last-child, thead th:last-child { padding-right: 12px; }
 thead th { height: 32px; border-bottom: 1px solid var(--line-2); }
 tbody tr { cursor: pointer; height: 36px; }
 tbody td { border-bottom-color: rgba(34, 40, 52, 0.6); }
-tbody tr:hover { background: var(--bg-2); }
+@media (hover: hover) { tbody tr:hover { background: var(--bg-2); } }
 tbody tr.sel { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
 tbody tr.inactive { opacity: 0.6; }
 .symb { font-weight: 600; font-size: var(--fs-md); color: var(--text-1); }
@@ -332,6 +355,7 @@ td.sec { color: var(--text-2); }
 td.up { color: var(--up); } td.down { color: var(--down); }
 .ic { margin: 0 4px 0 2px; }
 .star { color: var(--muted); cursor: pointer; width: 18px; }
+.card .star { padding: 6px 10px; margin: -6px -4px; font-size: 16px; } /* finger-sized target */
 .star.on { color: #f5c542; }
 .detail { overflow: auto; min-height: 0; }
 .pad { padding: 16px; }
@@ -351,6 +375,6 @@ table.others td:first-child { width: 24px; }
 <style>
 .removed-pop { width: 320px; }
 .removed-pop .rm { display: grid; grid-template-columns: 18px 70px 1fr auto; gap: 8px; align-items: center; padding: 5px 6px; font-size: var(--fs-sm); border-radius: 6px; }
-.removed-pop .rm:hover { background: var(--bg-3); }
+@media (hover: hover) { .removed-pop .rm:hover { background: var(--bg-3); } }
 .removed-btn[data-state="open"] { border-style: solid; border-color: var(--accent); }
 </style>

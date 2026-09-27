@@ -45,7 +45,8 @@ const leave = () => { if (desktop.value) t = window.setTimeout(() => (open.value
 <style scoped>
 .tip { position: relative; display: inline-flex; }
 .i { border: none; background: transparent; color: var(--text-3); padding: 0 4px; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; gap: 4px; }
-.i:hover, .i[data-state="open"], .i[aria-expanded="true"] { color: var(--accent); }
+.i[data-state="open"], .i[aria-expanded="true"] { color: var(--accent); }
+@media (hover: hover) { .i:hover { color: var(--accent); } }
 .il { font-size: var(--fs-sm); }
 </style>
 

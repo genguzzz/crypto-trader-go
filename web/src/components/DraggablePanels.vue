@@ -107,7 +107,7 @@ function move(id: string, d: number) {
   position: absolute; top: 0; bottom: 0; left: -11px; width: 10px; z-index: 4; display: flex; align-items: flex-start;
   justify-content: center; padding-top: 10px; cursor: grab; user-select: none; border-radius: 4px; color: var(--muted); opacity: 0.25;
 }
-.slot:hover .handle { opacity: 1; background: var(--panel2); }
+@media (hover: hover) { .slot:hover .handle { opacity: 1; background: var(--panel2); } }
 .handle:active { cursor: grabbing; }
 .grip { font-size: 10px; line-height: 1; writing-mode: vertical-rl; letter-spacing: -2px; }
 .small { font-size: 12px; padding: 1px 8px; }

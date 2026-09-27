@@ -21,7 +21,7 @@ const model = defineModel<boolean>({ required: true })
   border: 1px dashed var(--line-2); color: var(--text-2); font-size: var(--fs-sm); cursor: pointer; user-select: none; white-space: nowrap;
   transition: background .12s, color .12s, border-color .12s;
 }
-.fchip:hover { color: var(--text-1); border-color: var(--text-3); }
+@media (hover: hover) { .fchip:hover { color: var(--text-1); border-color: var(--text-3); } }
 .fchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .fchip[data-state="on"] { border-style: solid; border-color: rgba(76, 141, 255, .55); background: var(--accent-bg); color: var(--text-1); }
 .fchip .fc-ic { color: var(--text-3); } .fchip[data-state="on"] .fc-ic { color: var(--accent); }

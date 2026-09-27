@@ -29,7 +29,8 @@ const capGB = computed({
 })
 const bytes = (b?: number) => (b == null ? '—' : b >= 1 << 30 ? (b / (1 << 30)).toFixed(2) + ' GB' : (b / (1 << 20)).toFixed(0) + ' MB')
 const tableLabel: Record<string, string> = {
-  candles_1m: '1m K 线', oi_samples: '持仓量样本', candles_1h: '1H K 线', funding_settled: '资金费（已结算）', funding_obs: '资金费（盘中观测）', other: '规则 / 评分快照 / 其他',
+  candles_1m: '1m K 线', oi_samples: '持仓量样本', candles_1h: '1H K 线', funding_settled: '资金费（已结算）', funding_obs: '资金费（盘中观测）',
+  orderflow_1m: '订单流（逐笔 1m / 足迹）', taker_volume: '主动买卖量（OKX 统计）', other: '规则 / 评分快照 / 其他',
 }
 // columns high → low priority; report ages are indexed none, base, viewed, pool, watch
 const tierCols: [number, string][] = [[4, '自选'], [3, '活跃池'], [2, '最近查看'], [1, '全池录制'], [0, '未跟踪']]
@@ -95,7 +96,7 @@ async function save() {
     <div class="panel">
       <h3>数据存储 <InfoTip>
         <b>分层</b>（取最高）：<b>自选</b> ＞ <b>活跃池</b>（在池内或离池不满 7 天）＞ <b>最近查看</b>（3 天内打开过详情）＞ <b>全池录制</b>（设置类别内、未进池）＞ <b>未跟踪</b>（已下线/类别外且未查看）。<br />
-        <b>按周期分别维护</b>：1m K 线、持仓量、1H K 线、资金费行数差几个数量级，各自有保留期和容量配额（上限 × 55% / 15% / 15% / 5%，其余 10% 给规则与评分快照）。<br />
+        <b>按周期分别维护</b>：1m K 线、持仓量、1H K 线、资金费、订单流行数差几个数量级，各自有保留期和容量配额（上限 × 1m 45% / 持仓量 10% / 1H 10% / 资金费 5% / 逐笔订单流 18% / 主动买卖量 2%，其余 10% 给规则与评分快照）。订单流只录活跃池、自选和正在查看的合约。<br />
         <b>淘汰</b>：每 30 分钟先按下表保留期删除；某类数据超出配额时，从最低层开始逐步缩短保留期（每次 ×2/3），直到回到配额的 90%，但不低于保底（1m/持仓量 26 小时，自选 3 天；1H 21 天），被收紧的格子会标出。<br />
         <b>下载</b>：打开详情或加自选时按需补近 7 天 1m（不超过该层保留期），离开列表的币按新层级自动淘汰。评分快照（战绩）永不删除。<br />
         删除后的空间在库文件内复用，文件本身不缩小。

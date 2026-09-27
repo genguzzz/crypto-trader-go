@@ -167,6 +167,7 @@ type Instrument struct {
 	SettleCcy string
 	CtType    string
 	CtVal     float64
+	TickSz    float64
 	RuleType  string
 	Category  string // instCategory: 1 crypto, 3 stock/ETF, 4 commodity
 	ListTime  int64
@@ -231,7 +232,7 @@ func (c *REST) Instruments(ctx context.Context, instType string) ([]Instrument, 
 	out := make([]Instrument, 0, len(raw))
 	for _, m := range raw {
 		out = append(out, Instrument{InstID: s(m, "instId"), InstType: s(m, "instType"), State: s(m, "state"),
-			SettleCcy: s(m, "settleCcy"), CtType: s(m, "ctType"), CtVal: f(s(m, "ctVal")), RuleType: s(m, "ruleType"),
+			SettleCcy: s(m, "settleCcy"), CtType: s(m, "ctType"), CtVal: f(s(m, "ctVal")), TickSz: f(s(m, "tickSz")), RuleType: s(m, "ruleType"),
 			Category: s(m, "instCategory"), ListTime: i64(s(m, "listTime")), BaseCcy: s(m, "baseCcy"),
 			QuoteCcy: s(m, "quoteCcy"), Uly: s(m, "uly")})
 	}
@@ -376,6 +377,32 @@ func (c *REST) FundingHistory(ctx context.Context, instID string, after int64, l
 			rate = m["fundingRate"]
 		}
 		out = append(out, Funding{InstID: m["instId"], Rate: f(rate), FundingTime: i64(m["fundingTime"])})
+	}
+	return out, nil
+}
+
+// TakerVolume is one rubik period of taker buy/sell volume (USD notional).
+type TakerVolume struct {
+	Ts        int64 // period start, ms
+	Buy, Sell float64
+}
+
+// TakerVolumeHistory returns taker buy/sell volume for a perpetual (newest first), periods older than
+// `end` (ms, 0 = latest). OKX keeps 5m for a few days and 1H for weeks; missing history is zeros.
+func (c *REST) TakerVolumeHistory(ctx context.Context, instID, period string, end int64, limit int) ([]TakerVolume, error) {
+	q := url.Values{"instId": {instID}, "period": {period}, "unit": {"2"}, "limit": {strconv.Itoa(limit)}}
+	if end > 0 {
+		q.Set("end", strconv.FormatInt(end, 10))
+	}
+	var raw [][]string
+	if err := c.get(ctx, c.rubik, "/rubik/stat/taker-volume-contract", q, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]TakerVolume, 0, len(raw))
+	for _, r := range raw {
+		if len(r) >= 3 { // [ts, sellVol, buyVol]
+			out = append(out, TakerVolume{Ts: i64(r[0]), Sell: f(r[1]), Buy: f(r[2])})
+		}
 	}
 	return out, nil
 }

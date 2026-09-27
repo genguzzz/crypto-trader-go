@@ -51,13 +51,13 @@ type tableRule struct {
 }
 
 var retentionRules = []tableRule{
-	{Name: "candles_1m", Table: "candles_1m", Group: "candles_1m", Share: 0.55,
+	{Name: "candles_1m", Table: "candles_1m", Group: "candles_1m", Share: 0.45,
 		Age:   [nTiers]time.Duration{0, 2 * day, 7 * day, 7 * day, 30 * day},
 		Floor: [nTiers]time.Duration{0, 26 * time.Hour, 26 * time.Hour, 26 * time.Hour, 3 * day}},
-	{Name: "oi_samples", Table: "oi_samples", Group: "oi_samples", Share: 0.15,
+	{Name: "oi_samples", Table: "oi_samples", Group: "oi_samples", Share: 0.10,
 		Age:   [nTiers]time.Duration{0, 2 * day, 7 * day, 7 * day, 30 * day},
 		Floor: [nTiers]time.Duration{0, 26 * time.Hour, 26 * time.Hour, 26 * time.Hour, 3 * day}},
-	{Name: "candles_1h", Table: "candles_1h", Group: "candles_1h", Share: 0.15,
+	{Name: "candles_1h", Table: "candles_1h", Group: "candles_1h", Share: 0.10,
 		Age:   [nTiers]time.Duration{30 * day, 30 * day, 60 * day, 60 * day, 180 * day},
 		Floor: [nTiers]time.Duration{7 * day, 21 * day, 21 * day, 21 * day, 30 * day}},
 	{Name: "funding_settled", Table: "funding_samples", Where: "settled=1", Group: "funding_samples", Share: 0.05,
@@ -66,6 +66,27 @@ var retentionRules = []tableRule{
 	{Name: "funding_obs", Table: "funding_samples", Where: "settled=0", Group: "funding_samples",
 		Age:   [nTiers]time.Duration{day, 3 * day, 3 * day, 3 * day, 7 * day},
 		Floor: [nTiers]time.Duration{day, day, day, day, day}},
+	// recorded trades (delta + footprint): only pool/watch/viewed instruments are recorded at all
+	{Name: "orderflow_1m", Table: "orderflow_1m", Group: "orderflow_1m", Share: 0.18,
+		Age:   [nTiers]time.Duration{0, 0, 3 * day, 3 * day, 14 * day},
+		Floor: [nTiers]time.Duration{0, 0, 12 * time.Hour, 12 * time.Hour, 2 * day}},
+	// rubik taker buy/sell history (fetched on demand; refetchable)
+	{Name: "taker_volume", Table: "taker_volume", Group: "taker_volume", Share: 0.02,
+		Age:   [nTiers]time.Duration{3 * day, 7 * day, 30 * day, 30 * day, 90 * day},
+		Floor: [nTiers]time.Duration{day, day, 3 * day, 3 * day, 7 * day}},
+}
+
+// retentionGroups lists budget groups in rule order.
+func retentionGroups() []string {
+	var gs []string
+	seen := map[string]bool{}
+	for _, r := range retentionRules {
+		if !seen[r.Group] {
+			seen[r.Group] = true
+			gs = append(gs, r.Group)
+		}
+	}
+	return gs
 }
 
 // OtherShare is left for rules, score snapshots (never evicted), universe snapshots and settings.
@@ -192,7 +213,7 @@ func (e *Engine) runRetention() {
 	ids := map[string]bool{}
 	if time.Since(e.dbIDsAt) > 6*time.Hour {
 		e.dbIDs = map[string]bool{}
-		for _, tb := range []string{"candles_1m", "candles_1h", "oi_samples", "funding_samples"} {
+		for _, tb := range retentionGroups() {
 			xs, err := e.st.InstIDs(tb)
 			if err != nil {
 				log.Printf("retention: ids %s: %v", tb, err)
@@ -270,7 +291,7 @@ func (e *Engine) runRetention() {
 	}
 	tight := map[string]bool{}
 	if err == nil && rep.CapBytes > 0 {
-		for _, group := range []string{"candles_1m", "oi_samples", "candles_1h", "funding_samples"} {
+		for _, group := range retentionGroups() {
 			b := budget(group)
 			if sizes[group] <= b {
 				continue
@@ -327,10 +348,12 @@ func (e *Engine) runRetention() {
 		rep.Tables = append(rep.Tables, u)
 	}
 	var other int64
+	groups := map[string]bool{}
+	for _, g := range retentionGroups() {
+		groups[g] = true
+	}
 	for tb, n := range sizes {
-		switch tb {
-		case "candles_1m", "oi_samples", "candles_1h", "funding_samples":
-		default:
+		if !groups[tb] {
 			other += n
 		}
 	}
