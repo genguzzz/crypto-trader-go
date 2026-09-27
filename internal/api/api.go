@@ -81,12 +81,12 @@ func httpErr(w http.ResponseWriter, code int, msg string) {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	st := s.E.Status()
-	ok := st.Phase == "live" && time.Now().UnixMilli()-st.ComputedAt < 3*60_000
+	snap, phase := s.E.Snapshot(), s.E.Phase() // cheap: no DB, no runtime stats
+	ok := phase == "live" && time.Now().UnixMilli()-snap.ComputedAt < 3*60_000
 	if !ok {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	writeJSON(w, map[string]any{"ok": ok, "phase": st.Phase, "asOfMinute": st.AsOfMinute, "coverage": st.Coverage})
+	writeJSON(w, map[string]any{"ok": ok, "phase": phase, "asOfMinute": snap.AsOfMinute, "coverage": snap.Coverage})
 }
 
 func (s *Server) meta(w http.ResponseWriter, r *http.Request) {

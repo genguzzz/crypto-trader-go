@@ -55,6 +55,7 @@ onUnmounted(() => clearInterval(timer))
           行数每分钟刷新一次。各类数据按合约分层保留，总大小受存储上限（{{ s.config.storageCapMB }} MB）约束，规则与占用见“设置 → 数据存储”；评分快照、规则长期保留。<br />
           全池 1m 约 60 MB/天。
         </InfoTip></h3>
+        <p v-if="!s.db" class="note">行数统计中…</p>
         <table><tbody><tr v-for="(v, k) in s.db" :key="k"><td>{{ k }}</td><td class="num">{{ v?.toLocaleString() }}</td></tr></tbody></table>
       </div>
     </div>
