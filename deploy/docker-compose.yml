@@ -13,12 +13,12 @@ services:
     command: ["-addr", "127.0.0.1:8686", "-db", "/data/ctg.db"]
     env_file: [ctg.env]                                # optional extra env (e.g. CTG_PROXY), mode 600
     environment:
-      GOMEMLIMIT: 180MiB
+      GOMEMLIMIT: 1536MiB                             # live heap ~180 MB; a limit below it makes GC spin (~20 GC/s, 1.4 cores)
       GOGC: "75"
     volumes:
       - ./bin:/app:ro                                  # the only thing replaced on upgrade
       - ./data:/data                                   # SQLite + icon cache (settings/rules live in the DB)
-    mem_limit: 400m
+    mem_limit: 2g                                      # ctg-prod has 4 GB
     stop_grace_period: 15s
     logging:
       driver: json-file
