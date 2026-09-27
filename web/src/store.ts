@@ -36,6 +36,14 @@ export async function refreshMeta() {
   if (!store.meta.rules.find(r => r.id === store.ruleId)) setRule(def || store.meta.rules[0]?.id || '')
 }
 
+/** Rule options for USelect: grouped presets vs user rules, all flagged unvalidated. */
+export function ruleOptions() {
+  return (store.meta?.rules || []).map(r => ({
+    value: r.id, label: r.name, badge: '未验证', group: r.preset ? '对照规则' : '我的规则',
+    desc: `v${r.version} · ${r.description.length > 48 ? r.description.slice(0, 48) + '…' : r.description}`,
+  }))
+}
+
 export function fieldLabel(key: string) {
   return store.meta?.fields.find(f => f.key === key)?.label || key
 }

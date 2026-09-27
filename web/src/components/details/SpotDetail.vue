@@ -25,7 +25,7 @@ const items = computed(() => {
     <div>
       <div class="bar">
         <span class="t">期现基差走势（bps） <InfoTip>基差 = 永续收盘 ÷ 同时刻 OKX 同名 USDT 现货收盘 − 1。正值 = 永续比现货贵（多头情绪/资金费偏正时常见），负值相反。只是 OKX 一家现货，不代表全市场。</InfoTip></span>
-        <span class="seg"><button v-for="b in ['5m', '15m', '1H']" :key="b" :class="{ on: bar === b }" @click="bar = b">{{ b }}</button></span>
+        <Segmented v-model="bar" size="sm" aria-label="周期" :options="[{ value: '5m', label: '5m' }, { value: '15m', label: '15m' }, { value: '1H', label: '1H' }]" />
       </div>
       <BasisChart :id="ctx.id" :bar="bar" :height="220" />
     </div>
@@ -36,6 +36,4 @@ const items = computed(() => {
 <style scoped>
 .dv { display: grid; gap: 14px; }
 .bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; } .bar .t { font-weight: 600; margin-right: auto; }
-.seg { display: inline-flex; } .seg button { border-radius: 0; margin-left: -1px; padding: 2px 10px; font-size: var(--fs-sm); }
-.seg button:first-child { border-radius: 6px 0 0 6px; } .seg button:last-child { border-radius: 0 6px 6px 0; }
 </style>

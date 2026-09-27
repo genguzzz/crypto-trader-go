@@ -68,7 +68,7 @@ watch(withSpot, () => load())
         <b>叠加现货</b>：OKX 同名 USDT 现货收盘价（黄线），使用左侧独立价格轴；没有同名现货的合约不可叠加。
       </InfoTip></span>
       <span class="bars">
-        <button v-for="b in ['1m', '5m', '15m', '1H', '4H']" :key="b" :class="{ on: bar === b }" @click="bar = b">{{ b }}</button>
+        <Segmented v-model="bar" size="sm" aria-label="K 线周期" :options="[{ value: '1m', label: '1m' }, { value: '5m', label: '5m' }, { value: '15m', label: '15m' }, { value: '1H', label: '1H' }, { value: '4H', label: '4H' }]" />
         <label class="spot" :class="{ muted: !hasSpot }" :title="hasSpot ? 'OKX 同名 USDT 现货，左侧独立价格轴' : '无 OKX USDT 现货映射'">
           <input type="checkbox" v-model="withSpot" :disabled="!hasSpot" /> 叠加现货
         </label>
@@ -83,6 +83,5 @@ watch(withSpot, () => load())
 .chart { height: 340px; }
 h3 { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
 .bars { display: flex; gap: 4px; align-items: center; }
-.bars button { padding: 1px 8px; font-size: 12px; }
 .spot { font-weight: 400; font-size: 12px; margin-left: 6px; display: flex; align-items: center; gap: 4px; }
 </style>

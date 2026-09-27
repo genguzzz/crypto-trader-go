@@ -39,7 +39,7 @@ watch(bar, load)
         这样可以直接比较强弱，而不会因为价格量级不同（BTC 8 万 vs 小币 0.01）产生误读。<br />
         BTC/ETH 只是“大盘代理”，不是全市场指数。只画三者都有数据的时间点。
       </InfoTip></span>
-      <span class="bars"><button v-for="b in ['5m', '15m', '1H', '4H']" :key="b" :class="{ on: bar === b }" @click="bar = b">{{ b }}</button></span>
+      <Segmented v-model="bar" size="sm" aria-label="周期" :options="[{ value: '5m', label: '5m' }, { value: '15m', label: '15m' }, { value: '1H', label: '1H' }, { value: '4H', label: '4H' }]" />
     </h3>
     <div class="legend">
       <span v-for="l in legend" :key="l.id"><i :style="{ background: l.color }"></i>{{ l.id }} {{ l.last.toFixed(2) }}</span>
@@ -52,7 +52,6 @@ watch(bar, load)
 .chart { height: 200px; }
 h3 { display: flex; justify-content: space-between; align-items: center; }
 .bars { display: flex; gap: 4px; }
-.bars button { padding: 1px 8px; font-size: 12px; }
 .legend { display: flex; gap: 12px; font-size: 12px; margin-bottom: 4px; }
 .legend i { display: inline-block; width: 10px; height: 3px; margin-right: 4px; vertical-align: middle; }
 </style>

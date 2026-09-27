@@ -51,9 +51,7 @@ const ladderMax = computed(() => Math.max(ladderAsks.value[0]?.cum || 0, ladderB
 
       <div class="depth-head">
         <span class="t">深度图 <small>USDT 累计 · 悬浮查看推动价格所需资金</small></span>
-        <span class="seg">
-          <button v-for="r in ranges" :key="r" :class="{ on: range === r }" @click="setRange(r)">±{{ r }}%</button>
-        </span>
+        <Segmented :model-value="range" size="sm" aria-label="深度范围" :options="ranges.map(r => ({ value: r, label: `±${r}%` }))" @update:model-value="setRange" />
       </div>
       <DepthChart :bids="bids" :asks="asks" :mid="book.mid" :range="range" :height="compact ? 200 : 260" />
 
@@ -100,8 +98,6 @@ const ladderMax = computed(() => Math.max(ladderAsks.value[0]?.cum || 0, ladderB
 .live { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); display: inline-flex; align-items: center; gap: 4px; }
 .depth-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .depth-head .t { font-weight: 600; } .depth-head small { font-weight: 400; color: var(--text-3); margin-left: 6px; }
-.seg { display: inline-flex; } .seg button { border-radius: 0; margin-left: -1px; padding: 2px 10px; font-size: var(--fs-sm); }
-.seg button:first-child { border-radius: 6px 0 0 6px; } .seg button:last-child { border-radius: 0 6px 6px 0; }
 .grid2 { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start; }
 .dtab td { height: 30px; } .dtab .gt { color: var(--warn); margin-left: 1px; }
 .ladder { font-size: var(--fs-sm); }
