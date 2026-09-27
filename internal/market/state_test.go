@@ -69,3 +69,30 @@ func TestPreviewSeriesUsesFormingBar(t *testing.T) {
 		t.Fatalf("past close = %v %v", c, ok)
 	}
 }
+
+// A long-running process must stay flat: trim bounds every per-instrument history map/slice.
+func TestTrimBoundsInMemoryHistory(t *testing.T) {
+	in := newInst("X")
+	now := int64(1_800_000_000_000)
+	for h := int64(0); h < 24*365; h++ { // a year of hours
+		ts := now - h*hourMs
+		in.hourly[ts] = store.Bar{Ts: ts}
+		in.oiHourly[ts] = 1
+	}
+	for p := int64(0); p < 3*365; p++ { // a year of 8h funding
+		in.fund.settled = append([]store.FundingSample{{FundingTime: now - p*8*hourMs}}, in.fund.settled...)
+	}
+	in.trim(now)
+	if n := len(in.hourly); n > int(keepHourly/hourMs)+1 {
+		t.Fatalf("hourly not bounded: %d", n)
+	}
+	if n := len(in.oiHourly); n > int(keepHourly/hourMs)+1 {
+		t.Fatalf("oiHourly not bounded: %d", n)
+	}
+	if n := len(in.fund.settled); n > int(keepSettled/(8*hourMs))+1 || n < 170 {
+		t.Fatalf("settled funding: %d", n)
+	}
+	if _, ok := in.hourly[now-HourlyDepth*hourMs]; !ok {
+		t.Fatal("trimmed inside the 30-day depth")
+	}
+}

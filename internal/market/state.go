@@ -104,6 +104,14 @@ func (in *Inst) putBar(b store.Bar) {
 	}
 }
 
+// keepHourly bounds the in-memory hourly maps (1H bars, replay OI): 30-day depth + 2 days margin.
+const keepHourly = (HourlyDepth + 48) * hourMs
+
+// keepSettled bounds settled funding in memory (same depth loadFromDB restores).
+const keepSettled = 60 * 24 * hourMs
+
+// trim drops in-memory history older than what any computation reads, so a long-running process
+// stays flat (every map/slice here otherwise grows by one entry per hour/minute/funding period).
 func (in *Inst) trim(now int64) {
 	k := 0
 	for _, x := range in.oi {
@@ -112,7 +120,23 @@ func (in *Inst) trim(now int64) {
 			k++
 		}
 	}
+	clear(in.oi[k:])
 	in.oi = in.oi[:k]
+	for ts := range in.hourly {
+		if ts < now-keepHourly {
+			delete(in.hourly, ts)
+		}
+	}
+	for ts := range in.oiHourly {
+		if ts < now-keepHourly {
+			delete(in.oiHourly, ts)
+		}
+	}
+	s := in.fund.settled
+	i := sort.Search(len(s), func(i int) bool { return s[i].FundingTime >= now-keepSettled })
+	if i > 0 {
+		in.fund.settled = append(s[:0:0], s[i:]...)
+	}
 }
 
 func (in *Inst) addOI(x store.OISample) {
