@@ -69,7 +69,8 @@ async function load(fit = false) {
     }
     if (fit) {
       if (layer.value === 'foot') {
-        chart.timeScale().applyOptions({ barSpacing: 72 })
+        // wide enough for numbers on PC; on a phone favour more bars (pinch to zoom in for numbers)
+        chart.timeScale().applyOptions({ barSpacing: Math.max(40, Math.min(72, (el.value?.clientWidth ?? 600) / 10)) })
         chart.timeScale().scrollToRealTime()
       } else chart.timeScale().fitContent()
     }
@@ -113,6 +114,7 @@ async function loadFlow(cs: Candle[]) {
       candles!.attachPrimitive(foot)
       candles!.applyOptions({ upColor: 'rgba(38,166,154,.18)', downColor: 'rgba(239,83,80,.18)' })
     }
+    vol?.applyOptions({ visible: false }) // footprint already shows volume per level; the bars would cover it
     const fm = new Map<number, FootBar>()
     for (const b of of.bars || []) if (b.levels?.length && b.step) fm.set(chartTime(b.t) as number, { levels: b.levels, step: b.step })
     foot.setData(fm, cs.map(c => ({ time: chartTime(c.t) as number, low: c.l, high: c.h })))
@@ -125,6 +127,7 @@ function clearFlow() {
   if (foot) {
     candles!.detachPrimitive(foot)
     candles!.applyOptions({ upColor: UP, downColor: DOWN })
+    vol?.applyOptions({ visible: true })
     foot = undefined
   }
   if (layer.value === 'k') {
@@ -197,10 +200,10 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
       <span class="bars">
         <Segmented v-model="layer" size="sm" aria-label="图层" :options="[{ value: 'k', label: 'K 线' }, { value: 'delta', label: 'Delta' }, { value: 'foot', label: '足迹' }]" />
         <Segmented v-model="bar" size="sm" aria-label="K 线周期" :options="[{ value: '1m', label: '1m' }, { value: '5m', label: '5m' }, { value: '15m', label: '15m' }, { value: '1H', label: '1H' }, { value: '4H', label: '4H' }]" />
-        <label class="spot" :class="{ muted: !hasSpot }" :title="hasSpot ? 'OKX 同名 USDT 现货，左侧独立价格轴' : '无 OKX USDT 现货映射'">
-          <input type="checkbox" v-model="withSpot" :disabled="!hasSpot" /> 叠加现货
-        </label>
       </span>
+      <label class="spot" :class="{ muted: !hasSpot }" :title="hasSpot ? 'OKX 同名 USDT 现货，左侧独立价格轴' : '无 OKX USDT 现货映射'">
+        <input type="checkbox" v-model="withSpot" :disabled="!hasSpot" /> 叠加现货
+      </label>
     </h3>
     <div class="wrap" :class="{ tall: layer !== 'k' }">
       <div ref="el" class="chart"></div>
@@ -219,7 +222,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
             <template v-if="shown.poc">
               <span>POC <b class="poc">{{ fmtPrice(shown.poc.poc) }}</b></span>
               <span>价值区 <b>{{ fmtPrice(shown.poc.val) }}–{{ fmtPrice(shown.poc.vah) }}</b></span>
-              <span class="muted">每档 {{ fmtPrice(shown.poc.step) }}</span>
+              <span class="muted">每档 {{ +shown.poc.step.toPrecision(6) }}</span>
             </template>
           </template>
           <span v-else class="muted">这根 K 线没有订单流数据{{ bar === '1m' ? '（1m 只有本机逐笔录制）' : '' }}</span>
@@ -242,12 +245,17 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
 h3 { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
 .bars { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .spot { font-weight: 400; font-size: 12px; margin-left: 2px; display: flex; align-items: center; gap: 4px; }
-.legend { position: absolute; left: 6px; top: 4px; right: 70px; z-index: 3; pointer-events: none; font-size: var(--fs-xs); color: var(--text-3); line-height: 1.6; }
+.legend { position: absolute; left: 6px; top: 4px; max-width: calc(100% - 76px); z-index: 3; pointer-events: none; padding: 0 4px; border-radius: 4px; background: rgba(17, 21, 28, .75); font-size: var(--fs-xs); color: var(--text-3); line-height: 1.6; }
 .legend span { margin-right: 8px; white-space: nowrap; }
 .legend b { color: var(--text-1); font-weight: 500; }
 .legend b.up { color: var(--up); } .legend b.down { color: var(--down); } .legend b.poc { color: #f5c542; }
 .axis-lbl { position: absolute; right: 0; z-index: 3; pointer-events: none; display: grid; justify-items: center; padding: 1px 0; background: #2b3242; border-radius: 2px; font-size: 10px; line-height: 15px; color: var(--text-1); }
 .axis-lbl b { font-weight: 500; }
 .axis-lbl .up { color: var(--up); } .axis-lbl .down { color: var(--down); }
-@media (max-width: 900px) { .legend { right: 64px; font-size: 10px; } }
+@media (max-width: 900px) {
+  .legend { max-width: calc(100% - 70px); font-size: 10px; }
+  .chart { height: 320px; } .wrap.tall .chart { height: 420px; }
+  /* two rows: title + spot toggle, then the layer/period switches */
+  h3 { row-gap: 8px; } h3 > span:first-child { flex: 1; } .bars { order: 3; width: 100%; flex-wrap: nowrap; }
+}
 </style>
