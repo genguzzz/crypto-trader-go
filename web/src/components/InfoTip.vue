@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
 import { useDesktop } from '../composables/device'
+import { useScrollLock } from '../composables/scrollLock'
 
 /**
  * ⓘ icon. PC: hover opens a Reka popover (portal + collision detection, so it never overflows the
@@ -10,6 +11,7 @@ import { useDesktop } from '../composables/device'
 defineProps<{ label?: string }>()
 const desktop = useDesktop()
 const open = ref(false)
+useScrollLock(() => open.value && !desktop.value)
 let t: number | undefined
 const enter = () => { if (desktop.value) { clearTimeout(t); open.value = true } }
 const leave = () => { if (desktop.value) t = window.setTimeout(() => (open.value = false), 150) }
@@ -54,6 +56,6 @@ const leave = () => { if (desktop.value) t = window.setTimeout(() => (open.value
   font-size: var(--fs-sm); font-weight: 400; color: var(--text-2); line-height: 1.65; text-align: left; white-space: normal; letter-spacing: normal;
 }
 .tip-sheet-bg { position: fixed; inset: 0; z-index: 139; background: rgba(0, 0, 0, .5); }
-.tip-pop.sheet { position: fixed; left: 0; right: 0; bottom: 0; width: 100%; max-height: 80vh; border-radius: 14px 14px 0 0; padding: 18px 16px 24px; }
+.tip-pop.sheet { overscroll-behavior: contain; position: fixed; left: 0; right: 0; bottom: 0; width: 100%; max-height: 80vh; border-radius: 14px 14px 0 0; padding: 18px 16px 24px; }
 .tip-close { position: absolute; right: 10px; top: 8px; border: none; background: transparent; color: var(--text-3); }
 </style>
