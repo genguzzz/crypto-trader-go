@@ -8,6 +8,7 @@ import InstrumentDetail from '../components/InstrumentDetail.vue'
 import ScoreChip from '../components/ScoreChip.vue'
 import CoinIcon from '../components/CoinIcon.vue'
 import { useDesktop } from '../composables/device'
+import { useLayoutEntry } from '../composables/layout'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,6 +39,7 @@ function startResize(e: MouseEvent) {
   window.addEventListener('mouseup', onUp)
 }
 function resetWidth() { listW.value = 0; localStorage.removeItem('ctg.listWidth') }
+useLayoutEntry('ctg.listWidth', '列表 / 详情宽度', () => listW.value > 0, resetWidth)
 
 const dir = ref<'all' | 'long' | 'short'>((localStorage.getItem('dir') as any) || 'all')
 const cats = ref<Record<string, boolean>>({ '1': true, '3': true, '4': true })

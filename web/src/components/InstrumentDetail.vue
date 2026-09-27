@@ -72,7 +72,7 @@ async function toggleWatch() {
 
 <template>
   <div class="detail" v-if="info">
-    <DraggablePanels storage-key="ctg.detailLayout" :ids="panelIds" :labels="panelLabels">
+    <DraggablePanels storage-key="ctg.detailLayout" :ids="panelIds" :labels="panelLabels" layout-label="详情面板顺序">
       <template #head>
       <div class="head panel">
         <div class="h-top">

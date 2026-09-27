@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useDesktop } from '../composables/device'
+import { useLayoutEntry } from '../composables/layout'
 
 /**
  * Renders named slots as a vertical stack of panels. On PC clients each panel gets a drag handle;
  * dragging with the mouse reorders panels and the order is saved in localStorage.
  * Touch/mobile clients get the default order without handles.
  */
-const props = defineProps<{ storageKey: string; ids: string[]; labels?: Record<string, string> }>()
+const props = defineProps<{ storageKey: string; ids: string[]; labels?: Record<string, string>; layoutLabel?: string }>()
 const desktop = useDesktop()
 
 function load(): string[] {
@@ -23,16 +24,20 @@ const order = ref<string[]>(load())
 watch(order, v => localStorage.setItem(props.storageKey, JSON.stringify(v)), { deep: true })
 const customized = () => order.value.join() !== props.ids.join()
 function reset() { order.value = [...props.ids] }
+useLayoutEntry(props.storageKey, props.layoutLabel || '面板顺序', customized, reset)
 
 const dragging = ref<string | null>(null)
-const armed = ref<string | null>(null) // handle pressed → panel becomes draggable
 const target = ref<{ id: string; after: boolean } | null>(null)
 
+// The handle itself is the draggable element (reliable across browsers); the whole panel is the drag image.
 function onDragStart(e: DragEvent, id: string) {
-  if (armed.value !== id) { e.preventDefault(); return }
   dragging.value = id
   e.dataTransfer?.setData('text/plain', id)
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    const panel = (e.target as HTMLElement).closest('.slot') as HTMLElement | null
+    if (panel) e.dataTransfer.setDragImage(panel, 24, 16)
+  }
 }
 function onDragOver(e: DragEvent, id: string) {
   if (!dragging.value) return
@@ -51,7 +56,7 @@ function onDrop(e: DragEvent) {
   }
   end()
 }
-function end() { dragging.value = null; armed.value = null; target.value = null }
+function end() { dragging.value = null; target.value = null }
 function move(id: string, d: number) {
   const i = order.value.indexOf(id), j = i + d
   if (j < 0 || j >= order.value.length) return
@@ -63,10 +68,6 @@ function move(id: string, d: number) {
 
 <template>
   <div class="stack">
-    <div v-if="desktop && customized()" class="layoutbar">
-      <span class="note">已按你的拖拽顺序排列</span>
-      <button class="small" @click="reset">恢复默认布局</button>
-    </div>
     <div
       v-for="id in order"
       :key="id"
@@ -76,14 +77,12 @@ function move(id: string, d: number) {
         'drop-before': target?.id === id && !target.after && dragging !== id,
         'drop-after': target?.id === id && target.after && dragging !== id,
       }"
-      :draggable="desktop && armed === id"
-      @dragstart="onDragStart($event, id)"
       @dragover="onDragOver($event, id)"
       @drop="onDrop"
       @dragend="end"
     >
-      <div v-if="desktop" class="handle" :title="`按住拖动「${labels?.[id] || id}」面板；双击上移一位`"
-           @mousedown="armed = id" @mouseup="armed = null" @dblclick="move(id, -1)">
+      <div v-if="desktop" class="handle" draggable="true" :title="`按住拖动「${labels?.[id] || id}」面板；双击上移一位`"
+           @dragstart="onDragStart($event, id)" @dblclick="move(id, -1)">
         <span class="grip">⋮⋮</span>
       </div>
       <slot :name="id" />
@@ -107,6 +106,5 @@ function move(id: string, d: number) {
 .slot:hover .handle { opacity: 1; background: var(--panel2); }
 .handle:active { cursor: grabbing; }
 .grip { font-size: 10px; line-height: 1; writing-mode: vertical-rl; letter-spacing: -2px; }
-.layoutbar { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: -4px; }
 .small { font-size: 12px; padding: 1px 8px; }
 </style>
