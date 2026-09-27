@@ -235,7 +235,7 @@ func (e *Engine) refreshInstruments(ctx context.Context) error {
 			in = newInst(i.InstID)
 			e.insts[i.InstID] = in
 		}
-		in.Category, in.ListTime, in.Eligible = i.Category, i.ListTime, true
+		in.Category, in.ListTime, in.Eligible, in.CtVal = i.Category, i.ListTime, true, i.CtVal
 		if e.spotIDs[spotOf(i.InstID)] {
 			in.SpotID = spotOf(i.InstID)
 		} else {

@@ -58,6 +58,7 @@ type REST struct {
 
 	candles  *Limiter // /market/candles 40/2s
 	history  *Limiter // /market/history-candles 20/2s
+	books    *Limiter // /market/books 40/2s
 	rubik    *Limiter // /rubik/* 5/2s
 	fundHist *Limiter // /public/funding-rate-history 10/2s
 	misc     *Limiter // instruments/tickers/oi/funding 20/2s
@@ -73,6 +74,7 @@ func NewREST() *REST {
 		HTTP:     &http.Client{Timeout: 15 * time.Second, Transport: restTransport()},
 		candles:  NewLimiter(30, 2*time.Second),
 		history:  NewLimiter(14, 2*time.Second),
+		books:    NewLimiter(20, 2*time.Second),
 		rubik:    NewLimiter(4, 2*time.Second),
 		fundHist: NewLimiter(8, 2*time.Second),
 		misc:     NewLimiter(10, 2*time.Second),
@@ -272,6 +274,39 @@ func (c *REST) HistoryCandles(ctx context.Context, instID, bar string, after int
 		return nil, err
 	}
 	return ParseCandles(raw), nil
+}
+
+// BookLevel is one price level: price and size in contracts.
+type BookLevel struct{ Px, Sz float64 }
+
+type Book struct {
+	Asks, Bids []BookLevel // asks ascending, bids descending (as OKX returns them)
+	Ts         int64
+}
+
+// Books returns the order book snapshot (up to 400 levels per side).
+func (c *REST) Books(ctx context.Context, instID string, depth int) (Book, error) {
+	var raw []struct {
+		Asks [][]string `json:"asks"`
+		Bids [][]string `json:"bids"`
+		Ts   string     `json:"ts"`
+	}
+	if err := c.get(ctx, c.books, "/market/books", url.Values{"instId": {instID}, "sz": {strconv.Itoa(depth)}}, &raw); err != nil {
+		return Book{}, err
+	}
+	if len(raw) == 0 {
+		return Book{}, fmt.Errorf("empty book")
+	}
+	conv := func(xs [][]string) []BookLevel {
+		out := make([]BookLevel, 0, len(xs))
+		for _, x := range xs {
+			if len(x) >= 2 {
+				out = append(out, BookLevel{f(x[0]), f(x[1])})
+			}
+		}
+		return out
+	}
+	return Book{Asks: conv(raw[0].Asks), Bids: conv(raw[0].Bids), Ts: i64(raw[0].Ts)}, nil
 }
 
 func (c *REST) OpenInterestAll(ctx context.Context) ([]OpenInterest, error) {

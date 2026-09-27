@@ -9,14 +9,21 @@ import SeriesChart from './SeriesChart.vue'
 import ScoreChip from './ScoreChip.vue'
 import CoinIcon from './CoinIcon.vue'
 import DraggablePanels from './DraggablePanels.vue'
+import StatCard from './ui/StatCard.vue'
+import StatDetailDialog from './details/StatDetailDialog.vue'
+import OrderBookView from './market/OrderBookView.vue'
+import { detailIcon } from './details/registry'
 import Modal from './Modal.vue'
 import InfoTip from './InfoTip.vue'
 import ScoringExplainer from './ScoringExplainer.vue'
 
 const props = defineProps<{ id: string }>()
-const panelIds = ['head', 'score', 'price', 'compare', 'series', 'events']
+const panelIds = ['head', 'score', 'book', 'price', 'compare', 'series', 'events']
+const detailKey = ref<string | null>(null)
+const openDetail = (k: string) => (detailKey.value = k)
+const detailCtx = computed(() => ({ id: props.id, info: info.value!, row: row.value }))
 const showFacts = ref(false)
-const panelLabels: Record<string, string> = { head: '行情', score: '评分拆解', price: 'K 线', compare: '相对走势', series: 'OI/资金费', events: '新闻/解锁' }
+const panelLabels: Record<string, string> = { head: '行情', score: '评分拆解', book: '实时盘口', price: 'K 线', compare: '相对走势', series: 'OI/资金费', events: '新闻/解锁' }
 const info = ref<InstrumentInfo | null>(null)
 const err = ref('')
 let timer: number | undefined
@@ -88,31 +95,26 @@ async function toggleWatch() {
         </div>
 
         <div class="stats">
-          <div class="stat">
-            <div class="l">买一 / 卖一</div>
-            <div class="v tnum">{{ price(info.bid) }} <span class="sep">/</span> {{ price(info.ask) }}</div>
-            <div class="s">点差 {{ num(spread, 1) }} bps</div>
-          </div>
-          <div class="stat">
-            <div class="l">12h 成交额</div>
-            <div class="v tnum">{{ usd(row?.turnover12h) }}<small> USDT</small></div>
-            <div class="s" title="近 4h 成交额 ÷ 过去 7 天 4h 中位数">4h 放量 {{ row?.values?.vol_surprise_4h != null ? '×' + Math.exp(row.values.vol_surprise_4h).toFixed(2) : '—' }}</div>
-          </div>
-          <div class="stat">
-            <div class="l">持仓量 OI</div>
-            <div class="v tnum">{{ usd(info.oiUsd) }}<small> USD</small></div>
-            <div class="s" :title="`${usd(info.oiCcy)} 币（币本位）`">4h <span :class="chgClass(row?.values?.oi_chg_4h)">{{ logPct(row?.values?.oi_chg_4h) }}</span> · {{ usd(info.oiCcy) }} 币</div>
-          </div>
-          <div class="stat">
-            <div class="l">资金费（{{ info.fundingIntervalH || '?' }}h 结算）</div>
-            <div class="v tnum" :class="chgClass(info.fundingRate)">{{ (info.fundingRate * 100).toFixed(4) }}%</div>
-            <div class="s" :title="`结算时间 ${time(info.fundingTime)}`">距结算 {{ countdown }}</div>
-          </div>
-          <div class="stat">
-            <div class="l">OKX 现货</div>
-            <div class="v tnum">{{ info.spotId ? price(info.spotLast) : '—' }}</div>
-            <div class="s">{{ info.spotId ? '基差 ' + fieldValue('basis', row?.values?.basis) : '无同名 USDT 现货' }}</div>
-          </div>
+          <StatCard label="买一 / 卖一" :icon="detailIcon('book')" @open="openDetail('book')">
+            <template #value>{{ price(info.bid) }} <span class="sep">/</span> {{ price(info.ask) }}</template>
+            <template #sub>点差 {{ num(spread, 1) }} bps · 看盘口深度</template>
+          </StatCard>
+          <StatCard label="12h 成交额" :icon="detailIcon('turnover')" @open="openDetail('turnover')">
+            <template #value>{{ usd(row?.turnover12h) }}<small> USDT</small></template>
+            <template #sub>4h 放量 {{ row?.values?.vol_surprise_4h != null ? '×' + Math.exp(row.values.vol_surprise_4h).toFixed(2) : '—' }}</template>
+          </StatCard>
+          <StatCard label="持仓量 OI" :icon="detailIcon('oi')" @open="openDetail('oi')">
+            <template #value>{{ usd(info.oiUsd) }}<small> USD</small></template>
+            <template #sub>4h <span :class="chgClass(row?.values?.oi_chg_4h)">{{ logPct(row?.values?.oi_chg_4h) }}</span> · {{ usd(info.oiCcy) }} 币</template>
+          </StatCard>
+          <StatCard :label="`资金费（${info.fundingIntervalH || '?'}h）`" :icon="detailIcon('funding')" :tone="chgClass(info.fundingRate)" @open="openDetail('funding')">
+            <template #value>{{ (info.fundingRate * 100).toFixed(4) }}%</template>
+            <template #sub>距结算 {{ countdown }}</template>
+          </StatCard>
+          <StatCard label="OKX 现货" :icon="detailIcon('spot')" @open="openDetail('spot')">
+            <template #value>{{ info.spotId ? price(info.spotLast) : '—' }}</template>
+            <template #sub>{{ info.spotId ? '基差 ' + fieldValue('basis', row?.values?.basis) : '无同名 USDT 现货' }}</template>
+          </StatCard>
         </div>
       </div>
       </template>
@@ -147,6 +149,12 @@ async function toggleWatch() {
         <div v-else class="note">暂无评分（数据预热中或缺少输入）</div>
       </div>
       </template>
+      <template #book>
+        <div class="panel">
+          <h3>实时盘口 <InfoTip>OKX 永续盘口（每侧 400 档，每秒刷新），金额为 USDT。深度图上悬浮/拖动查看把价格推到某个偏离需要多少资金；点击上方“买一 / 卖一”可放大查看。</InfoTip></h3>
+          <OrderBookView :id="id" compact />
+        </div>
+      </template>
       <template #price>
       <PriceChart :id="id" :has-spot="!!info.spotId" />
       </template>
@@ -165,6 +173,7 @@ async function toggleWatch() {
       </div>
       </template>
     </DraggablePanels>
+    <StatDetailDialog v-model:active="detailKey" :ctx="detailCtx" :title="`${base}/USDT 永续`" />
     <Modal :open="showFacts" :title="`${base} 事实面板（全部字段）`" wide @close="showFacts = false">
       <div class="modal-hint"><InfoTip label="字段说明">
         <b>数值</b>：只使用决策时刻已经可见的数据；盘中每 10 秒按未收盘分钟重算（会变动），战绩只记录分钟确认值。<br />
@@ -203,7 +212,7 @@ async function toggleWatch() {
 .chg.up { background: var(--up-bg); } .chg.down { background: var(--down-bg); }
 .chg small { font-size: var(--fs-xs); font-weight: 500; opacity: .75; margin-right: 4px; }
 .fresh { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); }
-.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--line); padding-top: 12px; gap: 12px 0; }
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--line); padding-top: 8px; gap: 4px; margin: 0 -12px; }
 .stat { padding: 0 14px; border-left: 1px solid var(--line); min-width: 0; }
 .stat:first-child { padding-left: 0; border-left: none; }
 .stat .l { font-size: var(--fs-xs); color: var(--text-3); margin-bottom: 4px; white-space: nowrap; }
@@ -231,8 +240,8 @@ h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pad { padding: 16px; }
 @media (max-width: 900px) {
   .sides { grid-template-columns: 1fr; } .detail { padding: 8px; }
-  .stats { grid-template-columns: 1fr 1fr; gap: 14px 12px; }
-  .stat, .stat:first-child { padding: 0; border-left: none; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin: 0 -8px; }
+
   .px { font-size: 26px; }
 }
 </style>

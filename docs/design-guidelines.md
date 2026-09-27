@@ -28,6 +28,15 @@
 
 允许直接显示在页面上的文字只有：**动态状态**（错误、空状态、加载中、保存结果、缺失字段、实时计数）和**一句话必要警示**（如“未连接 ≠ 空仓”）。
 
+## 2.1 可点击指标卡片与详情
+
+- 指标卡片统一用 `ui/StatCard.vue`（标签+图标 / 数值 / 辅助行；hover 显示箭头与浅底）。可点击就打开详情，不再跳页。
+- 详情统一由 `details/StatDetailDialog.vue` 承载：PC 居中大弹窗，手机底部弹出；顶部标签页可在各详情间切换。
+- 新增一种详情 = 在 `details/registry.ts` 登记 `{key, label, icon, component}`；详情组件只接收 `ctx: DetailCtx`。
+- 详情里的图表必须是 `components/charts/*` 下的可复用组件，并与页面面板共用（例如 `OIChart` 同时用于面板和持仓量详情，`OrderBookView` 同时用于盘口面板和盘口详情）。
+- 数值行用 `ui/KpiRow.vue`；图标统一用 lucide-vue-next。
+- grid 容器一律 `grid-template-columns: minmax(0, 1fr)`（或 `repeat(n, minmax(0, 1fr))`），防止不换行内容把手机页面撑宽。
+
 ## 3. Token 与间距
 
 - 背景三层：`--bg-0` 页面 / `--bg-1` 面板 / `--bg-2` 悬浮与 hover / `--bg-3` 输入与选中。边框 `--line`（细）/ `--line-2`（强）。
