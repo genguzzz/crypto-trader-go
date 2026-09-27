@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { api, type Settings, type Row } from '../api'
+import { api, type Settings } from '../api'
 import { store, refreshMeta, setRule, ruleOptions } from '../store'
 import { usd, catLabel } from '../fmt'
 import ChipGroup from '../components/ui/ChipGroup.vue'
 
-const s = ref<Settings | null>(null)
-const all = ref<Row[]>([])
+// Render immediately from settings already loaded with /meta; refresh in the background.
+const s = ref<Settings | null>(store.meta?.settings ? JSON.parse(JSON.stringify(store.meta.settings)) : null)
+const all = ref<[string, string, number, number][]>([])
 const msg = ref('')
 const saving = ref(false)
 const thresholdWan = computed({
@@ -14,19 +15,18 @@ const thresholdWan = computed({
   set: v => { if (s.value) s.value.threshold = Math.round(Number(v) * 1e4) },
 })
 
-onMounted(async () => {
-  s.value = await api.settings()
-  const snap = await api.universe('all')
-  all.value = snap.rows || []
+onMounted(() => {
+  if (!s.value) api.settings().then(x => (s.value = x))
+  api.turnovers().then(x => (all.value = x.rows)) // compact (~10 KB) list for the live estimate
 })
 
 // Live estimate from the latest confirmed 12h turnover of every instrument.
 const estimate = computed(() => {
-  if (!s.value) return null
+  if (!s.value || !all.value.length) return null
   const cats = new Set(s.value.categories)
-  const pass = all.value.filter(r => r.status === 'live' && cats.has(r.category) && r.turnover12h > s.value!.threshold)
+  const pass = all.value.filter(([, cat, turn, live]) => live === 1 && cats.has(cat) && turn > s.value!.threshold)
   const byCat: Record<string, number> = {}
-  for (const r of pass) byCat[r.category] = (byCat[r.category] || 0) + 1
+  for (const [, cat] of pass) byCat[cat] = (byCat[cat] || 0) + 1
   return { n: Math.min(pass.length, s.value.topN), raw: pass.length, byCat }
 })
 async function save() {
@@ -106,7 +106,7 @@ async function save() {
       <span class="note">{{ msg }}</span>
     </div>
   </div>
-  <div v-else class="page note">加载中…</div>
+  <div v-else class="page note">加载设置…</div>
 </template>
 
 <style scoped>

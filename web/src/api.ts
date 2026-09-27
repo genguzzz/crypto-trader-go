@@ -63,5 +63,6 @@ export const api = {
   status: () => req<any>('/api/v1/status'),
   orderbook: (id: string) => req<OrderBook>(`/api/v1/orderbook?instId=${encodeURIComponent(id)}`),
   settings: () => req<Settings>('/api/v1/settings'),
+  turnovers: () => req<{ asOfMinute: number; rows: [string, string, number, number][] }>('/api/v1/turnovers'),
   saveSettings: (x: Settings) => req<Settings>('/api/v1/settings', { method: 'PUT', body: JSON.stringify(x), headers: { 'Content-Type': 'application/json' } }),
 }
