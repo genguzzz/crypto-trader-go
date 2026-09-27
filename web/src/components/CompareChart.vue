@@ -34,14 +34,17 @@ watch(bar, load)
 <template>
   <div class="panel">
     <h3>
-      相对走势（起点 = 100，永续收盘）
+      <span>相对走势 <InfoTip>
+        把该币、BTC、ETH 的永续收盘价都换算成<b>以共同起点 = 100</b> 的指数：值 105 表示自起点上涨 5%。<br />
+        这样可以直接比较强弱，而不会因为价格量级不同（BTC 8 万 vs 小币 0.01）产生误读。<br />
+        BTC/ETH 只是“大盘代理”，不是全市场指数。只画三者都有数据的时间点。
+      </InfoTip></span>
       <span class="bars"><button v-for="b in ['5m', '15m', '1H', '4H']" :key="b" :class="{ on: bar === b }" @click="bar = b">{{ b }}</button></span>
     </h3>
     <div class="legend">
       <span v-for="l in legend" :key="l.id"><i :style="{ background: l.color }"></i>{{ l.id }} {{ l.last.toFixed(2) }}</span>
     </div>
     <div ref="el" class="chart"></div>
-    <div class="note">BTC/ETH 为大盘代理，不是全市场指数；各自归一化到共同起点，避免绝对价格同轴误读。</div>
   </div>
 </template>
 

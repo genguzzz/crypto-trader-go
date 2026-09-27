@@ -60,7 +60,13 @@ watch(withSpot, () => load())
 <template>
   <div class="panel">
     <h3>
-      合约 K 线（UTC 对齐，本地时间显示）
+      <span>合约 K 线 <InfoTip>
+        <b>数据来源</b>：OKX 永续 1m K 线由本机录制（实时 WS + 启动回填）；进过监控池的币额外回补 7 天 1m；1H/4H 来自 1H K 线，保留 30 天。5m/15m/4H 由服务端按 UTC 对齐聚合。<br />
+        <b>时间</b>：K 线按 UTC 切分，坐标轴显示你的本地时间。<br />
+        <b>成交额柱</b>：底部柱为该根 K 线的 USDT 成交额（volCcyQuote），绿涨红跌。<br />
+        <b>缺口</b>：缺失分钟显示为空档，不用前价补齐，避免把“没数据”画成“没波动”。最后一根为未收盘 K 线，会继续变化。<br />
+        <b>叠加现货</b>：OKX 同名 USDT 现货收盘价（黄线），使用左侧独立价格轴；没有同名现货的合约不可叠加。
+      </InfoTip></span>
       <span class="bars">
         <button v-for="b in ['1m', '5m', '15m', '1H', '4H']" :key="b" :class="{ on: bar === b }" @click="bar = b">{{ b }}</button>
         <label class="spot" :class="{ muted: !hasSpot }" :title="hasSpot ? 'OKX 同名 USDT 现货，左侧独立价格轴' : '无 OKX USDT 现货映射'">
@@ -70,7 +76,6 @@ watch(withSpot, () => load())
     </h3>
     <div ref="el" class="chart"></div>
     <div class="note" v-if="err">图表数据错误：{{ err }}</div>
-    <div class="note">柱底为 USDT 成交额；缺失分钟显示为空档，不补价。1m/5m/15m 来自本机录制（进过池的币回补 7 天 1m），1H/4H 保留 30 天。</div>
   </div>
 </template>
 

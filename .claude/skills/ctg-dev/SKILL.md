@@ -11,6 +11,10 @@ description: crypto-trader-go（OKX 研究台）开发与验证流程：构建�
 - 规则：`internal/rules`（预置规则 `Presets()`）；战绩：`internal/track`。
 - 接口：`internal/api/api.go`；前端：`web/src/{views,components}`，类型在 `web/src/api.ts`。
 
+## 前端规范速查
+- 读 `docs/design-guidelines.md`。说明/口径 → `<InfoTip>`（全局组件，放 h3 旁），公式 → `<ScoringExplainer />`，明细 → `<Modal>`；页面只放动态状态。
+- 颜色/字号只用 `style.css` token；指标“标签在上、数值在下”；PC 专属交互用 `composables/device.ts` 的 `useDesktop()`。
+
 ## 常用命令
 ```bash
 make test                                   # go vet + go test -race + vue-tsc

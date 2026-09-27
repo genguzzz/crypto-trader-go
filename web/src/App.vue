@@ -24,6 +24,13 @@ const phaseText = computed(() => {
     <div class="pool" v-if="s">
       <span class="dot" :class="store.connected ? 'ok' : 'bad'" :title="store.connected ? '推送已连接' : '推送断开，自动重连中'"></span>
       <b>{{ s.coverage.active }}</b><span class="muted">/{{ s.topN }} 达标</span>
+      <InfoTip class="hide-sm">
+        <b>达标</b>：12h USDT 成交额（连续 720 根已确认 1m K 线）严格大于阈值、按成交额取前 N 的合约数。<br />
+        <b>确认</b>：最近一次按“已收盘分钟”计算的时间，监控池增删只在这时发生。<br />
+        <b>盘中</b>：事实面板和分数每 10 秒按未收盘分钟重算（会变动），不进入战绩。<br />
+        <b>临时名单</b>：启动时 1m 窗口补齐前，用 5m K 线近似（实测与精确结果一致）。<br />
+        绿点 = 实时推送已连接；红点 = 断开，自动重连中。
+      </InfoTip>
       <span class="muted hide-sm">· 12h &gt; {{ usd(s.threshold) }} USDT</span>
       <span class="muted">· 确认 {{ time(s.decisionTs) }}</span>
       <span class="tag" v-if="s.preview" title="事实面板与分数每 10 秒按当前未收盘分钟重算（会变动）；战绩只记录分钟确认值">盘中 {{ clock(s.previewAt) }} · 每10秒</span>

@@ -39,14 +39,19 @@ function dedupe<T extends { time: any }>(xs: T[]) {
 <template>
   <div class="grid">
     <div class="panel">
-      <h3>持仓量 oiCcy（币本位，7 天）</h3>
+      <h3>持仓量 OI（币本位，7 天） <InfoTip>
+        <b>口径</b>：oiCcy = 以标的币数量计的未平仓量。用币数而不是美元，是为了排除“价格上涨导致美元持仓变大”的假象。<br />
+        <b>数据</b>：OKX rubik 1H 历史 + 近 8 小时 5m + 本机每分钟录制。{{ oiNote }}<br />
+        <b>注意</b>：OI 是多空双方共同的未平仓合约，OI 增加只说明“新开仓多于平仓”，<b>不能</b>说明是多头还是空头在加仓。
+      </InfoTip></h3>
       <div ref="oiEl" class="chart"></div>
-      <div class="note">{{ oiNote }} · OI 是多空双方共同未平仓，不代表方向</div>
     </div>
     <div class="panel">
-      <h3>资金费（已结算，近 14 天）</h3>
+      <h3>资金费（已结算，近 14 天） <InfoTip>
+        每根柱是一次<b>已结算</b>的资金费率（单次，%）。正值 = 多头付给空头，负值 = 空头付给多头。<br />
+        OKX 不同合约结算间隔不同（4h 或 8h），跨币比较请看事实面板里的“资金费/小时”。{{ fNote }}
+      </InfoTip></h3>
       <div ref="fEl" class="chart"></div>
-      <div class="note">{{ fNote }} · 4h/8h 结算间隔不同，比较时看“/小时”字段</div>
     </div>
   </div>
 </template>
