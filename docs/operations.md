@@ -65,7 +65,7 @@ make test                      # go vet + go test -race + vue-tsc
 | `-storage-cap-mb` | 2048 | 仅首次运行默认的存储上限；之后以设置页“数据存储”为准。各类数据按合约分层保留，规则见 [架构 §3](architecture.md#3-关键算法摘要) |
 | `-web` | true | false 时只提供 API |
 | `CTG_PROXY` / `-doh` | — / off | 无法直连 OKX 的网络：出站 HTTP 代理（可带凭据）、DoH 解析 |
-| `GOMEMLIMIT` | compose 中 180MiB | 常驻约 175 MB；容器 `mem_limit: 400m` |
+| `GOMEMLIMIT` | compose 中 1536MiB | 常驻堆约 180 MB（全量永续目录+缓存后）；容器 `mem_limit: 2g`。上限不能低于常驻堆，否则 GC 空转：曾设 180MiB 导致每秒约 20 次 GC、CPU 常驻 1.4 核 |
 
 全池 1m 约 60 MB/天；淘汰任务每 30 分钟运行，把库控制在存储上限内（“设置 → 数据存储”看各表占用与生效保留期）。删除的空间在文件内复用，文件不会缩小。
 
