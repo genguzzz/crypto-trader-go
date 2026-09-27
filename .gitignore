@@ -1,27 +1,68 @@
-# Local credentials and account data
+# ---- Secrets & credentials (never commit) ----
 .env
 .env.*
 !.env.example
+*.env
+!*.env.example
+ctg.env
+.auth
+*.auth
 credentials*
 secrets*
+*secret*
+*token*
+!**/*token*.go
+!**/*token*.ts
 *.key
 *.pem
+*.crt
 *.p12
-*.sqlite
-*.sqlite-*
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*
+.netrc
+cloudflare.ini
+
+# ---- Runtime data (SQLite, icon cache, logs, screenshots) ----
+/data/
 *.db
 *.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.log
+*.pid
+*.out
+*.prof
+*.pprof
+coverage.*
 
-# Build and temporary artifacts
-/tmp/
+# ---- Build artifacts ----
+/bin/
 bin/
 dist/
 !web/dist/
 web/dist/*
 !web/dist/.gitkeep
+*.exe
+*.test
 node_modules/
-.DS_Store
-*.log
+.vite/
+*.tsbuildinfo
+research/poc/results/cache/
 
-# Recorder data
-/data/
+# ---- Server-side deploy state (lives only on the host) ----
+deploy/bin/
+deploy/data/
+
+# ---- Editor / OS / local tool state ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+/tmp/
+.claude/settings.local.json
+.claude/*.local.*
