@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { CandlestickSeries, LineSeries, HistogramSeries, type IChartApi, type ISeriesApi, type MouseEventParams, type Time } from 'lightweight-charts'
+import { CandlestickSeries, LineSeries, HistogramSeries, AreaSeries, type IChartApi, type ISeriesApi, type MouseEventParams, type Time } from 'lightweight-charts'
 import { api, type Candle, type FlowBar } from '../api'
 import { chartTime, price as fmtPrice, usd, time as fmtTime } from '../fmt'
 import { baseChart, precisionFor } from './charts'
@@ -14,7 +14,8 @@ const bar = ref(localStorage.getItem('bar') || '15m')
 type Layer = 'k' | 'delta' | 'foot'
 const layer = ref<Layer>((localStorage.getItem('ctg.chartLayer') as Layer) || 'k')
 const withSpot = ref(localStorage.getItem('ctg.chartSpot') === '1')
-const withOI = ref(localStorage.getItem('ctg.chartOI') === '1')
+const withOIL = ref(localStorage.getItem('ctg.chartOIL') === '1') // OI level area: off by default
+const withOID = ref(localStorage.getItem('ctg.chartOID') !== '0') // OI change bars: on by default
 const err = ref('')
 const el = ref<HTMLElement>()
 let chart: IChartApi | undefined
@@ -22,7 +23,8 @@ let candles: ISeriesApi<'Candlestick'> | undefined
 let vol: ISeriesApi<'Histogram'> | undefined
 let spot: ISeriesApi<'Line'> | undefined
 let delta: ISeriesApi<'Histogram'> | undefined
-let oi: ISeriesApi<'Histogram'> | undefined
+let oiL: ISeriesApi<'Area'> | undefined
+let oiD: ISeriesApi<'Histogram'> | undefined
 let cvd: ISeriesApi<'Line'> | undefined
 let foot: Footprint | undefined
 let timer: number | undefined
@@ -36,7 +38,7 @@ const barMs: Record<string, number> = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '
 const bars = ref<Candle[]>([])
 const flow = ref<Map<number, FlowBar>>(new Map())
 const spotByT = ref<Map<number, number>>(new Map())
-const oiByT = ref<Map<number, { v: number; d: number }>>(new Map()) // bar open → OI (USD, last sample) and change vs the previous bar
+const oiByT = ref<Map<number, { v: number; d?: number }>>(new Map()) // bar open → OI (USD, last sample) and change vs the previous bar
 const recording = ref(false)
 const hover = ref<number | null>(null) // index into bars
 const axisLabel = ref<{ top: number; px: number; pct: number } | null>(null)
@@ -86,14 +88,23 @@ async function load(fit = false) {
   }
 }
 
-// ---- OI change: bars per candle (like volume) in a band just above volume; legend shows OI and its change ----
-const PRICE_MARGINS = { top: 0.08, bottom: 0.2 }, PRICE_MARGINS_OI = { top: 0.08, bottom: 0.4 }
+// ---- OI: level (area) and per-bar change (bars, like volume), each in its own band above volume ----
+const BAND = 0.14 // height of each OI band; volume keeps the bottom 18%
+function layoutBands() {
+  if (!chart || !candles) return
+  let bottom = 0.2
+  if (oiD) { chart.priceScale('oid').applyOptions({ scaleMargins: { top: 1 - bottom - BAND, bottom } }); bottom += BAND }
+  if (oiL) { chart.priceScale('oil').applyOptions({ scaleMargins: { top: 1 - bottom - BAND, bottom } }); bottom += BAND }
+  candles.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: bottom + (oiD || oiL ? 0.02 : 0) } })
+}
 async function loadOI(cs: Candle[]) {
   if (!chart) return
-  if (!withOI.value || !props.hasOi) {
-    if (oi) { chart.removeSeries(oi); oi = undefined }
+  const wantL = withOIL.value && props.hasOi, wantD = withOID.value && props.hasOi
+  if (!wantL && oiL) { chart.removeSeries(oiL); oiL = undefined }
+  if (!wantD && oiD) { chart.removeSeries(oiD); oiD = undefined }
+  if (!wantL && !wantD) {
     oiByT.value = new Map()
-    candles!.priceScale().applyOptions({ scaleMargins: PRICE_MARGINS })
+    layoutBands()
     return
   }
   const step = barMs[bar.value], from = cs[0].t
@@ -101,22 +112,22 @@ async function loadOI(cs: Candle[]) {
   const pts = (await api.series(props.id, 'oi', hours)) || []
   const last = new Map<number, number>()
   for (const p of pts) last.set(Math.floor(p.t / step) * step, p.u ?? p.v) // ascending: last sample in each bar wins
-  const m = new Map<number, { v: number; d: number }>()
+  const m = new Map<number, { v: number; d?: number }>()
   let prev: number | undefined, prevT = 0
   for (const [t, v] of last) {
     // change only between adjacent bars: a bar after a gap (hourly-only history on small periods)
     // would otherwise carry several bars' worth of change
-    if (prev !== undefined && t >= from && t - prevT === step) m.set(t, { v, d: v - prev })
+    if (t >= from) m.set(t, { v, d: prev !== undefined && t - prevT === step ? v - prev : undefined })
     prev = v
     prevT = t
   }
-  if (!oi) {
-    oi = chart.addSeries(HistogramSeries, { priceScaleId: 'oi', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, base: 0 })
-    chart.priceScale('oi').applyOptions({ scaleMargins: { top: 0.62, bottom: 0.2 } })
-    candles!.priceScale().applyOptions({ scaleMargins: PRICE_MARGINS_OI })
-  }
-  oi.setData([...m].map(([t, x]) => ({ time: chartTime(t), value: x.d, color: x.d >= 0 ? 'rgba(122,167,255,.75)' : 'rgba(245,158,66,.75)' })))
+  if (!chart) return
+  if (wantL && !oiL) oiL = chart.addSeries(AreaSeries, { lineColor: '#7aa7ff', lineWidth: 1, topColor: 'rgba(122,167,255,.28)', bottomColor: 'rgba(122,167,255,.02)', priceScaleId: 'oil', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false })
+  if (wantD && !oiD) oiD = chart.addSeries(HistogramSeries, { priceScaleId: 'oid', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, base: 0 })
+  oiL?.setData([...m].map(([t, x]) => ({ time: chartTime(t), value: x.v })))
+  oiD?.setData([...m].filter(([, x]) => x.d !== undefined).map(([t, x]) => ({ time: chartTime(t), value: x.d!, color: x.d! >= 0 ? 'rgba(122,167,255,.75)' : 'rgba(245,158,66,.75)' })))
   oiByT.value = m
+  layoutBands()
 }
 
 // ---- hot data: while this chart is on screen, the forming bars refresh every second ----
@@ -264,7 +275,7 @@ onMounted(() => {
   candles = chart.addSeries(CandlestickSeries, { upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN })
   vol = chart.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false })
   chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
-  candles.priceScale().applyOptions({ scaleMargins: withOI.value && props.hasOi ? PRICE_MARGINS_OI : PRICE_MARGINS })
+  layoutBands()
   chart.subscribeCrosshairMove(onCrosshair)
   load(true)
   timer = window.setInterval(() => load(), 10_000)
@@ -273,7 +284,8 @@ onMounted(() => {
 onUnmounted(() => { clearInterval(timer); clearInterval(hotTimer); chart?.remove() })
 watch(bar, v => { localStorage.setItem('bar', v); load(true) })
 watch(withSpot, v => { localStorage.setItem('ctg.chartSpot', v ? '1' : '0'); load() })
-watch(withOI, v => { localStorage.setItem('ctg.chartOI', v ? '1' : '0'); load() })
+watch(withOIL, v => { localStorage.setItem('ctg.chartOIL', v ? '1' : '0'); load() })
+watch(withOID, v => { localStorage.setItem('ctg.chartOID', v ? '1' : '0'); load() })
 watch(layer, (v, old) => {
   localStorage.setItem('ctg.chartLayer', v)
   if (old === 'foot' || v === 'k') clearFlow()
@@ -293,7 +305,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <b>POC / 价值区</b>：黄框为该根 K 线成交最多的价位（Point of Control）；每根 K 线左侧的细金线是价值区（从 POC 向两侧扩展、覆盖 70% 成交额的价格区间），数值见左上角。<b>未回补 POC</b>：已收盘 K 线的 POC 之后没有任何 K 线的最高–最低价穿过它，就用金色虚线画到最右侧，被穿过后不再显示——常用来观察价格是否会回来“回补”。<br />
         <b>失衡</b>（对角比较）：某价位的主动买 ≥ 低一档主动卖的 3 倍，在右侧标绿色竖条、数字变绿；主动卖 ≥ 高一档主动买的 3 倍，在左侧标红色竖条。量太小（低于该 K 线各价位单边成交额中位数）的不算。连续 3 档及以上同方向失衡为<b>堆叠失衡</b>，该侧加描边，常被当作主动方强势的信号，不是必然。<br />
         <b>成交额柱</b>：底部柱为该根 K 线的 USDT 成交额，绿涨红跌。缺失分钟显示为空档；最后一根为未收盘 K 线。<br />
-        <b>现货 / OI</b>：现货为 OKX 同名 USDT 现货收盘价（黄线），和合约 K 线共用右侧价格轴，缩放、拖动都跟随 K 线，两者的间距就是基差；OI 为持仓量变化柱（每根 K 线相对上一根的增减，蓝增橙减），和成交额柱一样画在 K 线下方的独立区域，左上角显示持仓量与变化（近期逐分钟采样；更早只有 1 小时采样，小周期在那段没有变化柱）。没有对应数据时按钮置灰。<br />
+        <b>现货 / OI</b>：现货为 OKX 同名 USDT 现货收盘价（黄线），和合约 K 线共用右侧价格轴，缩放、拖动都跟随 K 线，两者的间距就是基差；<b>OI Δ</b>（默认开）为持仓量变化柱：每根 K 线相对上一根的增减，蓝增橙减，和成交额柱一样画在 K 线下方的独立区域；<b>OI</b> 为持仓量走势（面积图），在变化柱上方再占一条。左上角显示持仓量与变化（近期逐分钟采样；更早只有 1 小时采样，小周期在那段没有变化柱）。没有对应数据时按钮置灰。<br />
         <b>刷新</b>：打开详情页时最新几根 K 线每秒刷新（服务端 OKX WebSocket 推送的未收盘 K 线），整段数据和订单流每 10 秒刷新；页面切到后台时暂停。<br />
         <b>时间</b>：按设置页选择的时区显示（默认 UTC+8）。右下角 ◎ 或双击图表回到最新并自动缩放。
       </InfoTip></span>
@@ -303,7 +315,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
       </span>
       <span class="ovl">
         <FilterChip v-model="withSpot" label="现货" :disabled="!hasSpot" :title="hasSpot ? '叠加 OKX 同名 USDT 现货收盘价（黄线，与 K 线同一价格轴）' : '没有 OKX 同名 USDT 现货'" />
-        <FilterChip v-model="withOI" label="OI" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示持仓量变化柱（数值见左上角）' : '没有持仓量数据'" />
+        <FilterChip v-model="withOID" label="OI Δ" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示每根 K 线的持仓量变化柱（蓝增橙减）' : '没有持仓量数据'" />
+        <FilterChip v-model="withOIL" label="OI" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示持仓量走势（面积图）' : '没有持仓量数据'" />
       </span>
     </h3>
     <div class="wrap" :class="{ tall: layer !== 'k' }">
@@ -316,7 +329,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <span>涨跌 <b :class="tone(shown.chg)">{{ pct(shown.chg) }}</b></span><span>振幅 <b>{{ pct(shown.amp) }}</b></span>
         <span>额 <b>{{ usd(shown.c.q) }}</b></span>
         <span v-if="withSpot && shown.spot != null">现货 <b class="spot">{{ fmtPrice(shown.spot) }}</b> <small class="muted">基差 {{ pct(shown.c.c / shown.spot - 1, 3) }}</small></span>
-        <span v-if="withOI && shown.oi">OI <b class="oi">{{ usd(shown.oi.v) }}</b> <small :class="tone(shown.oi.d)">{{ (shown.oi.d >= 0 ? '+' : '−') + usd(Math.abs(shown.oi.d)) }}（{{ pct(shown.oi.d / (shown.oi.v - shown.oi.d)) }}）</small></span>
+        <span v-if="(withOID || withOIL) && shown.oi">OI <b class="oi">{{ usd(shown.oi.v) }}</b> <small v-if="shown.oi.d !== undefined" :class="tone(shown.oi.d)">{{ (shown.oi.d >= 0 ? '+' : '−') + usd(Math.abs(shown.oi.d)) }}（{{ pct(shown.oi.d / (shown.oi.v - shown.oi.d)) }}）</small></span>
         <template v-if="layer !== 'k'">
           <br />
           <template v-if="shown.f">
