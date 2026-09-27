@@ -53,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		writeJSON(w, map[string]any{"connected": false, "reason": "只读账户接入属于 I4，尚未启用；这不代表空仓"})
 	})
+	mux.HandleFunc("GET /api/v1/turnovers", s.turnovers)
 	mux.HandleFunc("GET /api/v1/settings", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.E.Settings()) })
 	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
 	mux.HandleFunc("GET /api/v1/stream", s.stream)
@@ -62,7 +63,7 @@ func (s *Server) Handler() http.Handler {
 	if s.Web != nil {
 		mux.Handle("/", spa(s.Web))
 	}
-	return logRequests(s.basicAuth(mux))
+	return logRequests(s.basicAuth(withGzip(mux)))
 }
 
 func (s *Server) basicAuth(h http.Handler) http.Handler {
@@ -219,6 +220,20 @@ func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// turnovers is a compact list for the settings-page estimate: [instId, category, turnover12h, live(0/1)].
+func (s *Server) turnovers(w http.ResponseWriter, r *http.Request) {
+	snap := s.E.Snapshot()
+	rows := make([][4]any, 0, len(snap.Rows))
+	for _, x := range snap.Rows {
+		live := 0
+		if x.Status == "live" {
+			live = 1
+		}
+		rows = append(rows, [4]any{x.InstID, x.Category, x.Turnover12h, live})
+	}
+	writeJSON(w, map[string]any{"asOfMinute": snap.AsOfMinute, "rows": rows})
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
