@@ -53,13 +53,13 @@ jobs:
           install -d -m 700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          printf 'Host tyo\n  HostName %s\n  User root\n  IdentityFile ~/.ssh/deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ConnectTimeout 15\n' "$DEPLOY_HOST" > ~/.ssh/config
+          printf 'Host greencloud\n  HostName %s\n  User root\n  IdentityFile ~/.ssh/deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ConnectTimeout 15\n' "$DEPLOY_HOST" > ~/.ssh/config
           chmod 600 ~/.ssh/config
       - name: Deploy (build, upload, swap, restart, health-check, auto-rollback)
         run: deploy/deploy.sh
       - name: Public check
         run: |
-          for i in $(seq 1 30); do
+          for i in $(seq 1 100); do   # health stays 503 until the restart backfill finishes (~2 min)
             if curl -fsS -m 5 https://ctg.gugenzzz.top/api/v1/health >/dev/null; then echo "public endpoint OK"; exit 0; fi
             sleep 3
           done

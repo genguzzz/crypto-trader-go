@@ -101,7 +101,7 @@ openspec/              需求与变更记录
 ## 7. 部署形态
 
 ```
-本机 deploy/deploy.sh ──scp 静态二进制──▶ tyo:/opt/ctg/bin/ctg ──(bind mount, ro)──▶ 容器 ctg
+本机 deploy/deploy.sh ──scp 静态二进制──▶ greencloud:/opt/ctg/bin/ctg ──(bind mount, ro)──▶ 容器 ctg
                                                                   distroless/static:nonroot (2 MB)
 公网 443 ─▶ nginx stream（SNI 默认路由）─▶ 127.0.0.1:8444 gateway-ctg.conf（TLS *.gugenzzz.top）─▶ 127.0.0.1:8686
 ```

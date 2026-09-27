@@ -6,7 +6,7 @@
 - 开发流程、命令、验证方法：用项目 skill `ctg-dev`（`.claude/skills/ctg-dev/SKILL.md`）。
 - 用中文和用户沟通（用户中文更顺）。
 - 改代码后必须：`make test`、重建 `bin/ctg` 并重启本地服务、用浏览器（playwright-core + 本机 Chrome）截图确认页面。
-- 线上：https://ctg.gugenzzz.top（tyo Docker）。用户要求上线时运行 `deploy/deploy.sh`（替换二进制，不重建镜像，失败自动回滚），数据在服务器 SQLite，不要覆盖或重新下载。
+- 线上：https://ctg.gugenzzz.top（greencloud Docker）。用户要求上线时运行 `deploy/deploy.sh`（替换二进制，不重建镜像，失败自动回滚），数据在服务器 SQLite，不要覆盖或重新下载。
 - push 到 `main` 即由 GitHub Actions 自动测试并部署（云端会话无法 SSH 时用这条路，`gh run watch` 看结果、访问线上验证）。不要在仓库里写服务器域名/IP，它们只在 GitHub Secrets 与本机 `~/.ssh/config`。
 - 前端改动遵守 [界面设计规范](docs/design-guidelines.md)：三级信息层级、语义色、说明文字收进 InfoTip/Modal，不在页面上堆字。
 - 新需求先记入 `docs/roadmap.md`；改口径/加数据源/涉及账户权限的先与用户确认。低优先级的“以后要做”只记待办，不提前实现。

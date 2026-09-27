@@ -4,7 +4,7 @@
 
 > 只用 OKX **公开**行情接口：不需要 API Key、不读账户、**不下单**。分数是规则排序，不是胜率或交易建议。
 
-线上：**https://ctg.gugenzzz.top**（tyo，Docker；暂未启用登录，见[待办](docs/roadmap.md)）。
+线上：**https://ctg.gugenzzz.top**（greencloud，Docker；暂未启用登录，见[待办](docs/roadmap.md)）。
 
 ![扫描页](docs/images/scanner.png)
 

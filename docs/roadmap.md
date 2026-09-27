@@ -13,7 +13,7 @@
 | 2026-09-27 | 界面：设计 token 与信息层级重构；说明文字收进 InfoTip/Modal；PC 面板拖拽与顶部布局菜单；Reka UI 组件库（分段/下拉/筛选/搜索）；导航重设计与手机底部标签栏；PC 单滚动区；手机不横向溢出；设置页秒开 + API gzip。规范见 `docs/design-guidelines.md` |
 | 2026-09-27 | 搜索覆盖 OKX 全部 USDT 永续（目录常驻内存，点开才按需下载近 7 天历史）；数据分层淘汰（自选/活跃池/最近查看/全池录制/未跟踪 × 各周期表独立保留期与容量配额，总上限默认 2 GB，设置页可改）（`openspec/changes/storage-retention-and-search`） |
 | 2026-09-27 | 上线：zouter Docker（distroless 运行时 + 挂载二进制，`deploy/deploy.sh` 一键升级/回滚），`https://ctg.gugenzzz.top`（nginx SNI 默认路由 + 通配符证书），复用本机数据库 |
-| 2026-09-27 | 迁移：服务器从 zouter 换到 tyo（东京 2C/4G，Debian 13，xanmod BBRv3）；数据整库迁移，`ctg.gugenzzz.top` A/AAAA 改指 tyo；GitHub Actions 部署密钥与 Secrets 重配到 tyo |
+| 2026-09-27 | 迁移：服务器从 zouter 换到 greencloud（GreenCloud 东京 2C/4G，Debian 13，xanmod BBRv3）；数据整库迁移，`ctg.gugenzzz.top` A/AAAA 改指 greencloud；GitHub Actions 部署密钥与 Secrets 重配到 greencloud |
 
 ## 进行中
 
@@ -22,7 +22,7 @@
 ## 待办（按优先级）
 
 1. [ ] **账号登录**：目前线上无登录、任何人可访问并修改设置/规则/自选。计划做正式登录（会话 Cookie + 密码哈希、登录页、写操作鉴权、登录限速），替代已移除的 HTTP Basic（2026-09-27 移除）。
-2. [ ] **I0 退出条件**：服务器（tyo）连续运行 72h，分钟覆盖 ≥99.9%、0 未修复缺口（看“系统”页与 `deploy/deploy.sh --status`）。
+2. [ ] **I0 退出条件**：服务器（greencloud）连续运行 72h，分钟覆盖 ≥99.9%、0 未修复缺口（看“系统”页与 `deploy/deploy.sh --status`）。
 3. [ ] 战绩积累后复盘：≥30 天上线后记录再评估三条对照规则与自定义规则。
 4. [ ] 评分方法可选项：z-score（截尾）替代分位、BTC beta 中性化、按滚动 IC 加权组合（需先有足够样本外数据）。
 5. [ ] 数据库迁移预案：多实例或数据量超出 SQLite 时改 PostgreSQL（只改 `internal/store`）。
