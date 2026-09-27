@@ -11,7 +11,7 @@ services:
     user: "65532:65532"
     entrypoint: ["/app/ctg"]
     command: ["-addr", "127.0.0.1:8686", "-db", "/data/ctg.db"]
-    env_file: [ctg.env]                                # CTG_AUTH=user:pass (optional CTG_PROXY), mode 600
+    env_file: [ctg.env]                                # optional extra env (e.g. CTG_PROXY), mode 600
     environment:
       GOMEMLIMIT: 180MiB
       GOGC: "75"

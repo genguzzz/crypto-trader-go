@@ -9,4 +9,4 @@
 - 线上：https://ctg.gugenzzz.top（zouter Docker）。用户要求上线时运行 `deploy/deploy.sh`（替换二进制，不重建镜像，失败自动回滚），数据在服务器 SQLite，不要覆盖或重新下载。
 - 前端改动遵守 [界面设计规范](docs/design-guidelines.md)：三级信息层级、语义色、说明文字收进 InfoTip/Modal，不在页面上堆字。
 - 新需求先记入 `docs/roadmap.md`；改口径/加数据源/涉及账户权限的先与用户确认。低优先级的“以后要做”只记待办，不提前实现。
-- 不读取、打印或提交任何凭据（OKX key、代理密码、`data/.auth` 等）。
+- 不读取、打印或提交任何凭据（OKX key、代理密码、服务器 `ctg.env` 等）。

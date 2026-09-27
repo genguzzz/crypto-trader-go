@@ -4,7 +4,7 @@
 
 | 项 | 值 |
 |---|---|
-| 地址 | https://ctg.gugenzzz.top（HTTP Basic 登录，凭据在服务器 `/opt/ctg/ctg.env` 和本机 `data/.auth`，均不入库） |
+| 地址 | https://ctg.gugenzzz.top（暂无登录，公开可访问；登录见待办） |
 | 机器 | zouter（`root@zouter.gugenzzz.top`，Debian 12，1C/1G，x86_64，可直连 OKX） |
 | 进程 | Docker 容器 `ctg`（compose 项目 `/opt/ctg`），`network_mode: host`，监听 `127.0.0.1:8686` |
 | 入口 | nginx stream 按 SNI 默认把 `*.gugenzzz.top` 送到 `127.0.0.1:8444` → `/etc/nginx/conf.d/gateway-ctg.conf` 反代到 8686（SSE 关缓冲）；80 跳 443；证书为已有 `*.gugenzzz.top` 通配符 |
@@ -16,7 +16,7 @@
 ```
 /opt/ctg/
 ├── docker-compose.yml   # 来自仓库 deploy/docker-compose.yml
-├── ctg.env              # CTG_AUTH=user:pass（600）
+├── ctg.env              # 可选额外环境变量（如 CTG_PROXY），600
 ├── bin/ctg              # 当前二进制（ctg.prev = 上一版，用于回滚）
 └── data/                # 属主 65532（容器 nonroot 用户）
 ```
@@ -39,7 +39,7 @@ deploy/deploy.sh --skip-build  # 上传已构建的 bin/ctg-linux-amd64
 
 ```bash
 make build                     # 前端产物内嵌进 bin/ctg
-./bin/ctg                      # http://127.0.0.1:8686，数据 data/ctg.db（本机不设登录）
+./bin/ctg                      # http://127.0.0.1:8686，数据 data/ctg.db
 ./bin/ctg -web=false & (cd web && npm run dev)   # 前后端分开调试，Vite 代理 /api
 make test                      # go vet + go test -race + vue-tsc
 ```
@@ -56,7 +56,6 @@ make test                      # go vet + go test -race + vue-tsc
 | `-replay-hours` | 336 | 规则历史回放深度（14 天） |
 | `-retain-1m` | 720h | 1m K 线与 OI 分钟样本保留期；1H、资金费、评分快照长期保留 |
 | `-web` | true | false 时只提供 API |
-| `CTG_AUTH` | — | `user:pass`，所有路由 HTTP Basic（公网必须设置） |
 | `CTG_PROXY` / `-doh` | — / off | 无法直连 OKX 的网络：出站 HTTP 代理（可带凭据）、DoH 解析 |
 | `GOMEMLIMIT` | compose 中 180MiB | 常驻约 175 MB；容器 `mem_limit: 400m` |
 

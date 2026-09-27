@@ -18,7 +18,7 @@
    │ internal/rules    规则定义、校验、打分、预置对照规则         │
    │ internal/track    战绩统计（Rank IC、t、分位收益、成本）     │
    │ internal/store    SQLite（WAL）+ database/sql 连接池         │
-   │ internal/api      REST JSON + SSE 推送 + 图标代理 + 可选登录  │
+   │ internal/api      REST JSON + SSE 推送 + 图标代理            │
    └──────────────┬───────────────────────────┬──────────────┘
                   │ /api/v1/*（JSON / SSE）     │
                   ▼                           ▼
@@ -73,7 +73,7 @@ internal/market/       引擎：engine.go（启动/录制/WS）、universe.go（
 internal/features/     事实面板
 internal/rules/        规则与打分
 internal/track/        战绩统计
-internal/api/          HTTP 路由、SSE、图标代理、Basic 登录
+internal/api/          HTTP 路由、SSE、图标代理、gzip
 web/                   前端工程（src/views 页面，src/components 组件，embed.go 内嵌产物）
 deploy/                docker-compose.yml（服务器运行定义）、deploy.sh（构建/上传/替换/回滚）
 research/poc/          调研探针（独立 Go module，不是生产代码）
