@@ -34,6 +34,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/instruments/{id}", s.instrument)
 	mux.HandleFunc("GET /api/v1/candles", s.candles)
 	mux.HandleFunc("GET /api/v1/compare", s.compare)
+	mux.HandleFunc("GET /api/v1/orderbook", func(w http.ResponseWriter, r *http.Request) {
+		ob, err := s.E.OrderBook(r.Context(), r.URL.Query().Get("instId"))
+		if err != nil {
+			httpErr(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, ob)
+	})
 	mux.HandleFunc("GET /api/v1/series", s.series)
 	mux.HandleFunc("GET /api/v1/rules", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.E.Rules()) })
 	mux.HandleFunc("POST /api/v1/rules", s.saveRule)

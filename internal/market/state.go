@@ -28,6 +28,7 @@ type fundingState struct {
 type Inst struct {
 	ID, Category, SpotID string
 	ListTime             int64
+	CtVal                float64 // contract value in base units (USDT notional = px × sz × ctVal)
 	Eligible             bool
 
 	bars     *minuteRing // confirmed 1m bars, last keep1m minutes

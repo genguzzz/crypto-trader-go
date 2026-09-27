@@ -19,6 +19,9 @@ export interface Rule {
   id: string; name: string; version: number; description: string; preset: boolean
   long: Record<string, number>; short: Record<string, number>; gates: { maxSpreadBps?: number }
 }
+/** Level = [price, usdt notional, contracts] */
+export type BookLevel = [number, number, number]
+export interface OrderBook { instId: string; ts: number; receivedAt: number; ctVal: number; mid: number; bestBid: number; bestAsk: number; spreadBps: number; bids: BookLevel[]; asks: BookLevel[] }
 export interface Settings { threshold: number; topN: number; categories: string[]; defaultRule: string }
 export interface Meta { fields: Field[]; rules: Rule[]; settings: Settings; categories: Record<string, string> }
 export interface Candle { t: number; o: number; h: number; l: number; c: number; q: number; x: boolean }
@@ -58,6 +61,7 @@ export const api = {
   track: (id: string) => req<Track>(`/api/v1/rules/${id}/track`),
   watch: (id: string, on: boolean) => req<{ ok: boolean }>(`/api/v1/watchlist/${encodeURIComponent(id)}`, { method: on ? 'PUT' : 'DELETE' }),
   status: () => req<any>('/api/v1/status'),
+  orderbook: (id: string) => req<OrderBook>(`/api/v1/orderbook?instId=${encodeURIComponent(id)}`),
   settings: () => req<Settings>('/api/v1/settings'),
   saveSettings: (x: Settings) => req<Settings>('/api/v1/settings', { method: 'PUT', body: JSON.stringify(x), headers: { 'Content-Type': 'application/json' } }),
 }

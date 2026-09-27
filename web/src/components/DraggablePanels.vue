@@ -92,8 +92,8 @@ function move(id: string, d: number) {
 </template>
 
 <style scoped>
-.stack { display: grid; gap: 12px; }
-.slot { position: relative; border-radius: 8px; transition: opacity 0.15s; }
+.stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.slot { position: relative; min-width: 0; border-radius: 8px; transition: opacity 0.15s; }
 .slot.dragging { opacity: 0.35; }
 .slot.drop-before::before, .slot.drop-after::after {
   content: ''; position: absolute; left: 0; right: 0; height: 3px; background: var(--accent); border-radius: 2px; z-index: 5;
