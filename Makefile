@@ -19,7 +19,7 @@ run: build
 linux: web
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o bin/ctg-linux-amd64 ./cmd/server
 
-# Build, upload, hot-swap and health-check on old-server (see docs/operations.md).
+# Build, upload, hot-swap and health-check on the server (ctg-prod) (see docs/operations.md).
 deploy:
 	deploy/deploy.sh
 

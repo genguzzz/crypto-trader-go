@@ -53,7 +53,7 @@ jobs:
           install -d -m 700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          printf 'Host old-server\n  HostName %s\n  User root\n  IdentityFile ~/.ssh/deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ConnectTimeout 15\n' "$DEPLOY_HOST" > ~/.ssh/config
+          printf 'Host ctg-prod\n  HostName %s\n  User root\n  IdentityFile ~/.ssh/deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ConnectTimeout 15\n' "$DEPLOY_HOST" > ~/.ssh/config
           chmod 600 ~/.ssh/config
       - name: Deploy (build, upload, swap, restart, health-check, auto-rollback)
         run: deploy/deploy.sh

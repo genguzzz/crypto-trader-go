@@ -5,9 +5,9 @@
 #                                 store host / key / host key as GitHub Secrets (nothing printed)
 #   deploy/setup-ci.sh --revoke   remove the deploy key from the server and delete the secrets
 #
-# Env: CTG_HOST (ssh alias or user@host, default "old-server"). Needs `gh auth login` with repo access.
+# Env: CTG_HOST (ssh alias or user@host, default "ctg-prod"). Needs `gh auth login` with repo access.
 set -euo pipefail
-HOST=${CTG_HOST:-old-server}
+HOST=${CTG_HOST:-ctg-prod}
 TAG=gha-deploy@crypto-trader-go
 cd "$(dirname "$0")/.."
 

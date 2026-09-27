@@ -7,9 +7,9 @@
 #   deploy/deploy.sh --rollback   restore the previous binary (bin/ctg.prev) and restart
 #   deploy/deploy.sh --status     container state, health and last log lines
 #
-# Env: CTG_HOST (default: ssh alias "old-server" from ~/.ssh/config; CI passes a secret), CTG_DIR (default /opt/ctg), CTG_ARCH (default amd64)
+# Env: CTG_HOST (default: ssh alias "ctg-prod" from ~/.ssh/config; CI passes a secret), CTG_DIR (default /opt/ctg), CTG_ARCH (default amd64)
 set -euo pipefail
-HOST=${CTG_HOST:-old-server}
+HOST=${CTG_HOST:-ctg-prod}
 DIR=${CTG_DIR:-/opt/ctg}
 ARCH=${CTG_ARCH:-amd64}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

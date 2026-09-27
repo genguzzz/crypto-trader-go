@@ -5,7 +5,7 @@
 ## 项目现状（2026-09-27）
 
 - 独立新项目，**不是** `~/Code/cryptoBot` 的延续；旧仓库只读参考，不复制代码/配置/凭据。
-- 已实现 I0–I3 并上线 https://ctg.gugenzzz.top（old-server Docker，`deploy/deploy.sh` 升级/回滚，见 `docs/operations.md`）；进度与待办只维护在 `docs/roadmap.md`。
+- 已实现 I0–I3 并上线 https://ctg.gugenzzz.top（ctg-prod Docker，`deploy/deploy.sh` 升级/回滚，见 `docs/operations.md`）；进度与待办只维护在 `docs/roadmap.md`。
 - 决策依据：`docs/blueprint/revision-2026-09-26.md`（实测修订，优先于旧蓝图各专题）；调研探针 `research/poc/`（独立 module，非生产代码）。
 
 ## 产品约束（不可随意改变）
