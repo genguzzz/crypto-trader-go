@@ -1,5 +1,6 @@
 import { markRaw, type Component } from 'vue'
-import { BookOpenText, ChartColumn, Layers, Percent, ArrowLeftRight, Coins } from 'lucide-vue-next'
+import { Gauge, BookOpenText, ChartColumn, Layers, Percent, ArrowLeftRight, Coins } from 'lucide-vue-next'
+import ScoreDetail from './ScoreDetail.vue'
 import OrderBookDetail from './OrderBookDetail.vue'
 import TurnoverDetail from './TurnoverDetail.vue'
 import OIDetail from './OIDetail.vue'
@@ -14,6 +15,7 @@ import SupplyDetail from './SupplyDetail.vue'
 export interface DetailDef { key: string; label: string; icon: Component; component: Component }
 
 export const statDetails: DetailDef[] = [
+  { key: 'score', label: '评分', icon: markRaw(Gauge), component: markRaw(ScoreDetail) },
   { key: 'book', label: '盘口', icon: markRaw(BookOpenText), component: markRaw(OrderBookDetail) },
   { key: 'turnover', label: '成交额', icon: markRaw(ChartColumn), component: markRaw(TurnoverDetail) },
   { key: 'oi', label: '持仓量', icon: markRaw(Layers), component: markRaw(OIDetail) },

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api, type InstrumentInfo } from '../api'
-import { store, setRule, fieldLabel, ruleOptions } from '../store'
-import { price, usd, fieldValue, catLabel, time, ago, num, logPct } from '../fmt'
+import { store } from '../store'
+import { ChevronLeft, Star } from 'lucide-vue-next'
+import { price, usd, fieldValue, catLabel, ago, num, logPct } from '../fmt'
 import PriceChart from './PriceChart.vue'
 import CompareChart from './CompareChart.vue'
 import SeriesChart from './SeriesChart.vue'
@@ -13,18 +14,14 @@ import StatCard from './ui/StatCard.vue'
 import StatDetailDialog from './details/StatDetailDialog.vue'
 import OrderBookView from './market/OrderBookView.vue'
 import { detailIcon } from './details/registry'
-import Modal from './Modal.vue'
 import InfoTip from './InfoTip.vue'
-import ScoringExplainer from './ScoringExplainer.vue'
 
 const props = defineProps<{ id: string }>()
-const ruleModel = computed({ get: () => store.ruleId, set: (v: string) => setRule(v) })
-const panelIds = ['head', 'score', 'price', 'book', 'compare', 'series', 'events']
+const panelIds = ['head', 'price', 'book', 'compare', 'series', 'events']
 const detailKey = ref<string | null>(null)
 const openDetail = (k: string) => (detailKey.value = k)
 const detailCtx = computed(() => ({ id: props.id, info: info.value!, row: row.value }))
-const showFacts = ref(false)
-const panelLabels: Record<string, string> = { head: '行情', score: '评分拆解', book: '实时盘口', price: 'K 线', compare: '相对走势', series: 'OI/资金费', events: '新闻/解锁' }
+const panelLabels: Record<string, string> = { head: '行情', book: '实时盘口', price: 'K 线', compare: '相对走势', series: 'OI/资金费', events: '新闻/解锁' }
 const info = ref<InstrumentInfo | null>(null)
 const err = ref('')
 let timer: number | undefined
@@ -57,6 +54,9 @@ onUnmounted(() => clearInterval(timer))
 
 const row = computed(() => info.value?.row)
 const score = computed(() => row.value?.scores?.[store.ruleId])
+const ruleName = computed(() => store.meta?.rules.find(r => r.id === store.ruleId)?.name || store.ruleId)
+const scoreText = (side: 'long' | 'short') => score.value?.[side].score?.toFixed(0) ?? '—'
+const scoreTone = (side: 'long' | 'short') => ((score.value?.[side].score ?? 0) >= 50 ? (side === 'long' ? 'up' : 'down') : 'sc-n')
 const live = computed(() => store.prices[props.id]?.[0] ?? info.value?.last)
 const spread = computed(() => {
   const i = info.value
@@ -77,17 +77,22 @@ async function toggleWatch() {
       <template #head>
       <div class="head panel">
         <div class="h-top">
-          <CoinIcon :inst-id="info.instId" :size="36" />
+          <button class="icon-btn" aria-label="返回" title="返回" @click="$router.back()"><ChevronLeft :size="20" /></button>
+          <CoinIcon :inst-id="info.instId" :size="28" />
           <div class="h-name">
             <div class="h-sym">{{ base }}<span class="h-quote">/USDT</span></div>
-            <div class="h-meta">永续 · {{ catLabel[info.category] || info.category }}</div>
+            <div class="h-meta">永续 · {{ catLabel[info.category] || info.category }}<template v-if="info.tickTs"> · {{ ago(info.tickTs) }}前</template></div>
           </div>
-          <span class="tag" :class="row?.status === 'live' ? 'good' : 'warn'"><span class="dot" :class="row?.status === 'live' ? 'ok' : 'warn'"></span>{{ statusText[row?.status || ''] || '未知' }}</span>
-          <span class="tag info" v-if="row?.active">活跃 #{{ row.rank }}</span>
-          <span class="tag" v-else-if="info.eligible" title="未达 12h 阈值或数据不全">非活跃</span>
-          <span class="tag" v-else title="不在全池录制范围（类别未选或盘前）：查看期间实时录制，加自选后长期保留">未录制</span>
-          <span class="tag info" v-if="info.syncing" :title="info.syncMsg">同步历史中</span>
-          <button class="watch watch-top" :class="{ on: info.watch }" @click="toggleWatch">{{ info.watch ? '★ 已自选' : '☆ 自选' }}</button>
+          <div class="h-tags">
+            <span class="tag" :class="row?.status === 'live' ? 'good' : 'warn'" :title="statusText[row?.status || ''] || '未知'"><span class="dot" :class="row?.status === 'live' ? 'ok' : 'warn'"></span><span class="st-txt">{{ statusText[row?.status || ''] || '未知' }}</span></span>
+            <span class="tag info" v-if="row?.active">活跃 #{{ row.rank }}</span>
+            <span class="tag" v-else-if="info.eligible" title="未达 12h 阈值或数据不全">非活跃</span>
+            <span class="tag" v-else title="不在全池录制范围（类别未选或盘前）：查看期间实时录制，加自选后长期保留">未录制</span>
+            <span class="tag info" v-if="info.syncing" :title="info.syncMsg">同步中</span>
+          </div>
+          <button class="star" :class="{ on: info.watch }" :aria-pressed="info.watch" :title="info.watch ? '取消自选' : '加入自选'" @click="toggleWatch">
+            <Star :size="18" :fill="info.watch ? 'currentColor' : 'none'" /><span class="star-txt">{{ info.watch ? '已自选' : '自选' }}</span>
+          </button>
         </div>
 
         <div class="h-price">
@@ -97,30 +102,38 @@ async function toggleWatch() {
               <span class="chg" :class="chgClass(ret24)"><small>24h</small>{{ logPct(ret24) }}</span>
               <span class="chg" :class="chgClass(ret4)"><small>4h</small>{{ logPct(ret4) }}</span>
             </span>
-            <span class="fresh">{{ info.tickTs ? ago(info.tickTs) + ' 前更新' : '' }}</span>
           </div>
-          <!-- touch: a large watch toggle next to the price (the title row one is desktop-only) -->
-          <button class="watch-big" :class="{ on: info.watch }" :aria-pressed="info.watch" @click="toggleWatch">
-            <span class="wb-star">{{ info.watch ? '★' : '☆' }}</span>{{ info.watch ? '已自选' : '自选' }}
-          </button>
+          <!-- key numbers; each opens its detail -->
+          <div class="kv tnum">
+            <button type="button" @click="openDetail('funding')">
+              <span class="k">资金费 {{ info.fundingIntervalH || '?' }}h</span>
+              <b :class="chgClass(info.fundingRate)">{{ (info.fundingRate * 100).toFixed(4) }}%</b>
+              <span class="kx">{{ countdown }}</span>
+            </button>
+            <button type="button" @click="openDetail('oi')">
+              <span class="k">持仓量</span><b>{{ usd(info.oiUsd) }}</b>
+              <span class="kx" :class="chgClass(row?.values?.oi_chg_4h)">{{ logPct(row?.values?.oi_chg_4h) }}</span>
+            </button>
+            <button type="button" @click="openDetail('turnover')">
+              <span class="k">12h 额</span><b>{{ usd(row?.turnover12h) }}</b>
+              <span class="kx">{{ row?.values?.vol_surprise_4h != null ? '×' + Math.exp(row.values.vol_surprise_4h).toFixed(2) : '—' }}</span>
+            </button>
+          </div>
         </div>
 
-        <div class="stats">
+        <!-- one row; scrolls sideways on narrow screens, most important first -->
+        <div class="cards">
+          <StatCard label="评分" :icon="detailIcon('score')" @open="openDetail('score')">
+            <template #value>
+              <span class="sc-l">多</span><span :class="scoreTone('long')">{{ scoreText('long') }}</span>
+              <span class="sep"> · </span>
+              <span class="sc-l">空</span><span :class="scoreTone('short')">{{ scoreText('short') }}</span>
+            </template>
+            <template #sub>{{ score ? (score.gate === 'PASS' ? ruleName : score.gate.replace('BLOCKED:', '门槛：')) : '预热中' }}</template>
+          </StatCard>
           <StatCard label="买一 / 卖一" :icon="detailIcon('book')" @open="openDetail('book')">
             <template #value>{{ price(info.bid) }} <span class="sep">/</span> {{ price(info.ask) }}</template>
-            <template #sub>点差 {{ num(spread, 1) }} bps · 看盘口深度</template>
-          </StatCard>
-          <StatCard label="12h 成交额" :icon="detailIcon('turnover')" @open="openDetail('turnover')">
-            <template #value>{{ usd(row?.turnover12h) }}<small> USDT</small></template>
-            <template #sub>4h 放量 {{ row?.values?.vol_surprise_4h != null ? '×' + Math.exp(row.values.vol_surprise_4h).toFixed(2) : '—' }}</template>
-          </StatCard>
-          <StatCard label="持仓量 OI" :icon="detailIcon('oi')" @open="openDetail('oi')">
-            <template #value>{{ usd(info.oiUsd) }}<small> USD</small></template>
-            <template #sub>4h <span :class="chgClass(row?.values?.oi_chg_4h)">{{ logPct(row?.values?.oi_chg_4h) }}</span> · {{ usd(info.oiCcy) }} 币</template>
-          </StatCard>
-          <StatCard :label="`资金费（${info.fundingIntervalH || '?'}h）`" :icon="detailIcon('funding')" :tone="chgClass(info.fundingRate)" @open="openDetail('funding')">
-            <template #value>{{ (info.fundingRate * 100).toFixed(4) }}%</template>
-            <template #sub>距结算 {{ countdown }}</template>
+            <template #sub>点差 {{ num(spread, 1) }} bps</template>
           </StatCard>
           <StatCard label="OKX 现货" :icon="detailIcon('spot')" @open="openDetail('spot')">
             <template #value>{{ info.spotId ? price(info.spotLast) : '—' }}</template>
@@ -131,35 +144,6 @@ async function toggleWatch() {
             <template #sub>{{ info.coin && info.coin.total ? '已流通 ' + ((info.coin.circulating / info.coin.total) * 100).toFixed(1) + '%' : info.category === '1' ? '无市值数据' : '非代币' }}</template>
           </StatCard>
         </div>
-      </div>
-      </template>
-      <template #score>
-      <div class="panel">
-        <h3>
-            评分拆解
-            <InfoTip label="原理"><ScoringExplainer /></InfoTip>
-            <USelect v-model="ruleModel" :options="ruleOptions()" size="sm" width="240px" aria-label="评分规则" />
-            <button class="small facts-btn" @click="showFacts = true">全部字段 ⤢</button>
-            <RouterLink :to="`/rules/${store.ruleId}`" class="small">战绩 →</RouterLink>
-          </h3>
-        <div v-if="score" class="sides">
-          <div v-for="side in (['long', 'short'] as const)" :key="side" class="side">
-            <div class="sh">
-              <span class="sl">{{ side === 'long' ? '多头分' : '空头分' }}</span>
-              <span class="sv" :class="score[side].score != null && score[side].score! >= 50 ? side : ''">{{ score[side].score != null ? score[side].score!.toFixed(0) : '—' }}</span>
-              <span class="tag bad" v-if="score.gate !== 'PASS'">{{ score.gate.replace('BLOCKED:', '门槛：') }}</span>
-            </div>
-            <div v-for="c in score[side].contrib || []" :key="c.field" class="contrib">
-              <span class="f" :title="c.field">{{ fieldLabel(c.field) }}</span>
-              <span class="muted v">{{ fieldValue(c.field, row?.values?.[c.field]) }}</span>
-              <span class="muted p">分位 {{ c.pct.toFixed(0) }}</span>
-              <span class="barwrap"><span class="bar" :class="c.points >= 0 ? 'pos' : 'neg'" :style="{ width: Math.min(100, Math.abs(c.points) * 2) + '%' }"></span></span>
-              <span class="pts num" :class="c.points >= 0 ? 'up' : 'down'">{{ c.points >= 0 ? '+' : '' }}{{ c.points.toFixed(1) }}</span>
-            </div>
-            <div v-if="score[side].missing?.length" class="note">缺少：{{ score[side].missing!.map(fieldLabel).join('、') }} → 未评分（不是 0）</div>
-          </div>
-        </div>
-        <div v-else class="note">暂无评分（数据预热中或缺少输入）</div>
       </div>
       </template>
       <template #book>
@@ -187,84 +171,66 @@ async function toggleWatch() {
       </template>
     </DraggablePanels>
     <StatDetailDialog v-model:active="detailKey" :ctx="detailCtx" :title="`${base}/USDT 永续`" />
-    <Modal :open="showFacts" :title="`${base} 事实面板（全部字段）`" wide @close="showFacts = false">
-      <div class="modal-hint"><InfoTip label="字段说明">
-        <b>数值</b>：只使用决策时刻已经可见的数据；盘中每 10 秒按未收盘分钟重算（会变动），战绩只记录分钟确认值。<br />
-        <b>池内分位</b>：该值在当前活跃池里的位置，0 = 最低，100 = 最高；规则打分用的就是它。<br />
-        <b>不可回放</b>：历史回放中没有该字段（点差、基差、预测资金费等只在实时有），含这些字段的规则只能积累上线后战绩。<br />
-        缺失显示“—”，表示未知，不当作 0。
-      </InfoTip></div>
-      <table>
-            <thead><tr><th>字段</th><th class="num">数值</th><th class="num">池内分位</th><th class="hide-sm">定义</th></tr></thead>
-            <tbody>
-              <tr v-for="f in store.meta?.fields || []" :key="f.key">
-                <td>{{ f.label }}<span class="tag" v-if="!f.replayable" title="历史回放中没有此字段">不可回放</span></td>
-                <td class="num">{{ fieldValue(f.key, row?.values?.[f.key]) }}</td>
-                <td class="num">{{ row?.pct?.[f.key] != null ? row.pct[f.key].toFixed(0) : '—' }}</td>
-                <td class="muted hide-sm wrap">{{ f.desc }}</td>
-              </tr>
-            </tbody>
-          </table>
-    </Modal>
   </div>
   <div v-else class="note pad">{{ err || '加载中…' }}</div>
 </template>
 
 <style scoped>
 .detail { padding: 12px 12px 12px 16px; }
-.head { padding: 16px 18px 14px; }
-.h-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.h-name { display: grid; line-height: 1.2; margin-right: 4px; }
-.h-sym { font-size: var(--fs-2xl); font-weight: 700; color: var(--text-1); letter-spacing: .2px; }
-.h-quote { font-size: var(--fs-lg); font-weight: 500; color: var(--text-3); margin-left: 2px; }
-.h-meta { font-size: var(--fs-xs); color: var(--text-3); }
-.watch { margin-left: auto; }
-.watch.on, .watch-big.on { color: #f5c542; border-color: rgba(245, 197, 66, .45); }
-.h-price { display: flex; align-items: center; gap: 12px; margin: 14px 0 16px; }
+.head { padding: 12px 16px; }
+.h-top { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.icon-btn { all: unset; box-sizing: border-box; display: inline-grid; place-items: center; width: 32px; height: 32px; margin-left: -8px; border-radius: 8px; color: var(--text-2); cursor: pointer; flex: none; }
+@media (hover: hover) { .icon-btn:hover { background: var(--bg-2); color: var(--text-1); } }
+.h-name { display: grid; line-height: 1.2; min-width: 0; }
+.h-sym { font-size: var(--fs-xl); font-weight: 700; color: var(--text-1); letter-spacing: .2px; white-space: nowrap; }
+.h-quote { font-size: var(--fs-md); font-weight: 500; color: var(--text-3); margin-left: 1px; }
+.h-meta { font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
+.h-tags { display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; }
+.h-tags .tag { flex: none; }
+.star { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex: none; padding: 5px 12px; color: var(--text-2); }
+.star.on { color: #f5c542; border-color: rgba(245, 197, 66, .45); }
+.h-price { display: flex; align-items: center; gap: 16px; margin: 10px 0 8px; }
 .hp-main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.hp-chg { display: inline-flex; gap: 8px; }
-.watch-big { display: none; }
+.hp-chg { display: inline-flex; gap: 6px; }
 .px { font-size: var(--fs-3xl); font-weight: 700; line-height: 1; letter-spacing: -.3px; color: var(--text-1); }
-.chg { font-size: var(--fs-md); font-weight: 600; padding: 2px 8px; border-radius: 4px; background: var(--bg-3); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.chg { font-size: var(--fs-sm); font-weight: 600; padding: 1px 6px; border-radius: 4px; background: var(--bg-3); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .chg.up { background: var(--up-bg); } .chg.down { background: var(--down-bg); }
-.chg small { font-size: var(--fs-xs); font-weight: 500; opacity: .75; margin-right: 4px; }
-.fresh { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); }
-.stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid var(--line); padding-top: 8px; gap: 4px; margin: 0 -12px; }
-.stat { padding: 0 14px; border-left: 1px solid var(--line); min-width: 0; }
-.stat:first-child { padding-left: 0; border-left: none; }
-.stat .l { font-size: var(--fs-xs); color: var(--text-3); margin-bottom: 4px; white-space: nowrap; }
-.stat .v { font-size: var(--fs-lg); font-weight: 600; color: var(--text-1); white-space: nowrap; }
-.stat .v.up { color: var(--up); } .stat .v.down { color: var(--down); }
-.stat .v small { font-size: var(--fs-xs); font-weight: 500; color: var(--text-3); }
-.stat .v .sep { color: var(--text-3); font-weight: 400; }
-.stat .s { font-size: var(--fs-xs); color: var(--text-2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.small { font-size: 12px; font-weight: 400; }
-.facts-btn { margin-left: auto; padding: 2px 10px; }
-.modal-hint { margin-bottom: 8px; }
-.sides { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.side .sh { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.sl { font-size: var(--fs-sm); color: var(--text-3); }
-.sv { font-size: var(--fs-3xl); font-weight: 700; line-height: 1; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.sv.long { color: var(--up); } .sv.short { color: var(--down); }
-.contrib { display: grid; grid-template-columns: 96px 72px 56px 1fr 48px; gap: 8px; align-items: center; font-size: var(--fs-sm); padding: 3px 0; }
-.contrib .f { color: var(--text-1); } .contrib .v { color: var(--text-2); font-variant-numeric: tabular-nums; } .contrib .p { color: var(--text-3); }
-.pts { font-weight: 600; }
-.barwrap { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
-.bar { display: block; height: 100%; }
-.bar.pos { background: var(--up); } .bar.neg { background: var(--down); }
-.wrap { white-space: normal; }
+.chg small { font-size: var(--fs-xs); font-weight: 500; opacity: .75; margin-right: 3px; }
+.kv { display: flex; gap: 4px; flex: none; }
+.kv button { all: unset; box-sizing: border-box; display: grid; grid-template-columns: auto auto; column-gap: 8px; align-items: baseline; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: var(--fs-xs); }
+@media (hover: hover) { .kv button:hover { background: var(--bg-2); } }
+.kv button:active { background: var(--bg-2); }
+.kv button:focus-visible { outline: 2px solid var(--accent); }
+.kv .k { color: var(--text-3); grid-column: 1 / -1; white-space: nowrap; }
+.kv b { color: var(--text-1); font-weight: 600; font-size: var(--fs-md); white-space: nowrap; }
+.kv b.up, .kv .kx.up { color: var(--up); } .kv b.down, .kv .kx.down { color: var(--down); }
+.kv .kx { color: var(--text-3); white-space: nowrap; }
+.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; border-top: 1px solid var(--line); padding-top: 6px; margin: 0 -12px; }
+.sc-l { font-size: var(--fs-xs); font-weight: 500; color: var(--text-3); margin-right: 3px; }
+.sc-n { color: var(--text-2); }
+.up { color: var(--up); } .down { color: var(--down); }
 .pad { padding: 16px; }
 @media (max-width: 900px) {
-  .sides { grid-template-columns: 1fr; } .detail { padding: 8px; }
-  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin: 0 -8px; }
-
+  .detail { padding: 8px; }
+  .head { padding: 8px 12px 6px; }
+  .h-sym { font-size: var(--fs-lg); }
+  .h-tags .st-txt { display: none; } /* status shows as the dot only; full text in the title */
+  .h-tags .tag:has(.st-txt) { padding: 2px 5px; }
+  .star { padding: 0; width: 34px; height: 34px; justify-content: center; border-radius: 8px; }
+  .star-txt { display: none; }
+  .h-price { align-items: flex-start; gap: 8px; margin: 8px 0 6px; }
+  .hp-main { flex-direction: column; align-items: flex-start; gap: 6px; }
   .px { font-size: 26px; }
-  .watch-top { display: none; }
-  .hp-main { flex-direction: column; align-items: flex-start; gap: 8px; }
-  .fresh { margin-left: 0; }
-  .watch-big { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; flex: none;
-    min-width: 64px; height: 64px; padding: 0 10px; border-radius: 12px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); }
-  .wb-star { font-size: 22px; line-height: 1; }
+  /* right column: three compact rows "label  value  extra" */
+  .kv { flex-direction: column; gap: 0; }
+  .kv button { grid-template-columns: 52px auto; column-gap: 6px; padding: 2px 4px; justify-content: end; }
+  .kv .k { grid-column: auto; text-align: right; }
+  .kv b { font-size: var(--fs-sm); text-align: right; }
+  .kv .kx { display: none; }
+  /* cards: one sideways-scrolling row, ~2.5 visible so the scroll is discoverable */
+  .cards { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; margin: 0 -12px; padding: 6px 4px 0; }
+  .cards::-webkit-scrollbar { display: none; }
+  .cards > :deep(.card) { flex: 0 0 40%; scroll-snap-align: start; padding: 6px 8px; }
+  .cards :deep(.v) { font-size: var(--fs-md); }
 }
 </style>
