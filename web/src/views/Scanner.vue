@@ -2,7 +2,11 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { store, setRule, fieldLabel, ruleOptions } from '../store'
-import { Sigma, TrendingUp, TrendingDown, ArrowDownWideNarrow } from 'lucide-vue-next'
+import { Sigma, TrendingUp, TrendingDown, ArrowDownWideNarrow, Star, ShieldCheck, LogOut, LineChart, X } from 'lucide-vue-next'
+import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
+import SearchInput from '../components/ui/SearchInput.vue'
+import FilterChip from '../components/ui/FilterChip.vue'
+import ChipGroup from '../components/ui/ChipGroup.vue'
 import { api, type Row } from '../api'
 import { usd, price, logPct, fundingH, catLabel, time, sign } from '../fmt'
 import InstrumentDetail from '../components/InstrumentDetail.vue'
@@ -43,16 +47,20 @@ function resetWidth() { listW.value = 0; localStorage.removeItem('ctg.listWidth'
 useLayoutEntry('ctg.listWidth', '列表 / 详情宽度', () => listW.value > 0, resetWidth)
 
 const dir = ref<'all' | 'long' | 'short'>((localStorage.getItem('dir') as any) || 'all')
-const cats = ref<Record<string, boolean>>({ '1': true, '3': true, '4': true })
+const catSel = ref<string[]>(JSON.parse(localStorage.getItem('ctg.cats') || '["1","3","4"]'))
+watch(catSel, v => localStorage.setItem('ctg.cats', JSON.stringify(v)))
 const onlyWatch = ref(false)
 const onlyPass = ref(false)
 const q = ref('')
 const sortKey = ref(localStorage.getItem('sortKey') || 'score')
 const sortDesc = ref(true)
-const showRemoved = ref(false)
 watch(dir, v => localStorage.setItem('dir', v))
 watch(sortKey, v => localStorage.setItem('sortKey', v))
 
+const catOptions = computed(() => Object.entries(catLabel).map(([c, l]) => ({ value: c, label: l, count: (store.snap?.rows || []).filter(r => r.category === c).length })))
+const watchCount = computed(() => (store.snap?.rows || []).filter(r => r.watch).length)
+const filtered = computed(() => !!q.value || onlyWatch.value || onlyPass.value || catSel.value.length < 3)
+function clearFilters() { q.value = ''; onlyWatch.value = false; onlyPass.value = false; catSel.value = ['1', '3', '4'] }
 const ruleModel = computed({ get: () => store.ruleId, set: (v: string) => setRule(v) })
 const sortOptions = computed(() => [
   { value: 'score', label: '按方向分' }, { value: 'long', label: '多头分' }, { value: 'short', label: '空头分' }, { value: 'turnover12h', label: '12h 成交额' },
@@ -82,7 +90,7 @@ function sortVal(r: Row): number | null {
 }
 const rows = computed(() => {
   const xs = (store.snap?.rows || []).filter(r => {
-    if (!cats.value[r.category]) return false
+    if (!catSel.value.includes(r.category)) return false
     if (onlyWatch.value && !r.watch) return false
     if (q.value && !r.instId.toLowerCase().includes(q.value.toLowerCase())) return false
     if (onlyPass.value && r.scores?.[store.ruleId]?.gate !== 'PASS') return false
@@ -125,27 +133,35 @@ const cols = [
   <div class="scanner" :class="{ narrow }" :style="gridStyle">
     <section class="list">
       <div class="controls">
-        <div class="row">
-          <USelect v-model="ruleModel" :options="ruleOptions()" :icon="Sigma" width="250px" aria-label="评分规则" />
+        <div class="row r1">
+          <SearchInput v-model="q" placeholder="搜索合约" class="grow" />
           <Segmented v-model="dir" aria-label="方向" :options="[{ value: 'all', label: '全部' }, { value: 'long', label: '做多', icon: TrendingUp, tone: 'up' }, { value: 'short', label: '做空', icon: TrendingDown, tone: 'down' }]" />
-          <input v-model="q" placeholder="搜索" class="search" />
+          <span class="rule">
+            <USelect v-model="ruleModel" :options="ruleOptions()" :icon="Sigma" width="230px" aria-label="评分规则" />
+            <InfoTip><ScoringExplainer /></InfoTip>
+            <RouterLink v-if="rule" :to="`/rules/${rule.id}`" class="icon-link" title="查看该规则战绩"><LineChart :size="15" /></RouterLink>
+          </span>
         </div>
-        <div class="row">
-          <span v-for="(l, c) in catLabel" :key="c" class="chip" :class="{ on: cats[c] }" @click="cats[c] = !cats[c]">{{ l }}</span>
-          <span class="chip" :class="{ on: onlyWatch }" @click="onlyWatch = !onlyWatch">★ 自选</span>
-          <span class="chip" :class="{ on: onlyPass }" @click="onlyPass = !onlyPass" title="只看通过点差门槛的">门槛通过</span>
+        <div class="row r2">
+          <ChipGroup v-model="catSel" aria-label="类别" at-least-one :options="catOptions" />
+          <span class="vsep"></span>
+          <FilterChip v-model="onlyWatch" label="自选" :icon="Star" :count="watchCount" />
+          <FilterChip v-model="onlyPass" label="门槛通过" :icon="ShieldCheck" title="只看当前规则点差门槛通过的合约" />
           <span class="hide-lg"><USelect v-model="sortKey" size="sm" :options="sortOptions" :icon="ArrowDownWideNarrow" aria-label="排序" /></span>
-          <span class="chip" v-if="store.snap?.removed?.length" :class="{ on: showRemoved }" @click="showRemoved = !showRemoved">最近移出 {{ store.snap.removed.length }}</span>
-        </div>
-        <div class="rule-line" v-if="rule">
-          <span class="muted">当前规则</span> <b>{{ rule.name }}</b> <span class="tag warn">未验证</span>
-          <InfoTip label="评分原理"><ScoringExplainer /></InfoTip>
-          <RouterLink :to="`/rules/${rule.id}`">战绩 →</RouterLink>
-        </div>
-      </div>
-      <div class="removed" v-if="showRemoved">
-        <div v-for="r in store.snap?.removed || []" :key="r.instId" class="rm">
-          <span>{{ sym(r.instId) }}</span><span class="muted">{{ r.reason }}</span><span class="muted">{{ time(r.at) }}</span>
+          <span class="spacer"></span>
+          <PopoverRoot v-if="store.snap?.removed?.length">
+            <PopoverTrigger class="fchip removed-btn"><LogOut :size="13" class="fc-ic" /><span>最近移出</span><span class="fc-n">{{ store.snap.removed.length }}</span></PopoverTrigger>
+            <PopoverPortal>
+              <PopoverContent class="lm-pop removed-pop" side="bottom" align="end" :side-offset="6">
+                <div class="lm-title">最近 30 分钟移出监控池</div>
+                <div v-for="r in store.snap?.removed || []" :key="r.instId" class="rm">
+                  <CoinIcon :inst-id="r.instId" :size="16" /><b>{{ sym(r.instId) }}</b><span class="muted">{{ r.reason }}</span><span class="muted tnum">{{ time(r.at) }}</span>
+                </div>
+              </PopoverContent>
+            </PopoverPortal>
+          </PopoverRoot>
+          <span class="count tnum">{{ rows.length }}<span class="muted"> / {{ store.snap?.rows?.length || 0 }}</span></span>
+          <button v-if="filtered" class="clear" @click="clearFilters"><X :size="12" /> 清除</button>
         </div>
       </div>
 
@@ -222,9 +238,17 @@ const cols = [
 .divider { cursor: col-resize; background: var(--line); opacity: 0.5; transition: background 0.15s; }
 .divider:hover { background: var(--accent); opacity: 1; }
 .list { display: flex; flex-direction: column; min-height: 0; }
-.controls { padding: 12px 14px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); background: var(--bg-1); }
-.controls .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.search { width: 110px; }
+.controls { padding: 12px 14px 10px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); background: var(--bg-1); }
+.controls .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.grow { flex: 1; }
+.rule { display: inline-flex; align-items: center; gap: 2px; }
+.icon-link { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; color: var(--text-3); }
+.icon-link:hover { background: var(--bg-2); color: var(--accent); text-decoration: none; }
+.vsep { width: 1px; height: 18px; background: var(--line-2); margin: 0 2px; }
+.spacer { flex: 1; }
+.count { font-size: var(--fs-sm); color: var(--text-1); font-weight: 600; }
+.clear { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border: none; background: transparent; color: var(--text-3); font-size: var(--fs-xs); }
+.clear:hover { color: var(--text-1); background: var(--bg-2); }
 .tablewrap { overflow: auto; flex: 1; }
 thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 .sortable { cursor: pointer; user-select: none; }
@@ -245,14 +269,19 @@ td.up { color: var(--up); } td.down { color: var(--down); }
 .star.on { color: #f5c542; }
 .detail { overflow: auto; min-height: 0; }
 .pad { padding: 16px; }
-.removed { padding: 6px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 2px; font-size: 12px; }
-.rm { display: grid; grid-template-columns: 90px 1fr 50px; }
+
 .cards { display: grid; }
 .card { padding: 8px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 4px; }
 .card .l1 { display: flex; gap: 6px; align-items: center; }
 .card .px { margin-left: auto; font-weight: 600; }
 .card .l2 { display: flex; gap: 12px; align-items: center; font-size: 12px; }
 .hide-lg { display: none; }
-.rule-line { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); flex-wrap: wrap; }
 .narrow .hide-lg { display: inline-block; }
+</style>
+
+<style>
+.removed-pop { width: 320px; }
+.removed-pop .rm { display: grid; grid-template-columns: 18px 70px 1fr auto; gap: 8px; align-items: center; padding: 5px 6px; font-size: var(--fs-sm); border-radius: 6px; }
+.removed-pop .rm:hover { background: var(--bg-3); }
+.removed-btn[data-state="open"] { border-style: solid; border-color: var(--accent); }
 </style>

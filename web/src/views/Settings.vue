@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api, type Settings, type Row } from '../api'
 import { store, refreshMeta, setRule, ruleOptions } from '../store'
 import { usd, catLabel } from '../fmt'
+import ChipGroup from '../components/ui/ChipGroup.vue'
 
 const s = ref<Settings | null>(null)
 const all = ref<Row[]>([])
@@ -28,12 +29,6 @@ const estimate = computed(() => {
   for (const r of pass) byCat[r.category] = (byCat[r.category] || 0) + 1
   return { n: Math.min(pass.length, s.value.topN), raw: pass.length, byCat }
 })
-function toggleCat(c: string) {
-  if (!s.value) return
-  const i = s.value.categories.indexOf(c)
-  if (i >= 0) s.value.categories.splice(i, 1)
-  else s.value.categories.push(c)
-}
 async function save() {
   if (!s.value) return
   saving.value = true
@@ -72,9 +67,7 @@ async function save() {
         </label>
         <label>
           <span>包含类别</span>
-          <span class="presets">
-            <span v-for="(l, c) in catLabel" :key="c" class="chip" :class="{ on: s.categories.includes(c) }" @click="toggleCat(c)">{{ l }}</span>
-          </span>
+          <ChipGroup v-model="s.categories" at-least-one aria-label="类别" :options="Object.entries(catLabel).map(([c, l]) => ({ value: c, label: l }))" />
         </label>
       </div>
       <p class="est" v-if="estimate">
