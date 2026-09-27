@@ -377,11 +377,29 @@ type WSStatus struct {
 	SubErrors     int64  `json:"subErrors"`
 }
 
+// dbCounts caches table row counts. COUNT(*) scans millions of rows (seconds), so it is refreshed
+// in the background at most once a minute and requests never wait for it.
 var dbCounts = struct {
 	sync.Mutex
-	at time.Time
-	v  map[string]int64
+	at      time.Time
+	running bool
+	v       map[string]int64
 }{}
+
+func (e *Engine) cachedCounts() map[string]int64 {
+	dbCounts.Lock()
+	defer dbCounts.Unlock()
+	if time.Since(dbCounts.at) > time.Minute && !dbCounts.running {
+		dbCounts.running = true
+		go func() {
+			v := e.st.Counts()
+			dbCounts.Lock()
+			dbCounts.v, dbCounts.at, dbCounts.running = v, time.Now(), false
+			dbCounts.Unlock()
+		}()
+	}
+	return dbCounts.v
+}
 
 func (e *Engine) Status() Status {
 	s := e.snap.Load()
@@ -391,12 +409,7 @@ func (e *Engine) Status() Status {
 		wss = append(wss, WSStatus{Name: c.Name, Connected: c.Connected.Load(), Subscriptions: c.Subscriptions(),
 			Messages: c.Messages.Load(), Reconnects: c.Reconnects.Load(), LastMsgAgoMs: now - c.LastMsgAt.Load(), SubErrors: c.SubErrors.Load()})
 	}
-	dbCounts.Lock()
-	if time.Since(dbCounts.at) > time.Minute {
-		dbCounts.v, dbCounts.at = e.st.Counts(), time.Now()
-	}
-	counts := dbCounts.v
-	dbCounts.Unlock()
+	counts := e.cachedCounts()
 	cats := []string{}
 	for k := range e.conf().Categories {
 		cats = append(cats, k)
