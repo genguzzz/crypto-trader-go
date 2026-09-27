@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api, type Settings, type Row } from '../api'
-import { store, refreshMeta, setRule } from '../store'
+import { store, refreshMeta, setRule, ruleOptions } from '../store'
 import { usd, catLabel } from '../fmt'
 
 const s = ref<Settings | null>(null)
@@ -63,14 +63,12 @@ async function save() {
         <label>
           <span>12h USDT 成交额阈值（万）</span>
           <input type="number" min="10" step="50" v-model.number="thresholdWan" />
-          <span class="presets">
-            <button v-for="v in [100, 300, 500, 1000, 2000]" :key="v" :class="{ on: thresholdWan === v }" @click="thresholdWan = v">{{ v }}万</button>
-          </span>
+          <Segmented :model-value="thresholdWan" size="sm" aria-label="阈值预设" :options="[100, 300, 500, 1000, 2000].map(v => ({ value: v, label: v + '万' }))" @update:model-value="v => (thresholdWan = v)" />
         </label>
         <label>
           <span>上限 N（最多监控几个）</span>
           <input type="number" min="1" max="500" v-model.number="s.topN" />
-          <span class="presets"><button v-for="v in [50, 100, 200, 300]" :key="v" :class="{ on: s.topN === v }" @click="s!.topN = v">{{ v }}</button></span>
+          <Segmented v-model="s.topN" size="sm" aria-label="上限预设" :options="[50, 100, 200, 300].map(v => ({ value: v, label: String(v) }))" />
         </label>
         <label>
           <span>包含类别</span>
@@ -94,9 +92,7 @@ async function save() {
       </InfoTip></h3>
       <label class="row">
         <span>默认评分规则（扫描页/详情页默认使用）</span>
-        <select v-model="s.defaultRule">
-          <option v-for="r in store.meta?.rules || []" :key="r.id" :value="r.id">{{ r.name }} v{{ r.version }}</option>
-        </select>
+        <USelect v-model="s.defaultRule" :options="ruleOptions()" width="320px" aria-label="默认规则" />
       </label>
       <table>
         <thead><tr><th>规则</th><th>多头权重</th><th>空头权重</th><th>点差门槛</th><th></th></tr></thead>
@@ -126,7 +122,6 @@ label { display: grid; gap: 6px; align-content: start; color: var(--muted); font
 label.row { max-width: 420px; margin-bottom: 10px; }
 input[type=number] { width: 160px; }
 .presets { display: flex; gap: 4px; flex-wrap: wrap; }
-.presets button { padding: 1px 8px; font-size: 12px; }
 .est { margin: 12px 0 4px; }
 .small { font-size: 12px; white-space: normal; }
 .actions { display: flex; gap: 12px; align-items: center; }

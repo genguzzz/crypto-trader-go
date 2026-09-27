@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { store, setRule, fieldLabel } from '../store'
+import { store, setRule, fieldLabel, ruleOptions } from '../store'
+import { Sigma, TrendingUp, TrendingDown, ArrowDownWideNarrow } from 'lucide-vue-next'
 import { api, type Row } from '../api'
 import { usd, price, logPct, fundingH, catLabel, time, sign } from '../fmt'
 import InstrumentDetail from '../components/InstrumentDetail.vue'
@@ -52,6 +53,11 @@ const showRemoved = ref(false)
 watch(dir, v => localStorage.setItem('dir', v))
 watch(sortKey, v => localStorage.setItem('sortKey', v))
 
+const ruleModel = computed({ get: () => store.ruleId, set: (v: string) => setRule(v) })
+const sortOptions = computed(() => [
+  { value: 'score', label: '按方向分' }, { value: 'long', label: '多头分' }, { value: 'short', label: '空头分' }, { value: 'turnover12h', label: '12h 成交额' },
+  ...(store.meta?.fields.filter(f => f.key !== 'turnover12h').map(f => ({ value: f.key, label: f.label })) || []),
+])
 const selected = computed(() => (route.query.sel as string) || '')
 const rule = computed(() => store.meta?.rules.find(r => r.id === store.ruleId))
 
@@ -120,25 +126,15 @@ const cols = [
     <section class="list">
       <div class="controls">
         <div class="row">
-          <select :value="store.ruleId" @change="setRule(($event.target as HTMLSelectElement).value)" title="评分规则（未验证，见规则与战绩）">
-            <option v-for="r in store.meta?.rules || []" :key="r.id" :value="r.id">{{ r.name }} v{{ r.version }}</option>
-          </select>
-          <span class="seg">
-            <button :class="{ on: dir === 'all' }" @click="dir = 'all'">全部</button>
-            <button :class="{ on: dir === 'long' }" @click="dir = 'long'">做多</button>
-            <button :class="{ on: dir === 'short' }" @click="dir = 'short'">做空</button>
-          </span>
+          <USelect v-model="ruleModel" :options="ruleOptions()" :icon="Sigma" width="250px" aria-label="评分规则" />
+          <Segmented v-model="dir" aria-label="方向" :options="[{ value: 'all', label: '全部' }, { value: 'long', label: '做多', icon: TrendingUp, tone: 'up' }, { value: 'short', label: '做空', icon: TrendingDown, tone: 'down' }]" />
           <input v-model="q" placeholder="搜索" class="search" />
         </div>
         <div class="row">
           <span v-for="(l, c) in catLabel" :key="c" class="chip" :class="{ on: cats[c] }" @click="cats[c] = !cats[c]">{{ l }}</span>
           <span class="chip" :class="{ on: onlyWatch }" @click="onlyWatch = !onlyWatch">★ 自选</span>
           <span class="chip" :class="{ on: onlyPass }" @click="onlyPass = !onlyPass" title="只看通过点差门槛的">门槛通过</span>
-          <select v-model="sortKey" class="hide-lg">
-            <option value="score">按方向分</option><option value="long">多头分</option><option value="short">空头分</option>
-            <option value="turnover12h">12h 成交额</option>
-            <option v-for="f in store.meta?.fields.filter(f => f.key !== 'turnover12h') || []" :key="f.key" :value="f.key">{{ f.label }}</option>
-          </select>
+          <span class="hide-lg"><USelect v-model="sortKey" size="sm" :options="sortOptions" :icon="ArrowDownWideNarrow" aria-label="排序" /></span>
           <span class="chip" v-if="store.snap?.removed?.length" :class="{ on: showRemoved }" @click="showRemoved = !showRemoved">最近移出 {{ store.snap.removed.length }}</span>
         </div>
         <div class="rule-line" v-if="rule">
@@ -228,10 +224,6 @@ const cols = [
 .list { display: flex; flex-direction: column; min-height: 0; }
 .controls { padding: 12px 14px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); background: var(--bg-1); }
 .controls .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.seg { display: inline-flex; }
-.seg button { border-radius: 0; margin-left: -1px; }
-.seg button:first-child { border-radius: 6px 0 0 6px; }
-.seg button:last-child { border-radius: 0 6px 6px 0; }
 .search { width: 110px; }
 .tablewrap { overflow: auto; flex: 1; }
 thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }

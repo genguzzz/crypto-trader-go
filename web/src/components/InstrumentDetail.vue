@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api, type InstrumentInfo } from '../api'
-import { store, setRule, fieldLabel } from '../store'
+import { store, setRule, fieldLabel, ruleOptions } from '../store'
 import { price, usd, fieldValue, catLabel, time, ago, num, logPct } from '../fmt'
 import PriceChart from './PriceChart.vue'
 import CompareChart from './CompareChart.vue'
@@ -18,6 +18,7 @@ import InfoTip from './InfoTip.vue'
 import ScoringExplainer from './ScoringExplainer.vue'
 
 const props = defineProps<{ id: string }>()
+const ruleModel = computed({ get: () => store.ruleId, set: (v: string) => setRule(v) })
 const panelIds = ['head', 'score', 'book', 'price', 'compare', 'series', 'events']
 const detailKey = ref<string | null>(null)
 const openDetail = (k: string) => (detailKey.value = k)
@@ -123,9 +124,7 @@ async function toggleWatch() {
         <h3>
             评分拆解
             <InfoTip label="原理"><ScoringExplainer /></InfoTip>
-            <select :value="store.ruleId" @change="setRule(($event.target as HTMLSelectElement).value)">
-              <option v-for="r in store.meta?.rules || []" :key="r.id" :value="r.id">{{ r.name }} v{{ r.version }}</option>
-            </select>
+            <USelect v-model="ruleModel" :options="ruleOptions()" size="sm" width="240px" aria-label="评分规则" />
             <button class="small facts-btn" @click="showFacts = true">全部字段 ⤢</button>
             <RouterLink :to="`/rules/${store.ruleId}`" class="small">战绩 →</RouterLink>
           </h3>
