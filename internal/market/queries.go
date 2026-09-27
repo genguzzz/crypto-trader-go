@@ -152,8 +152,12 @@ func (e *Engine) SpotCandles(ctx context.Context, id, bar string, limit int) ([]
 		return nil, fmt.Errorf("no OKX USDT spot mapping for %s", id)
 	}
 	key := fmt.Sprintf("%s|%s|%d", spot, bar, limit)
+	ttl := 20 * time.Second
+	if limit <= 10 { // the chart's per-second refresh of the latest bars
+		ttl = 900 * time.Millisecond
+	}
 	spotCache.Lock()
-	if c, ok := spotCache.m[key]; ok && time.Since(c.at) < 20*time.Second {
+	if c, ok := spotCache.m[key]; ok && time.Since(c.at) < ttl {
 		spotCache.Unlock()
 		return c.v, nil
 	}
