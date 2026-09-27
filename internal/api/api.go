@@ -3,7 +3,6 @@
 package api
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -22,7 +21,6 @@ type Server struct {
 	E     *market.Engine
 	Web   fs.FS        // built SPA (index.html + assets)
 	Icons http.Handler // coin icon proxy (optional)
-	Auth  string       // optional "user:pass" HTTP Basic credential for every route (set when exposed beyond loopback)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -63,23 +61,7 @@ func (s *Server) Handler() http.Handler {
 	if s.Web != nil {
 		mux.Handle("/", spa(s.Web))
 	}
-	return logRequests(s.basicAuth(withGzip(mux)))
-}
-
-func (s *Server) basicAuth(h http.Handler) http.Handler {
-	if s.Auth == "" {
-		return h
-	}
-	user, pass, _ := strings.Cut(s.Auth, ":")
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, p, ok := r.BasicAuth()
-		if !ok || subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 || subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
-			w.Header().Set("WWW-Authenticate", `Basic realm="okx-research", charset="UTF-8"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		h.ServeHTTP(w, r)
-	})
+	return logRequests(withGzip(mux))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

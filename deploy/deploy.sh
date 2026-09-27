@@ -20,7 +20,7 @@ remote() { ssh -o BatchMode=yes "$HOST" "$@" 2> >(grep -v -E 'post-quantum|store
 # The API answers within seconds of start; phase becomes "live" after the gap fill (~1 min).
 wait_healthy() {
   remote "for i in \$(seq 1 60); do
-      if s=\$(curl -fsS -m 3 -u \"\$(sed -n 's/^CTG_AUTH=//p' $DIR/ctg.env)\" http://127.0.0.1:8686/api/v1/status 2>/dev/null); then
+      if s=\$(curl -fsS -m 3 http://127.0.0.1:8686/api/v1/status 2>/dev/null); then
         echo \"  \$(echo \"\$s\" | grep -o '\"phase\":\"[a-z0-9-]*\"')\"; exit 0; fi; sleep 2; done; exit 1"
 }
 
@@ -32,7 +32,7 @@ case "${1:-}" in
     wait_healthy && echo "✓ rolled back"; exit ;;
   --init)
     remote "set -e; mkdir -p $DIR/bin $DIR/data
-      [ -f $DIR/ctg.env ] || { umask 077; echo 'CTG_AUTH=' > $DIR/ctg.env; echo '  created ctg.env — set CTG_AUTH=user:pass'; }
+      [ -f $DIR/ctg.env ] || { umask 077; : > $DIR/ctg.env; }
       chmod 600 $DIR/ctg.env
       if systemctl is-enabled ctg >/dev/null 2>&1; then   # migrate from the earlier systemd deployment
         systemctl disable --now ctg; rm -f /etc/systemd/system/ctg.service; systemctl daemon-reload

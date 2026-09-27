@@ -76,7 +76,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Auth: os.Getenv("CTG_AUTH"),
+	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist,
 		Icons: &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()}}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
@@ -84,9 +84,6 @@ func main() {
 		defer cancel()
 		srv.Shutdown(sctx)
 	}()
-	if os.Getenv("CTG_AUTH") != "" {
-		log.Printf("HTTP Basic auth enabled")
-	}
 	log.Printf("listening on http://%s (threshold %.0f, top %d, db %s)", *addr, *threshold, *topN, *dbPath)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
