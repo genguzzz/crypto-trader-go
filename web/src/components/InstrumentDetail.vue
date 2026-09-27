@@ -87,14 +87,22 @@ async function toggleWatch() {
           <span class="tag" v-else-if="info.eligible" title="未达 12h 阈值或数据不全">非活跃</span>
           <span class="tag" v-else title="不在全池录制范围（类别未选或盘前）：查看期间实时录制，加自选后长期保留">未录制</span>
           <span class="tag info" v-if="info.syncing" :title="info.syncMsg">同步历史中</span>
-          <button class="watch" :class="{ on: info.watch }" @click="toggleWatch">{{ info.watch ? '★ 已自选' : '☆ 自选' }}</button>
+          <button class="watch watch-top" :class="{ on: info.watch }" @click="toggleWatch">{{ info.watch ? '★ 已自选' : '☆ 自选' }}</button>
         </div>
 
         <div class="h-price">
-          <span class="px tnum" :class="chgClass(ret24)">{{ price(live) }}</span>
-          <span class="chg" :class="chgClass(ret24)"><small>24h</small>{{ logPct(ret24) }}</span>
-          <span class="chg" :class="chgClass(ret4)"><small>4h</small>{{ logPct(ret4) }}</span>
-          <span class="fresh">{{ info.tickTs ? ago(info.tickTs) + ' 前更新' : '' }}</span>
+          <div class="hp-main">
+            <span class="px tnum" :class="chgClass(ret24)">{{ price(live) }}</span>
+            <span class="hp-chg">
+              <span class="chg" :class="chgClass(ret24)"><small>24h</small>{{ logPct(ret24) }}</span>
+              <span class="chg" :class="chgClass(ret4)"><small>4h</small>{{ logPct(ret4) }}</span>
+            </span>
+            <span class="fresh">{{ info.tickTs ? ago(info.tickTs) + ' 前更新' : '' }}</span>
+          </div>
+          <!-- touch: a large watch toggle next to the price (the title row one is desktop-only) -->
+          <button class="watch-big" :class="{ on: info.watch }" :aria-pressed="info.watch" @click="toggleWatch">
+            <span class="wb-star">{{ info.watch ? '★' : '☆' }}</span>{{ info.watch ? '已自选' : '自选' }}
+          </button>
         </div>
 
         <div class="stats">
@@ -117,6 +125,10 @@ async function toggleWatch() {
           <StatCard label="OKX 现货" :icon="detailIcon('spot')" @open="openDetail('spot')">
             <template #value>{{ info.spotId ? price(info.spotLast) : '—' }}</template>
             <template #sub>{{ info.spotId ? '基差 ' + fieldValue('basis', row?.values?.basis) : '无同名 USDT 现货' }}</template>
+          </StatCard>
+          <StatCard label="总市值" :icon="detailIcon('supply')" @open="openDetail('supply')">
+            <template #value>{{ info.coin ? usd(info.coin.marketCap) : '—' }}<small v-if="info.coin"> USD</small></template>
+            <template #sub>{{ info.coin && info.coin.total ? '已流通 ' + ((info.coin.circulating / info.coin.total) * 100).toFixed(1) + '%' : info.category === '1' ? '无市值数据' : '非代币' }}</template>
           </StatCard>
         </div>
       </div>
@@ -207,13 +219,17 @@ async function toggleWatch() {
 .h-quote { font-size: var(--fs-lg); font-weight: 500; color: var(--text-3); margin-left: 2px; }
 .h-meta { font-size: var(--fs-xs); color: var(--text-3); }
 .watch { margin-left: auto; }
-.h-price { display: flex; align-items: baseline; gap: 10px; margin: 14px 0 16px; flex-wrap: wrap; }
+.watch.on, .watch-big.on { color: #f5c542; border-color: rgba(245, 197, 66, .45); }
+.h-price { display: flex; align-items: center; gap: 12px; margin: 14px 0 16px; }
+.hp-main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.hp-chg { display: inline-flex; gap: 8px; }
+.watch-big { display: none; }
 .px { font-size: var(--fs-3xl); font-weight: 700; line-height: 1; letter-spacing: -.3px; color: var(--text-1); }
 .chg { font-size: var(--fs-md); font-weight: 600; padding: 2px 8px; border-radius: 4px; background: var(--bg-3); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .chg.up { background: var(--up-bg); } .chg.down { background: var(--down-bg); }
 .chg small { font-size: var(--fs-xs); font-weight: 500; opacity: .75; margin-right: 4px; }
 .fresh { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); }
-.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--line); padding-top: 8px; gap: 4px; margin: 0 -12px; }
+.stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid var(--line); padding-top: 8px; gap: 4px; margin: 0 -12px; }
 .stat { padding: 0 14px; border-left: 1px solid var(--line); min-width: 0; }
 .stat:first-child { padding-left: 0; border-left: none; }
 .stat .l { font-size: var(--fs-xs); color: var(--text-3); margin-bottom: 4px; white-space: nowrap; }
@@ -244,5 +260,11 @@ h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin: 0 -8px; }
 
   .px { font-size: 26px; }
+  .watch-top { display: none; }
+  .hp-main { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .fresh { margin-left: 0; }
+  .watch-big { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; flex: none;
+    min-width: 64px; height: 64px; padding: 0 10px; border-radius: 12px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); }
+  .wb-star { font-size: 22px; line-height: 1; }
 }
 </style>

@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS score_snapshots(kind TEXT NOT NULL, rule_id TEXT NOT 
 CREATE TABLE IF NOT EXISTS watchlist(inst_id TEXT PRIMARY KEY, added_at INTEGER);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS inst_views(inst_id TEXT PRIMARY KEY, viewed_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS orderflow_1m(inst_id TEXT NOT NULL, ts INTEGER NOT NULL, buy REAL, sell REAL, n INTEGER,
+  step REAL, levels BLOB, PRIMARY KEY(inst_id, ts)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS taker_volume(inst_id TEXT NOT NULL, period TEXT NOT NULL, ts INTEGER NOT NULL, buy REAL, sell REAL,
+  PRIMARY KEY(inst_id, period, ts)) WITHOUT ROWID;
 `
 
 func Open(path string) (*Store, error) {
@@ -503,10 +507,112 @@ func (s *Store) FileBytes() (total, free int64) {
 
 func (s *Store) Counts() map[string]int64 {
 	out := map[string]int64{}
-	for _, t := range []string{"candles_1m", "candles_1h", "oi_samples", "funding_samples", "score_snapshots"} {
+	for _, t := range []string{"candles_1m", "candles_1h", "oi_samples", "funding_samples", "orderflow_1m", "taker_volume", "score_snapshots"} {
 		var n int64
 		s.DB.QueryRow(`SELECT COUNT(*) FROM ` + t).Scan(&n)
 		out[t] = n
 	}
 	return out
+}
+
+// ---- order flow ----
+
+// FlowRow is one recorded minute of trades: taker buy/sell USDT notional, trade count and the
+// footprint (per price level buy/sell), levels packed as [int32 level index, float32 buy, float32 sell].
+type FlowRow struct {
+	InstID    string
+	Ts        int64
+	Buy, Sell float64
+	N         int
+	Step      float64
+	Levels    []byte
+}
+
+func (s *Store) PutFlow(rows []FlowRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return s.tx(func(tx *sql.Tx) error {
+		st, err := tx.Prepare(`INSERT OR REPLACE INTO orderflow_1m VALUES(?,?,?,?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		for _, r := range rows {
+			if _, err := st.Exec(r.InstID, r.Ts, r.Buy, r.Sell, r.N, r.Step, r.Levels); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// Flow returns recorded minutes in [from, to]; levels are only read when withLevels.
+func (s *Store) Flow(instID string, from, to int64, withLevels bool) ([]FlowRow, error) {
+	cols := `ts, buy, sell, n, step, NULL`
+	if withLevels {
+		cols = `ts, buy, sell, n, step, levels`
+	}
+	rows, err := s.DB.Query(`SELECT `+cols+` FROM orderflow_1m WHERE inst_id=? AND ts>=? AND ts<=? ORDER BY ts`, instID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FlowRow
+	for rows.Next() {
+		r := FlowRow{InstID: instID}
+		if err := rows.Scan(&r.Ts, &r.Buy, &r.Sell, &r.N, &r.Step, &r.Levels); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+type TakerRow struct {
+	Ts        int64
+	Buy, Sell float64
+}
+
+func (s *Store) PutTaker(instID, period string, xs []TakerRow) error {
+	if len(xs) == 0 {
+		return nil
+	}
+	return s.tx(func(tx *sql.Tx) error {
+		st, err := tx.Prepare(`INSERT OR REPLACE INTO taker_volume VALUES(?,?,?,?,?)`)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		for _, x := range xs {
+			if _, err := st.Exec(instID, period, x.Ts, x.Buy, x.Sell); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) Taker(instID, period string, from, to int64) ([]TakerRow, error) {
+	rows, err := s.DB.Query(`SELECT ts, buy, sell FROM taker_volume WHERE inst_id=? AND period=? AND ts>=? AND ts<=? ORDER BY ts`, instID, period, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TakerRow
+	for rows.Next() {
+		var x TakerRow
+		if err := rows.Scan(&x.Ts, &x.Buy, &x.Sell); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// TakerSpan returns the newest and oldest stored period start (0 if none).
+func (s *Store) TakerSpan(instID, period string) (newest, oldest int64) {
+	var n, o sql.NullInt64
+	s.DB.QueryRow(`SELECT MAX(ts), MIN(ts) FROM taker_volume WHERE inst_id=? AND period=?`, instID, period).Scan(&n, &o)
+	return n.Int64, o.Int64
 }

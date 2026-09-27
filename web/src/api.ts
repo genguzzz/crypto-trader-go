@@ -29,6 +29,10 @@ export interface CatalogItem {
   instId: string; category: string; listTime: number; preMarket?: boolean; recorded: boolean
   active?: boolean; rank?: number; watch?: boolean; last: number; open24h: number
 }
+/** Per-bar taker buy/sell USDT; src trades = recorded here (footprint levels available), rubik = OKX history. */
+export interface FlowBar { t: number; buy: number; sell: number; n?: number; src: 'trades' | 'rubik'; levels?: [number, number, number][]; step?: number }
+export interface OrderFlow { bars: FlowBar[] | null; recording: boolean; since: number }
+export interface Coin { id: string; symbol: string; name: string; rank: number; marketCap: number; fdv: number; circulating: number; total: number; max: number; updatedAt: string; fetchedAt: number }
 export interface TableUsage { name: string; table: string; bytes: number; budget: number; ages: string[]; tight: boolean }
 export interface Storage {
   at: number; tookMs: number; capBytes: number; fileBytes: number; freeBytes: number; usedBytes: number
@@ -47,7 +51,7 @@ export interface InstrumentInfo {
   instId: string; category: string; spotId?: string; listTime: number; last: number; bid: number; ask: number; tickTs: number
   spotLast?: number; fundingRate: number; fundingTime: number; fundingIntervalH: number
   oiCcy: number; oiUsd: number; oiTs: number; row?: Row
-  watch: boolean; eligible: boolean; tier: string; syncing: boolean; syncMsg?: string
+  watch: boolean; eligible: boolean; tier: string; syncing: boolean; syncMsg?: string; coin?: Coin
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -63,6 +67,8 @@ export const api = {
   instrument: (id: string) => req<InstrumentInfo>(`/api/v1/instruments/${encodeURIComponent(id)}`),
   catalog: () => req<{ items: CatalogItem[] }>('/api/v1/catalog'),
   storage: () => req<Storage | null>('/api/v1/storage'),
+  orderflow: (id: string, bar: string, limit: number, levels: boolean) =>
+    req<OrderFlow>(`/api/v1/orderflow?instId=${encodeURIComponent(id)}&bar=${bar}&limit=${limit}&levels=${levels ? 1 : 0}`),
   candles: (id: string, bar: string, limit = 300, market = 'swap') =>
     req<Candle[]>(`/api/v1/candles?instId=${encodeURIComponent(id)}&bar=${bar}&limit=${limit}&market=${market}`),
   compare: (id: string, bar: string, limit = 300) =>

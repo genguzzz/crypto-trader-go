@@ -29,6 +29,7 @@ type Inst struct {
 	ID, Category, SpotID string
 	ListTime             int64
 	CtVal                float64 // contract value in base units (USDT notional = px × sz × ctVal)
+	TickSz               float64
 	Eligible             bool
 
 	bars     *minuteRing // confirmed 1m bars, last keep1m minutes
@@ -56,6 +57,8 @@ type Inst struct {
 	syncing  bool
 	syncedAt int64
 	syncMsg  string
+
+	flow *flowState // trade aggregation while in the order-flow set (orderflow.go)
 }
 
 func newInst(id string) *Inst {

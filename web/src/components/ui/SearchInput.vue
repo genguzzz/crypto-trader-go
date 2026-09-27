@@ -30,6 +30,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 input { all: unset; flex: 1; min-width: 0; color: var(--text-1); font-size: var(--fs-md); }
 input::placeholder { color: var(--text-3); }
 .si-x { all: unset; display: inline-flex; padding: 2px; border-radius: 4px; color: var(--text-3); cursor: pointer; }
-.si-x:hover { color: var(--text-1); background: var(--bg-3); }
+@media (hover: hover) { .si-x:hover { color: var(--text-1); background: var(--bg-3); } }
 .si-k { font: 500 11px ui-monospace, "SF Mono", Menlo, monospace; color: var(--text-3); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 5px; line-height: 16px; }
 </style>

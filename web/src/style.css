@@ -31,20 +31,27 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+/* Pointer states: hover styles only exist for mouse (@media (hover: hover) in each component);
+   touch screens get a press state instead and no grey tap flash. */
+html { -webkit-tap-highlight-color: transparent; }
+@media (hover: none) {
+  button:active, .chip:active, .fchip:active, .seg-i:active, .sel-trigger:active { filter: brightness(1.25); }
+  .pressable:active, tbody tr:active, .card.clickable:active { background: var(--bg-2); }
+}
 html, body {
   margin: 0; background: var(--bg-0); color: var(--text-1);
   font: 400 var(--fs-md)/1.5 Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
+@media (hover: hover) { a:hover { text-decoration: underline; } }
 button, select, input {
   font: inherit; color: var(--text-1); background: var(--bg-3); border: 1px solid var(--line-2);
   border-radius: var(--radius-sm); padding: 4px 10px; outline: none;
 }
 input:focus, select:focus { border-color: var(--accent); }
 button { cursor: pointer; transition: border-color .12s, background .12s; }
-button:hover { border-color: var(--text-3); }
+@media (hover: hover) { button:hover { border-color: var(--text-3); } }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button.on, .chip.on { background: var(--accent-bg); border-color: var(--accent); color: var(--text-1); }
 .muted { color: var(--text-3); }
@@ -90,7 +97,7 @@ th { color: var(--text-3); font-weight: 500; text-align: left; font-size: var(--
   display: inline-flex; align-items: center; height: 26px; padding: 0 12px; border-radius: 13px; border: 1px solid var(--line-2);
   background: transparent; color: var(--text-2); cursor: pointer; user-select: none; font-size: var(--fs-sm);
 }
-.chip:hover { color: var(--text-1); }
+@media (hover: hover) { .chip:hover { color: var(--text-1); } }
 .score {
   display: inline-block; min-width: 34px; height: 22px; line-height: 22px; text-align: center; border-radius: 4px;
   padding: 0 6px; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--fs-md);

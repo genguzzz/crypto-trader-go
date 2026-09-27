@@ -72,7 +72,7 @@ func (e *Engine) instFor(id string) *Inst {
 	}
 	now := time.Now().UnixMilli()
 	fresh := newInst(id)
-	fresh.Category, fresh.ListTime, fresh.CtVal = meta.Category, meta.ListTime, meta.CtVal
+	fresh.Category, fresh.ListTime, fresh.CtVal, fresh.TickSz = meta.Category, meta.ListTime, meta.CtVal, meta.TickSz
 	e.restoreInst(fresh, now)
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -129,7 +129,7 @@ func (e *Engine) Touch(id string) *Inst {
 	}
 	now := time.Now().UnixMilli()
 	e.mu.Lock()
-	wasRecording := e.recording(in, now)
+	wasRecording := e.recording(in, now) && in.flow != nil
 	prev := e.views[id]
 	e.views[id] = now
 	start := !in.syncing && now-in.syncedAt > 30*minuteMs
@@ -171,9 +171,12 @@ func (e *Engine) syncInst(ctx context.Context, id string) {
 	set("拉取最近 24h 1m 与 1H K 线")
 	e.fillMinutes(ctx, id, 1440)
 	e.fillHours(ctx, id)
-	set("拉取持仓量与资金费历史")
+	set("拉取持仓量、资金费与主动买卖量历史")
 	e.fetchOI5m(ctx, id)
 	e.fetchFundingHistory(ctx, id)
+	from := time.Now().Add(-HistoryDays * day).UnixMilli()
+	e.syncTaker(ctx, id, "5m", from)
+	e.syncTaker(ctx, id, "1H", time.Now().Add(-30*day).UnixMilli())
 	e.mu.RLock()
 	keep := e.keep1mFor(e.tierOf(id, time.Now().UnixMilli()))
 	e.mu.RUnlock()

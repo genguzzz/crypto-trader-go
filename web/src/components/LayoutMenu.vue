@@ -34,16 +34,17 @@ const resetAll = () => entries.value.forEach(([, e]) => e.customized && e.reset(
 
 <style>
 .lm-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--text-2); }
-.lm-btn:hover, .lm-btn[data-state="open"] { background: var(--bg-2); color: var(--text-1); border-color: var(--line-2); }
+.lm-btn[data-state="open"] { background: var(--bg-2); color: var(--text-1); border-color: var(--line-2); }
+@media (hover: hover) { .lm-btn:hover { background: var(--bg-2); color: var(--text-1); border-color: var(--line-2); } }
 .lm-btn .badge { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .lm-pop { z-index: 120; width: 280px; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 12px; padding: 10px; box-shadow: 0 16px 48px rgba(0, 0, 0, .5); font-size: var(--fs-sm); }
 .lm-title { font-weight: 600; color: var(--text-1); padding: 2px 6px 8px; }
 .lm-row { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 6px; color: var(--text-1); }
-.lm-row:hover { background: var(--bg-3); }
+@media (hover: hover) { .lm-row:hover { background: var(--bg-3); } }
 .lm-row .state { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); }
 .lm-row .state.on { color: var(--accent); }
 .lm-reset { border: none; background: transparent; padding: 2px; color: var(--text-3); display: inline-flex; }
-.lm-reset:not(:disabled):hover { color: var(--text-1); }
+@media (hover: hover) { .lm-reset:not(:disabled):hover { color: var(--text-1); } }
 .lm-reset:disabled { opacity: .3; cursor: default; }
 .lm-all { width: 100%; margin: 6px 0 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .lm-all:disabled { opacity: .45; cursor: default; }

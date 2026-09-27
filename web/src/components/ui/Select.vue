@@ -50,7 +50,7 @@ const current = computed(() => props.options.find(o => o.value === model.value))
   transition: border-color .12s, background .12s;
 }
 .sel-trigger.sm { height: 26px; font-size: var(--fs-sm); padding: 0 8px; }
-.sel-trigger:hover { border-color: var(--text-3); }
+@media (hover: hover) { .sel-trigger:hover { border-color: var(--text-3); } }
 .sel-trigger[data-state="open"], .sel-trigger:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
 .sel-trigger .lead { color: var(--text-3); flex: none; }
 .sel-trigger .val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }

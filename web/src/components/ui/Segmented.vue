@@ -30,7 +30,7 @@ void props
   transition: color .12s, background .12s, box-shadow .12s;
 }
 .sm .seg-i { height: 22px; padding: 0 8px; font-size: var(--fs-xs); }
-.seg-i:hover { color: var(--text-1); }
+@media (hover: hover) { .seg-i:hover { color: var(--text-1); } }
 .seg-i[data-state="on"] { color: var(--text-1); background: var(--bg-3); box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 1px 3px rgba(0, 0, 0, .4); }
 .seg-i.up[data-state="on"] { color: var(--up); } .seg-i.down[data-state="on"] { color: var(--down); }
 .seg-i:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

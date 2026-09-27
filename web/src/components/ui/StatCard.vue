@@ -28,12 +28,12 @@ const emit = defineEmits<{ open: [] }>()
   border: 1px solid transparent; transition: background .12s, border-color .12s; text-align: left;
 }
 .card.clickable { cursor: pointer; }
-.card.clickable:hover { background: var(--bg-2); border-color: var(--line-2); }
+@media (hover: hover) { .card.clickable:hover { background: var(--bg-2); border-color: var(--line-2); } }
 .card.clickable:focus-visible { outline: 2px solid var(--accent); }
 .l { display: flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--text-3); margin-bottom: 4px; white-space: nowrap; }
 .ic { color: var(--text-3); flex: none; }
 .go { margin-left: auto; color: var(--text-3); opacity: 0; transition: opacity .12s, transform .12s; }
-.card.clickable:hover .go { opacity: 1; transform: translateX(2px); color: var(--accent); }
+@media (hover: hover) { .card.clickable:hover .go { opacity: 1; transform: translateX(2px); color: var(--accent); } }
 @media (hover: none) { .go { opacity: .6; } }
 .v { font-size: var(--fs-lg); font-weight: 600; color: var(--text-1); white-space: nowrap; }
 .v.up { color: var(--up); } .v.down { color: var(--down); }

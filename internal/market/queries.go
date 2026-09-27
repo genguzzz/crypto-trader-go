@@ -6,10 +6,12 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"crypto-trader-go/internal/okx"
+	"crypto-trader-go/internal/refdata"
 	"crypto-trader-go/internal/rules"
 	"crypto-trader-go/internal/store"
 )
@@ -264,27 +266,28 @@ func (e *Engine) Series(id, field string, hours int) ([]SeriesPoint, error) {
 }
 
 type InstrumentInfo struct {
-	InstID      string  `json:"instId"`
-	Category    string  `json:"category"`
-	SpotID      string  `json:"spotId,omitempty"`
-	ListTime    int64   `json:"listTime"`
-	Last        float64 `json:"last"`
-	Bid         float64 `json:"bid"`
-	Ask         float64 `json:"ask"`
-	TickTs      int64   `json:"tickTs"`
-	SpotLast    float64 `json:"spotLast,omitempty"`
-	FundingRate float64 `json:"fundingRate"`
-	FundingTime int64   `json:"fundingTime"`
-	IntervalH   float64 `json:"fundingIntervalH"`
-	OiCcy       float64 `json:"oiCcy"`
-	OiUsd       float64 `json:"oiUsd"`
-	OiTs        int64   `json:"oiTs"`
-	Watch       bool    `json:"watch"`
-	Eligible    bool    `json:"eligible"` // in the full-pool recording universe
-	Tier        string  `json:"tier"`     // retention tier: none | base | viewed | pool | watch
-	Syncing     bool    `json:"syncing"`  // on-demand history download running
-	SyncMsg     string  `json:"syncMsg,omitempty"`
-	Row         *Row    `json:"row,omitempty"`
+	InstID      string        `json:"instId"`
+	Category    string        `json:"category"`
+	SpotID      string        `json:"spotId,omitempty"`
+	ListTime    int64         `json:"listTime"`
+	Last        float64       `json:"last"`
+	Bid         float64       `json:"bid"`
+	Ask         float64       `json:"ask"`
+	TickTs      int64         `json:"tickTs"`
+	SpotLast    float64       `json:"spotLast,omitempty"`
+	FundingRate float64       `json:"fundingRate"`
+	FundingTime int64         `json:"fundingTime"`
+	IntervalH   float64       `json:"fundingIntervalH"`
+	OiCcy       float64       `json:"oiCcy"`
+	OiUsd       float64       `json:"oiUsd"`
+	OiTs        int64         `json:"oiTs"`
+	Watch       bool          `json:"watch"`
+	Eligible    bool          `json:"eligible"` // in the full-pool recording universe
+	Tier        string        `json:"tier"`     // retention tier: none | base | viewed | pool | watch
+	Syncing     bool          `json:"syncing"`  // on-demand history download running
+	SyncMsg     string        `json:"syncMsg,omitempty"`
+	Row         *Row          `json:"row,omitempty"`
+	Coin        *refdata.Coin `json:"coin,omitempty"` // CoinGecko market cap / supply (crypto only)
 }
 
 // Instrument returns the detail for any catalog instrument; opening it counts as a view (starts
@@ -300,6 +303,11 @@ func (e *Engine) Instrument(id string) (InstrumentInfo, bool) {
 		FundingTime: in.fund.FundingTime, IntervalH: in.fund.IntervalH, OiCcy: in.oiNow.OiCcy, OiUsd: in.oiNow.OiUsd, OiTs: in.oiNow.Ts,
 		Watch: e.watch[id], Eligible: in.Eligible, Tier: tierNames[e.tierOf(id, time.Now().UnixMilli())], Syncing: in.syncing, SyncMsg: in.syncMsg}
 	e.mu.RUnlock()
+	if e.Ref != nil && info.Category == "1" {
+		if c, ok := e.Ref.Get(strings.SplitN(id, "-", 2)[0]); ok {
+			info.Coin = &c
+		}
+	}
 	snap := e.snap.Load()
 	var row *Row
 	for _, r := range snap.Rows {

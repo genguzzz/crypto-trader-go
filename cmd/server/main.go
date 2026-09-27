@@ -20,6 +20,7 @@ import (
 	"crypto-trader-go/internal/api"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/okx"
+	"crypto-trader-go/internal/refdata"
 	"crypto-trader-go/internal/store"
 	"crypto-trader-go/web"
 )
@@ -67,6 +68,8 @@ func main() {
 	defer stop()
 
 	eng := market.New(cfg, okx.NewREST(), st)
+	eng.Ref = refdata.New(okx.HTTPClient())
+	go eng.Ref.Run(ctx)
 	if err := eng.Start(ctx); err != nil {
 		log.Fatal(err)
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,10 @@ import (
 func fakeOKX(t *testing.T, last int64, requests *int) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*requests++
+		if strings.Contains(r.URL.Path, "/rubik/") { // no OI / taker history in this fake
+			json.NewEncoder(w).Encode(map[string]any{"code": "0", "msg": "", "data": [][]string{}})
+			return
+		}
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		top := last

@@ -13,6 +13,7 @@
 | 2026-09-27 | 界面：设计 token 与信息层级重构；说明文字收进 InfoTip/Modal；PC 面板拖拽与顶部布局菜单；Reka UI 组件库（分段/下拉/筛选/搜索）；导航重设计与手机底部标签栏；PC 单滚动区；手机不横向溢出；设置页秒开 + API gzip。规范见 `docs/design-guidelines.md` |
 | 2026-09-27 | 搜索覆盖 OKX 全部 USDT 永续（目录常驻内存，点开才按需下载近 7 天历史）；数据分层淘汰（自选/活跃池/最近查看/全池录制/未跟踪 × 各周期表独立保留期与容量配额，总上限默认 2 GB，设置页可改）（`openspec/changes/storage-retention-and-search`） |
 | 2026-09-27 | 上线：zouter Docker（distroless 运行时 + 挂载二进制，`deploy/deploy.sh` 一键升级/回滚），`https://ctg.gugenzzz.top`（nginx SNI 默认路由 + 通配符证书），复用本机数据库 |
+| 2026-09-27 | K 线订单流：Delta/CVD（本机逐笔 + OKX rubik 主动买卖量历史）与足迹图（活跃池/自选/查看中合约逐笔录制）；K 线十字光标明细与距现价百分比；详情页总市值/流通比例（CoinGecko）；手机端点击稳定性（排序冻结、悬停/按压分离）、详情自选大按钮、弹窗改底部抽屉（PC 顶部对齐） |
 | 2026-09-27 | 迁移：服务器从 zouter 换到 greencloud（GreenCloud 东京 2C/4G，Debian 13，xanmod BBRv3）；数据整库迁移，`ctg.gugenzzz.top` A/AAAA 改指 greencloud；GitHub Actions 部署密钥与 Secrets 重配到 greencloud |
 
 ## 进行中

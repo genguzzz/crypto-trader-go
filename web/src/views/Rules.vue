@@ -183,7 +183,8 @@ const H = (h: number) => `${h}h`
 .rules { grid-template-columns: 240px 1fr; align-items: start; }
 .list { display: grid; gap: 4px; position: sticky; top: 56px; }
 .item { display: block; padding: 6px 8px; border-radius: 6px; color: var(--text); }
-.item.on, .item:hover { background: var(--panel2); }
+.item.on { background: var(--panel2); }
+@media (hover: hover) { .item:hover { background: var(--panel2); } }
 .small { font-size: 11px; }
 .main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .desc { margin: 0; }
