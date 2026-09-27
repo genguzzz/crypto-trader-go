@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { store } from './store'
+import LayoutMenu from './components/LayoutMenu.vue'
+import { useDesktop } from './composables/device'
+const desktop = useDesktop()
 import { time, usd } from './fmt'
 const clock = (ms?: number) => !ms ? "—" : new Date(ms).toLocaleTimeString('zh-CN', { hour12: false })
 
@@ -22,6 +25,7 @@ const phaseText = computed(() => {
       <RouterLink to="/status">系统</RouterLink>
     </nav>
     <div class="pool" v-if="s">
+      <LayoutMenu v-if="desktop" />
       <span class="dot" :class="store.connected ? 'ok' : 'bad'" :title="store.connected ? '推送已连接' : '推送断开，自动重连中'"></span>
       <b>{{ s.coverage.active }}</b><span class="muted">/{{ s.topN }} 达标</span>
       <InfoTip class="hide-sm">
