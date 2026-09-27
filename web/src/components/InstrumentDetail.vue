@@ -9,10 +9,14 @@ import SeriesChart from './SeriesChart.vue'
 import ScoreChip from './ScoreChip.vue'
 import CoinIcon from './CoinIcon.vue'
 import DraggablePanels from './DraggablePanels.vue'
+import Modal from './Modal.vue'
+import InfoTip from './InfoTip.vue'
+import ScoringExplainer from './ScoringExplainer.vue'
 
 const props = defineProps<{ id: string }>()
-const panelIds = ['head', 'score', 'price', 'compare', 'series', 'facts', 'events']
-const panelLabels: Record<string, string> = { head: '行情', score: '评分拆解', price: 'K 线', compare: '相对走势', series: 'OI/资金费', facts: '事实面板', events: '新闻/解锁' }
+const panelIds = ['head', 'score', 'price', 'compare', 'series', 'events']
+const showFacts = ref(false)
+const panelLabels: Record<string, string> = { head: '行情', score: '评分拆解', price: 'K 线', compare: '相对走势', series: 'OI/资金费', events: '新闻/解锁' }
 const info = ref<InstrumentInfo | null>(null)
 const err = ref('')
 let timer: number | undefined
@@ -115,12 +119,14 @@ async function toggleWatch() {
       <template #score>
       <div class="panel">
         <h3>
-          评分拆解
-          <select :value="store.ruleId" @change="setRule(($event.target as HTMLSelectElement).value)">
-            <option v-for="r in store.meta?.rules || []" :key="r.id" :value="r.id">{{ r.name }} v{{ r.version }}</option>
-          </select>
-          <RouterLink :to="`/rules/${store.ruleId}`" class="small">战绩 →</RouterLink>
-        </h3>
+            评分拆解
+            <InfoTip label="原理"><ScoringExplainer /></InfoTip>
+            <select :value="store.ruleId" @change="setRule(($event.target as HTMLSelectElement).value)">
+              <option v-for="r in store.meta?.rules || []" :key="r.id" :value="r.id">{{ r.name }} v{{ r.version }}</option>
+            </select>
+            <button class="small facts-btn" @click="showFacts = true">全部字段 ⤢</button>
+            <RouterLink :to="`/rules/${store.ruleId}`" class="small">战绩 →</RouterLink>
+          </h3>
         <div v-if="score" class="sides">
           <div v-for="side in (['long', 'short'] as const)" :key="side" class="side">
             <div class="sh">
@@ -151,22 +157,6 @@ async function toggleWatch() {
       <template #series>
       <SeriesChart :id="id" />
       </template>
-      <template #facts>
-      <div class="panel">
-        <h3>事实面板（全部字段）<span class="tag" v-if="store.snap?.preview">盘中每 10 秒重算</span></h3>
-        <table>
-          <thead><tr><th>字段</th><th class="num">数值</th><th class="num">池内分位</th><th class="hide-sm">定义</th></tr></thead>
-          <tbody>
-            <tr v-for="f in store.meta?.fields || []" :key="f.key">
-              <td>{{ f.label }}<span class="tag" v-if="!f.replayable" title="历史回放中没有此字段">不可回放</span></td>
-              <td class="num">{{ fieldValue(f.key, row?.values?.[f.key]) }}</td>
-              <td class="num">{{ row?.pct?.[f.key] != null ? row.pct[f.key].toFixed(0) : '—' }}</td>
-              <td class="muted hide-sm wrap">{{ f.desc }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      </template>
       <template #events>
       <div class="panel">
         <h3>新闻 / 解锁 / 链上持有人</h3>
@@ -174,6 +164,20 @@ async function toggleWatch() {
       </div>
       </template>
     </DraggablePanels>
+    <Modal :open="showFacts" :title="`${base} 事实面板（全部字段）`" wide @close="showFacts = false">
+      <p class="note" v-if="store.snap?.preview">盘中每 10 秒重算；分位 = 在当前活跃池内的位置（0–100）。</p>
+      <table>
+            <thead><tr><th>字段</th><th class="num">数值</th><th class="num">池内分位</th><th class="hide-sm">定义</th></tr></thead>
+            <tbody>
+              <tr v-for="f in store.meta?.fields || []" :key="f.key">
+                <td>{{ f.label }}<span class="tag" v-if="!f.replayable" title="历史回放中没有此字段">不可回放</span></td>
+                <td class="num">{{ fieldValue(f.key, row?.values?.[f.key]) }}</td>
+                <td class="num">{{ row?.pct?.[f.key] != null ? row.pct[f.key].toFixed(0) : '—' }}</td>
+                <td class="muted hide-sm wrap">{{ f.desc }}</td>
+              </tr>
+            </tbody>
+          </table>
+    </Modal>
   </div>
   <div v-else class="note pad">{{ err || '加载中…' }}</div>
 </template>
@@ -204,6 +208,7 @@ async function toggleWatch() {
 .stat .s { font-size: var(--fs-xs); color: var(--text-2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .small { font-size: 12px; font-weight: 400; }
+.facts-btn { margin-left: auto; padding: 2px 10px; }
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .side .sh { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .sl { font-size: var(--fs-sm); color: var(--text-3); }
