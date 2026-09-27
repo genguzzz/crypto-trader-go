@@ -1,11 +1,49 @@
-# crypto-trader-go
+# crypto-trader-go · OKX 研究台
 
-全新的个人 OKX USDT 永续交易研究工具项目（Go 优先）。旧仓库 `/Users/gugen/Code/cryptoBot` **仅供历史参考**；本仓库不包含其代码、配置或凭据。
+个人使用的 **OKX USDT 永续合约研究工具**：实时发现流动性足够的合约，客观呈现每个币的状态（事实面板），用你自己定义的规则打分，并自动用之后的真实行情检验规则是否有效（战绩）。
 
-## 进度
+> 只用 OKX **公开**行情接口：不需要 API Key、不读账户、**不下单**。分数不是胜率或交易建议。
 
-1. **调研：端到端技术蓝图已完成并归档。** [完整需求与技术蓝图](docs/blueprint/README.md)（逐功能、数据契约、评分、开源选型）优先于[初版调研](docs/go-okx-personal-trading-research-2026-09-19.md)；[完整蓝图 OpenSpec 归档](openspec/changes/archive/2026-09-19-end-to-end-trading-tool-blueprint/) 和[初版归档](openspec/changes/archive/2026-09-19-go-okx-personal-trading-research/)。
-2. **交互原型：待启动。** 桌面和手机端候选列表、合约详情及仓位分析；使用合成样本。
-3. **具体实现：待启动。** Go 行情、候选池、独立多空评分、API/UI；私有仓位只读接入需另行评审。
+## 功能一览
 
-项目协作约定见 [AGENTS.md](AGENTS.md)，OpenSpec 上下文见 [openspec/config.yaml](openspec/config.yaml)。当前没有运行中的交易系统，也没有已验证的自动交易策略。
+| 页面 | 能做什么 |
+|---|---|
+| 扫描 | 监控池列表（默认 12h 成交额 > 500 万 USDT，最多 200 个）；按多/空/任意字段排序过滤；自选；桌面左右分栏、手机独立详情页 |
+| 详情 | 币种图标、最新价/点差/OI/资金费；评分拆解（每个字段加减几分）；K 线（1m–4H，可叠加现货）；相对 BTC/ETH 走势；OI 与资金费历史；事实面板全部字段 |
+| 规则与战绩 | 编辑多/空权重与点差门槛（保存=新版本）；每条规则的 1h/4h/24h Rank IC、t 值、前 20% 超额与扣费净收益；14 天历史回放 + 上线后不可改写的记录 |
+| 设置 | 阈值、上限 N、类别（加密/股票/商品）、默认规则，保存后立即生效 |
+| 系统 | 阶段、覆盖率、WS 连接、REST 用量、数据库行数、回放与历史回补进度 |
+
+## 快速开始（本地开发）
+
+需要 Go 1.25+、Node 22+。
+
+```bash
+make build                     # 构建前端并打包进 Go 二进制 bin/ctg
+./bin/ctg                      # http://127.0.0.1:8686 ，数据在 data/ctg.db
+make test                      # go vet + go test -race + vue-tsc
+```
+
+前后端分开调试：
+
+```bash
+./bin/ctg -web=false           # 只跑 API（:8686）
+cd web && npm run dev          # Vite 开发服务器，/api 代理到 :8686
+```
+
+首次启动约 30 秒出临时名单、约 4 分钟完成全池回填进入实时；之后后台回放 14 天、回补 7 天 1m K 线。重启约 1 分钟追平。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [架构与目录](docs/architecture.md) | 模块划分、数据流、关键算法、技术选型、目录结构 |
+| [运行与部署](docs/operations.md) | 参数、环境变量、NAS、网络问题排查 |
+| [里程碑与待办](docs/roadmap.md) | 已完成 / 进行中 / 待办（含服务器 Docker 部署） |
+| [蓝图修订 2026-09-26](docs/blueprint/revision-2026-09-26.md) | 用实测数据纠正的方案与决策记录 |
+| [调研探针](research/poc/README.md) | 可复跑的公共接口实测程序与结果 |
+| `openspec/` | 需求/变更记录（OpenSpec 流程） |
+
+## 状态
+
+见 [里程碑与待办](docs/roadmap.md)。
