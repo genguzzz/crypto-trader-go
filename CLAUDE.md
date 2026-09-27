@@ -1,3 +1,10 @@
 # crypto-trader-go
 
-项目级指引请先阅读同目录的 [AGENTS.md](AGENTS.md)；其适用于 Claude/Codex 和本仓库全部模块。**阶段 1 完整研究蓝图已归档**；等待用户启动阶段 2 原型，不要把阶段 2 或阶段 3 Go 实现当作已授权施工。后续阶段分别通过新的 OpenSpec change 管理。旧 `~/Code/cryptoBot` 的 Python/Top100/24h 技术报告仅供参考，新仓库不继承其代码或凭据，新目标是 Go 优先、Top200、滚动 12h USDT 成交额独立多空评分。最新决策入口为 `docs/blueprint/README.md`；初版调研见 `docs/go-okx-personal-trading-research-2026-09-19.md`，工作流上下文见 `openspec/config.yaml`。不读取或打印私有凭据。
+个人 OKX USDT 永续研究台：Go 后端（录制/监控池/事实面板/规则/战绩，HTTP+SSE）+ Vue 3 前端，SQLite 单库。只用公共接口，**不读账户、不下单**。
+
+- 先读：[README](README.md) → [架构](docs/architecture.md) → [里程碑与待办](docs/roadmap.md)。协作约束见 [AGENTS.md](AGENTS.md)。
+- 开发流程、命令、验证方法：用项目 skill `ctg-dev`（`.claude/skills/ctg-dev/SKILL.md`）。
+- 用中文和用户沟通（用户中文更顺）。
+- 改代码后必须：`make test`、重建 `bin/ctg` 并重启本地服务、用浏览器（playwright-core + 本机 Chrome）截图确认页面。
+- 新需求先记入 `docs/roadmap.md`；改口径/加数据源/涉及账户权限的先与用户确认。低优先级的“以后要做”只记待办，不提前实现。
+- 不读取、打印或提交任何凭据（OKX key、代理密码、`data/.auth` 等）。
