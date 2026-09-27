@@ -48,7 +48,7 @@
 需要 Go 1.25+ 和 Node 22+。
 
 ```bash
-git clone https://github.com/gengu6585/crypto-trader-go.git && cd crypto-trader-go
+git clone https://github.com/genguzzz/crypto-trader-go.git && cd crypto-trader-go
 (cd web && npm ci)
 make build                     # 构建前端并打包进 bin/ctg
 ./bin/ctg                      # http://127.0.0.1:8686 ，数据在 data/ctg.db
