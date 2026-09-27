@@ -44,6 +44,27 @@
 - 间距按 4px 网格；面板内边距 14–16px，圆角 `--radius`（10px），小控件 `--radius-sm`。
 - 标签 `.tag`（good/warn/bad/info 四种语义），状态点 `.dot`（ok/warn/bad）。
 
+## 3.1 组件库（统一入口，禁止手写同类控件）
+
+基础交互组件基于 **Reka UI**（无样式、可访问性完整：键盘、焦点、ARIA、Portal），样式由本项目 token 统一：
+
+| 需求 | 用 | 不要 |
+|---|---|---|
+| 单选切换（方向、周期、范围、预设值） | `<Segmented>`（全局组件，ToggleGroup single，禁止取消选中） | 并排 button + 负 margin（会裁掉高亮边框） |
+| 下拉选择（规则、排序、默认值） | `<USelect>`（全局组件，支持分组/说明/徽标/勾选） | 原生 `<select>` |
+| 多选筛选（类别） | `ui/ChipGroup.vue`（ToggleGroup multiple，可 `at-least-one`） | 手写 span.chip |
+| 开关筛选（自选、门槛） | `ui/FilterChip.vue`（Toggle；未启用虚线、启用蓝色实线 + 计数） | |
+| 搜索 | `ui/SearchInput.vue`（图标、清空、`/` 聚焦、Esc 清空） | 裸 input |
+| 浮层菜单 / 列表 | Reka `Popover`（样式类 `.lm-pop`） | 页面内展开大块内容 |
+| 指标卡片 / 详情 | `ui/StatCard.vue` + `details/registry.ts` | |
+
+## 3.2 全局导航与布局
+
+- 顶部栏：品牌标志 + 图标导航（选中 = 浅底胶囊 + 强调色图标）+ 市场脉搏（BTC/ETH）+ 状态胶囊 + 布局按钮；高度 52px。手机端导航改为底部标签栏。
+- PC 为“应用外壳”：窗口本身不滚动，只有内容区滚动（避免双滚动条）；手机保持文档滚动。
+- 布局类设置（面板顺序、列表宽度）不在内容区放提示或按钮，统一登记到顶部“布局”菜单（`useLayoutEntry`）。
+- 宽表格包在 `.table-scroll` 中；任何 grid 列用 `minmax(0, 1fr)`，手机页面宽度必须等于视口（截图脚本检查 `scrollWidth`）。
+
 ## 4. 交互
 
 - PC 专属交互（拖拽面板、拖动分隔线、悬浮提示）用 `useDesktop()` 判断；触屏设备提供等价的点击方式或保持固定布局。
@@ -52,4 +73,4 @@
 
 ## 5. 参考
 
-交易所交易终端（币安 / OKX / Bybit）的行情头部与列表密度；Radix Colors 的分级色阶（背景与文字角色）；IBM Carbon 的 productive 字号阶梯与 4px 网格。
+交易所交易终端（币安 / OKX / Bybit）的行情头部与列表密度；Radix Colors 的分级色阶（背景与文字角色）；IBM Carbon 的 productive 字号阶梯与 4px 网格；Linear / Vercel Geist 的导航与筛选栏（图标 + 胶囊、虚线未启用筛选、键盘快捷键）；Reka UI（MIT，Vue 版 Radix Primitives）提供交互原语。
