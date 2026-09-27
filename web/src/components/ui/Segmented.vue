@@ -6,7 +6,7 @@ import { ToggleGroupRoot, ToggleGroupItem } from 'reka-ui'
  * Segmented control (single choice) on Reka UI ToggleGroup: keyboard arrows, roving focus, ARIA.
  * The active item is a raised pill inside a sunken track — no overlapping borders to clip.
  */
-export interface SegOption<V> { value: V; label?: string; icon?: Component; title?: string; tone?: 'up' | 'down' }
+export interface SegOption<V> { value: V; label?: string; icon?: Component; title?: string; tone?: 'up' | 'down'; disabled?: boolean }
 const props = withDefaults(defineProps<{ options: SegOption<T>[]; size?: 'sm' | 'md'; ariaLabel?: string }>(), { size: 'md' })
 const model = defineModel<T>({ required: true })
 function onUpdate(v: any) { if (v !== undefined && v !== null && v !== '') model.value = v as T } // never deselect
@@ -15,7 +15,7 @@ void props
 
 <template>
   <ToggleGroupRoot type="single" :model-value="model as any" class="seg" :class="size" :aria-label="ariaLabel" @update:model-value="onUpdate">
-    <ToggleGroupItem v-for="o in options" :key="String(o.value)" :value="o.value as any" class="seg-i" :class="o.tone" :title="o.title">
+    <ToggleGroupItem v-for="o in options" :key="String(o.value)" :value="o.value as any" class="seg-i" :class="o.tone" :title="o.title" :disabled="o.disabled">
       <component :is="o.icon" v-if="o.icon" :size="size === 'sm' ? 13 : 14" />
       <span v-if="o.label">{{ o.label }}</span>
     </ToggleGroupItem>
@@ -33,5 +33,6 @@ void props
 @media (hover: hover) { .seg-i:hover { color: var(--text-1); } }
 .seg-i[data-state="on"] { color: var(--text-1); background: var(--bg-3); box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 1px 3px rgba(0, 0, 0, .4); }
 .seg-i.up[data-state="on"] { color: var(--up); } .seg-i.down[data-state="on"] { color: var(--down); }
+.seg-i[data-disabled] { opacity: .35; cursor: not-allowed; }
 .seg-i:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>

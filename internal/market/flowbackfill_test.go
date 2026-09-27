@@ -33,7 +33,9 @@ func TestBackfillFlow(t *testing.T) {
 	// trades: one per minute (buy on even minutes, sell on odd), 2 contracts at 100, in two windows
 	fileStart := (nowMin+8*hourMs)/utc8DayMs*utc8DayMs - 8*hourMs - utc8DayMs // yesterday, UTC+8
 	restFrom := nowMin - 3*hourMs
-	trade := func(m int64) okx.Trade { return okx.Trade{ID: m / minuteMs, Px: 100, Sz: 2, Buy: (m/minuteMs)%2 == 0, Ts: m + 30_000} }
+	trade := func(m int64) okx.Trade {
+		return okx.Trade{ID: m / minuteMs, Px: 100, Sz: 2, Buy: (m/minuteMs)%2 == 0, Ts: m + 30_000}
+	}
 
 	var zbuf bytes.Buffer
 	zw := zip.NewWriter(&zbuf)

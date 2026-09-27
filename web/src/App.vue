@@ -5,10 +5,9 @@ import { store } from './store'
 import LayoutMenu from './components/LayoutMenu.vue'
 import CoinIcon from './components/CoinIcon.vue'
 import { useDesktop } from './composables/device'
-import { time, usd, price, logPct } from './fmt'
+import { time, clock, usd, price, logPct } from './fmt'
 
 const desktop = useDesktop()
-const clock = (ms?: number) => (!ms ? '—' : new Date(ms).toLocaleTimeString('zh-CN', { hour12: false }))
 const s = computed(() => store.snap)
 const phase = computed(() => {
   const p = s.value?.phase

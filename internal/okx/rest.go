@@ -59,6 +59,7 @@ type REST struct {
 	candles  *Limiter // /market/candles 40/2s
 	history  *Limiter // /market/history-candles 20/2s
 	books    *Limiter // /market/books 40/2s
+	booksAll *Limiter // /market/books-full 10/2s
 	rubik    *Limiter // /rubik/* 5/2s
 	fundHist *Limiter // /public/funding-rate-history 10/2s
 	trades   *Limiter // /market/history-trades 20/2s
@@ -76,6 +77,7 @@ func NewREST() *REST {
 		candles:  NewLimiter(30, 2*time.Second),
 		history:  NewLimiter(14, 2*time.Second),
 		books:    NewLimiter(20, 2*time.Second),
+		booksAll: NewLimiter(6, 2*time.Second),
 		rubik:    NewLimiter(4, 2*time.Second),
 		fundHist: NewLimiter(8, 2*time.Second),
 		trades:   NewLimiter(12, 2*time.Second),
@@ -288,14 +290,19 @@ type Book struct {
 	Ts         int64
 }
 
-// Books returns the order book snapshot (up to 400 levels per side).
+// Books returns the order book snapshot: depth ≤ 400 per side from /market/books, larger depths
+// (≤ 5000) from /market/books-full (OKX's deepest public book; lower rate limit).
 func (c *REST) Books(ctx context.Context, instID string, depth int) (Book, error) {
 	var raw []struct {
 		Asks [][]string `json:"asks"`
 		Bids [][]string `json:"bids"`
 		Ts   string     `json:"ts"`
 	}
-	if err := c.get(ctx, c.books, "/market/books", url.Values{"instId": {instID}, "sz": {strconv.Itoa(depth)}}, &raw); err != nil {
+	path, lim := "/market/books", c.books
+	if depth > 400 {
+		path, lim = "/market/books-full", c.booksAll
+	}
+	if err := c.get(ctx, lim, path, url.Values{"instId": {instID}, "sz": {strconv.Itoa(depth)}}, &raw); err != nil {
 		return Book{}, err
 	}
 	if len(raw) == 0 {

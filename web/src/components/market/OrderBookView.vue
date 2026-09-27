@@ -12,8 +12,13 @@ const props = withDefaults(defineProps<{ id: string; compact?: boolean }>(), { c
 const { data: book, error } = usePolling(() => api.orderbook(props.id), 1000)
 
 const ranges = [0.5, 1, 2, 5]
-const range = ref(Number(localStorage.getItem('ctg.depthRange')) || 2)
-function setRange(r: number) { range.value = r; localStorage.setItem('ctg.depthRange', String(r)) }
+const pick = ref(Number(localStorage.getItem('ctg.depthRange')) || 2)
+function setRange(r: number) { pick.value = r; localStorage.setItem('ctg.depthRange', String(r)) }
+// OKX publishes at most 5000 levels per side; a range is usable when the book reaches half of it
+const cover = computed(() => (book.value?.levels ? Math.min(book.value.coverBid, book.value.coverAsk) : Infinity))
+const usable = (r: number) => cover.value >= r * 0.5
+const range = computed(() => (usable(pick.value) ? pick.value : [...ranges].reverse().find(usable) ?? ranges[0]))
+const rangeOpts = computed(() => ranges.map(r => ({ value: r, label: `±${r}%`, disabled: !usable(r), title: usable(r) ? undefined : `盘口数据只覆盖约 ±${cover.value.toFixed(2)}%` })))
 
 const bids = computed(() => (book.value ? cumulative(book.value.bids, book.value.mid, book.value.ctVal) : []))
 const asks = computed(() => (book.value ? cumulative(book.value.asks, book.value.mid, book.value.ctVal) : []))
@@ -50,8 +55,8 @@ const ladderMax = computed(() => Math.max(ladderAsks.value[0]?.cum || 0, ladderB
       </div>
 
       <div class="depth-head">
-        <span class="t">深度图 <small>USDT 累计 · 悬浮查看推动价格所需资金</small></span>
-        <Segmented :model-value="range" size="sm" aria-label="深度范围" :options="ranges.map(r => ({ value: r, label: `±${r}%` }))" @update:model-value="setRange" />
+        <span class="t">深度图 <small>USDT 累计 · 悬浮查看推动价格所需资金<template v-if="book.levels"> · 数据覆盖 −{{ book.coverBid.toFixed(2) }}% / +{{ book.coverAsk.toFixed(2) }}%（{{ book.levels }} 档）</template></small></span>
+        <Segmented :model-value="range" size="sm" aria-label="深度范围" :options="rangeOpts" @update:model-value="setRange" />
       </div>
       <DepthChart :bids="bids" :asks="asks" :mid="book.mid" :range="range" :height="compact ? 200 : 260" />
 
@@ -61,8 +66,8 @@ const ladderMax = computed(() => Math.max(ladderAsks.value[0]?.cum || 0, ladderB
           <tbody>
             <tr v-for="r in table" :key="r.p">
               <td>±{{ r.p }}%</td>
-              <td class="num up">{{ usd(r.buy.usdt) }}<span v-if="r.buy.beyondData" class="gt" title="超出 400 档数据">+</span></td>
-              <td class="num down">{{ usd(r.sell.usdt) }}<span v-if="r.sell.beyondData" class="gt" title="超出 400 档数据">+</span></td>
+              <td class="num up">{{ usd(r.buy.usdt) }}<span v-if="r.buy.beyondData" class="gt" title="超出 OKX 公开盘口深度（每侧最多 5000 档），实际需要更多">+</span></td>
+              <td class="num down">{{ usd(r.sell.usdt) }}<span v-if="r.sell.beyondData" class="gt" title="超出 OKX 公开盘口深度（每侧最多 5000 档），实际需要更多">+</span></td>
               <td class="num sub">{{ r.buy.slipPct.toFixed(2) }}% / {{ r.sell.slipPct.toFixed(2) }}%</td>
             </tr>
           </tbody>

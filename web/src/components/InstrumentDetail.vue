@@ -57,7 +57,8 @@ const score = computed(() => row.value?.scores?.[store.ruleId])
 const ruleName = computed(() => store.meta?.rules.find(r => r.id === store.ruleId)?.name || store.ruleId)
 const scoreText = (side: 'long' | 'short') => score.value?.[side].score?.toFixed(0) ?? '—'
 const scoreTone = (side: 'long' | 'short') => ((score.value?.[side].score ?? 0) >= 50 ? (side === 'long' ? 'up' : 'down') : 'sc-n')
-const live = computed(() => store.prices[props.id]?.[0] ?? info.value?.last)
+const chartPx = ref<number | null>(null) // forming bar close, refreshed every second by the chart
+const live = computed(() => chartPx.value ?? store.prices[props.id]?.[0] ?? info.value?.last)
 const spread = computed(() => {
   const i = info.value
   if (!i || !i.bid || !i.ask) return null
@@ -131,6 +132,10 @@ async function toggleWatch() {
             </template>
             <template #sub>{{ score ? (score.gate === 'PASS' ? ruleName : score.gate.replace('BLOCKED:', '门槛：')) : '预热中' }}</template>
           </StatCard>
+          <StatCard label="总市值" :icon="detailIcon('supply')" @open="openDetail('supply')">
+            <template #value>{{ info.coin ? usd(info.coin.marketCap) : '—' }}<small v-if="info.coin"> USD</small></template>
+            <template #sub>{{ info.coin && info.coin.total ? '已流通 ' + ((info.coin.circulating / info.coin.total) * 100).toFixed(1) + '%' : info.category === '1' ? '无市值数据' : '非代币' }}</template>
+          </StatCard>
           <StatCard label="买一 / 卖一" :icon="detailIcon('book')" @open="openDetail('book')">
             <template #value>{{ price(info.bid) }} <span class="sep">/</span> {{ price(info.ask) }}</template>
             <template #sub>点差 {{ num(spread, 1) }} bps</template>
@@ -139,21 +144,17 @@ async function toggleWatch() {
             <template #value>{{ info.spotId ? price(info.spotLast) : '—' }}</template>
             <template #sub>{{ info.spotId ? '基差 ' + fieldValue('basis', row?.values?.basis) : '无同名 USDT 现货' }}</template>
           </StatCard>
-          <StatCard label="总市值" :icon="detailIcon('supply')" @open="openDetail('supply')">
-            <template #value>{{ info.coin ? usd(info.coin.marketCap) : '—' }}<small v-if="info.coin"> USD</small></template>
-            <template #sub>{{ info.coin && info.coin.total ? '已流通 ' + ((info.coin.circulating / info.coin.total) * 100).toFixed(1) + '%' : info.category === '1' ? '无市值数据' : '非代币' }}</template>
-          </StatCard>
         </div>
       </div>
       </template>
       <template #book>
         <div class="panel">
-          <h3>实时盘口 <InfoTip>OKX 永续盘口（每侧 400 档，每秒刷新），金额为 USDT。深度图上悬浮/拖动查看把价格推到某个偏离需要多少资金；点击上方“买一 / 卖一”可放大查看。</InfoTip></h3>
+          <h3>实时盘口 <InfoTip>OKX 永续盘口（books-full，每侧最多 5000 档——OKX 公开的最深盘口；BTC 约覆盖 ±1%，小币可达几十 %；每秒刷新；前 400 档逐档，更深的按价格合并），金额为 USDT。深度图上悬浮/拖动查看把价格推到某个偏离需要多少资金；点击上方“买一 / 卖一”可放大查看。</InfoTip></h3>
           <OrderBookView :id="id" compact />
         </div>
       </template>
       <template #price>
-      <PriceChart :id="id" :has-spot="!!info.spotId" />
+      <PriceChart :id="id" :has-spot="!!info.spotId" :has-oi="info.oiUsd > 0" @live="p => (chartPx = p)" />
       </template>
       <template #compare>
       <CompareChart :id="id" />

@@ -65,19 +65,27 @@ func (e *Engine) Candles(id, bar string, limit int) ([]Candle, error) {
 	}
 	live := in.live
 	liveOK := live.Ts > 0
-	// forming hour from 1m bars
+	// forming hour from 1m bars plus the forming minute (so 1H/4H move with every tick)
 	var formingHour store.Bar
 	if baseStep == hourMs {
 		h0 := now / hourMs * hourMs
 		n := 0
+		add := func(x store.Bar) {
+			if n == 0 {
+				formingHour = store.Bar{Ts: h0, O: x.O, H: x.H, L: x.L}
+			}
+			formingHour.H, formingHour.L, formingHour.C = math.Max(formingHour.H, x.H), math.Min(formingHour.L, x.L), x.C
+			formingHour.Quote += x.Quote
+			n++
+		}
 		for ts := h0; ts < now; ts += minuteMs {
 			if x, ok := in.bars.get(ts); ok {
-				if n == 0 {
-					formingHour = store.Bar{Ts: h0, O: x.O, H: x.H, L: x.L}
-				}
-				formingHour.H, formingHour.L, formingHour.C = math.Max(formingHour.H, x.H), math.Min(formingHour.L, x.L), x.C
-				formingHour.Quote += x.Quote
-				n++
+				add(x)
+			}
+		}
+		if liveOK && live.Ts >= h0 {
+			if _, closed := in.bars.get(live.Ts); !closed {
+				add(live)
 			}
 		}
 		if n == 0 {
@@ -91,9 +99,14 @@ func (e *Engine) Candles(id, bar string, limit int) ([]Candle, error) {
 		}
 	}
 	if formingHour.Ts > 0 {
-		if _, have := base[formingHour.Ts]; !have {
-			base[formingHour.Ts] = formingHour
+		// a REST 1H bar for the forming hour has the true open but is up to minutes old: keep its
+		// open and extremes, take close/high/low/turnover progress from the 1m stream
+		if h, have := base[formingHour.Ts]; have {
+			formingHour.O = h.O
+			formingHour.H, formingHour.L = math.Max(formingHour.H, h.H), math.Min(formingHour.L, h.L)
+			formingHour.Quote = math.Max(formingHour.Quote, h.Quote)
 		}
+		base[formingHour.Ts] = formingHour
 	}
 	return aggregate(base, step, from, now), nil
 }

@@ -22,7 +22,7 @@ export interface Rule {
 }
 /** Level = [price, usdt notional, contracts] */
 export type BookLevel = [number, number, number]
-export interface OrderBook { instId: string; ts: number; receivedAt: number; ctVal: number; mid: number; bestBid: number; bestAsk: number; spreadBps: number; bids: BookLevel[]; asks: BookLevel[] }
+export interface OrderBook { instId: string; ts: number; receivedAt: number; ctVal: number; mid: number; bestBid: number; bestAsk: number; spreadBps: number; bids: BookLevel[]; asks: BookLevel[]; levels: number; coverBid: number; coverAsk: number }
 export interface Settings { threshold: number; topN: number; categories: string[]; defaultRule: string; storageCapMB: number }
 /** One live OKX USDT-margined perpetual (search catalog; no history is fetched until opened). */
 export interface CatalogItem {
