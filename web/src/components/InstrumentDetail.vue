@@ -19,7 +19,7 @@ import ScoringExplainer from './ScoringExplainer.vue'
 
 const props = defineProps<{ id: string }>()
 const ruleModel = computed({ get: () => store.ruleId, set: (v: string) => setRule(v) })
-const panelIds = ['head', 'score', 'book', 'price', 'compare', 'series', 'events']
+const panelIds = ['head', 'score', 'price', 'book', 'compare', 'series', 'events']
 const detailKey = ref<string | null>(null)
 const openDetail = (k: string) => (detailKey.value = k)
 const detailCtx = computed(() => ({ id: props.id, info: info.value!, row: row.value }))
@@ -73,7 +73,7 @@ async function toggleWatch() {
 
 <template>
   <div class="detail" v-if="info">
-    <DraggablePanels storage-key="ctg.detailLayout" :ids="panelIds" :labels="panelLabels" layout-label="详情面板顺序">
+    <DraggablePanels storage-key="ctg.detailLayout.v2" :ids="panelIds" :labels="panelLabels" layout-label="详情面板顺序">
       <template #head>
       <div class="head panel">
         <div class="h-top">

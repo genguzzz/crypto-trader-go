@@ -21,7 +21,11 @@ function load(): string[] {
   }
 }
 const order = ref<string[]>(load())
-watch(order, v => localStorage.setItem(props.storageKey, JSON.stringify(v)), { deep: true })
+// Persist only a customised order, so a later change of the default order still reaches users who never dragged.
+watch(order, v => {
+  if (v.join() === props.ids.join()) localStorage.removeItem(props.storageKey)
+  else localStorage.setItem(props.storageKey, JSON.stringify(v))
+}, { deep: true })
 const customized = () => order.value.join() !== props.ids.join()
 function reset() { order.value = [...props.ids] }
 useLayoutEntry(props.storageKey, props.layoutLabel || '面板顺序', customized, reset)
