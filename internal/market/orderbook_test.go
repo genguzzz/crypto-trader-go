@@ -37,3 +37,24 @@ func TestOrderBookUSDTNotional(t *testing.T) {
 		t.Fatalf("mid %v spread %v", ob.Mid, ob.SpreadBps)
 	}
 }
+
+// Deep levels are merged into price buckets without changing the side's total or its reach.
+func TestCompressSidePreservesDepth(t *testing.T) {
+	var asks [][3]float64
+	total := 0.0
+	for i := 0; i < 5000; i++ {
+		asks = append(asks, [3]float64{100 + float64(i)*0.01, 10, 1})
+		total += 10
+	}
+	out := compressSide(asks, 100)
+	sum := 0.0
+	for _, l := range out {
+		sum += l[1]
+	}
+	if len(out) > bookExact+301 || len(out) <= bookExact {
+		t.Fatalf("%d levels", len(out))
+	}
+	if sum != total || out[len(out)-1][0] != asks[len(asks)-1][0] || out[bookExact-1] != asks[bookExact-1] {
+		t.Fatalf("sum %v/%v last %v", sum, total, out[len(out)-1])
+	}
+}

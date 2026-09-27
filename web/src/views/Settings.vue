@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api, type Settings, type Storage } from '../api'
 import { store, refreshMeta, setRule, ruleOptions } from '../store'
-import { usd, catLabel, time } from '../fmt'
+import { usd, catLabel, time, tzOptions, tzSetting } from '../fmt'
 import ChipGroup from '../components/ui/ChipGroup.vue'
 
 // Render immediately from settings already loaded with /meta; refresh in the background.
@@ -20,6 +20,13 @@ onMounted(() => {
   api.turnovers().then(x => (all.value = x.rows)) // compact (~10 KB) list for the live estimate
   api.storage().then(x => (storage.value = x)).catch(() => {})
 })
+
+// ---- display (this browser only) ----
+const tz = ref(tzSetting())
+function setTz(v: string) {
+  localStorage.setItem('ctg.tz', v)
+  location.reload() // every chart and time label re-renders in the new zone
+}
 
 // ---- data storage (retention.go) ----
 const storage = ref<Storage | null>(null)
@@ -149,6 +156,13 @@ async function save() {
           </tr>
         </tbody>
       </table></div>
+    </div>
+
+    <div class="panel">
+      <h3>显示 <InfoTip>只保存在本浏览器。<b>时区</b>决定 K 线横轴、十字光标与页面上所有时间的显示；服务端按 UTC 对齐 K 线（4H 在 UTC+8 下为 0/4/8/12/16/20 点），数据本身不变。</InfoTip></h3>
+      <label class="row">时区
+        <Segmented :model-value="tz" size="sm" aria-label="时区" :options="tzOptions" @update:model-value="setTz" />
+      </label>
     </div>
 
     <div class="actions">

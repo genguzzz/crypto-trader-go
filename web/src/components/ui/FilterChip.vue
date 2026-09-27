@@ -3,12 +3,12 @@ import type { Component } from 'vue'
 import { Toggle } from 'reka-ui'
 
 /** On/off filter pill (Reka Toggle): icon + label + optional count; pressed = accent fill. */
-defineProps<{ label: string; icon?: Component; count?: number | string; title?: string }>()
+defineProps<{ label: string; icon?: Component; count?: number | string; title?: string; disabled?: boolean }>()
 const model = defineModel<boolean>({ required: true })
 </script>
 
 <template>
-  <Toggle v-model="model" class="fchip" :title="title">
+  <Toggle v-model="model" class="fchip" :title="title" :disabled="disabled">
     <component :is="icon" v-if="icon" :size="13" class="fc-ic" />
     <span>{{ label }}</span>
     <span v-if="count !== undefined" class="fc-n">{{ count }}</span>
@@ -22,6 +22,7 @@ const model = defineModel<boolean>({ required: true })
   transition: background .12s, color .12s, border-color .12s;
 }
 @media (hover: hover) { .fchip:hover { color: var(--text-1); border-color: var(--text-3); } }
+.fchip[data-disabled] { opacity: .35; cursor: not-allowed; border-style: dashed; background: none; }
 .fchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .fchip[data-state="on"] { border-style: solid; border-color: rgba(76, 141, 255, .55); background: var(--accent-bg); color: var(--text-1); }
 .fchip .fc-ic { color: var(--text-3); } .fchip[data-state="on"] .fc-ic { color: var(--accent); }

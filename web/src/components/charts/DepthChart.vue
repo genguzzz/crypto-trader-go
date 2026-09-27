@@ -89,7 +89,7 @@ const tipLeft = computed(() => (hover.value ? Math.min(Math.max(hover.value.px +
       <div class="row"><span>成交均价</span><b>{{ price(hover.sweep.avgPx) }}</b></div>
       <div class="row"><span>均价滑点</span><b>{{ hover.sweep.slipPct > 0 ? '+' : '' }}{{ hover.sweep.slipPct.toFixed(3) }}%</b></div>
       <div class="row"><span>档数</span><b>{{ hover.sweep.levels }}</b></div>
-      <div v-if="hover.sweep.beyondData" class="warn">超出已获取的 400 档，实际需要更多</div>
+      <div v-if="hover.sweep.beyondData" class="warn">超出 OKX 公开盘口深度，实际需要更多</div>
     </div>
   </div>
 </template>

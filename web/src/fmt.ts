@@ -36,11 +36,30 @@ export function fieldValue(key: string, v?: number | null) {
     default: return logPct(v)
   }
 }
+// ---- display time zone: UTC offset in minutes, default UTC+8; "local" = the browser's zone ----
+export const tzOptions = [
+  { value: '480', label: 'UTC+8（北京）' },
+  { value: '0', label: 'UTC' },
+  { value: 'local', label: '本机时区' },
+]
+export const tzSetting = () => localStorage.getItem('ctg.tz') ?? '480'
+export function tzOffsetMin(ms: number) {
+  const v = tzSetting()
+  return v === 'local' ? -new Date(ms).getTimezoneOffset() : Number(v) || 0
+}
+/** A Date whose UTC fields are the wall-clock time in the display zone (read with getUTC*). */
+const wall = (ms: number) => new Date(ms + tzOffsetMin(ms) * 60_000)
+const p2 = (n: number) => String(n).padStart(2, '0')
 export function time(ms?: number, withDate = false) {
   if (!ms) return '—'
-  const d = new Date(ms)
-  const hm = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-  return withDate ? `${d.getMonth() + 1}-${d.getDate()} ${hm}` : hm
+  const d = wall(ms)
+  const hm = `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`
+  return withDate ? `${d.getUTCMonth() + 1}-${d.getUTCDate()} ${hm}` : hm
+}
+export function clock(ms?: number) {
+  if (!ms) return '—'
+  const d = wall(ms)
+  return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`
 }
 export function ago(ms: number) {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000))
@@ -50,5 +69,5 @@ export function ago(ms: number) {
 }
 export function sign(v: number) { return v > 0 ? 'up' : v < 0 ? 'down' : '' }
 export const catLabel: Record<string, string> = { '1': '加密', '3': '股票', '4': '商品' }
-/** Chart time: seconds shifted so lightweight-charts (UTC) renders local wall time. */
-export function chartTime(ms: number) { return Math.floor(ms / 1000 - new Date(ms).getTimezoneOffset() * 60) as any }
+/** Chart time: seconds shifted so lightweight-charts (which renders UTC) shows the display zone. */
+export function chartTime(ms: number) { return Math.floor(ms / 1000 + tzOffsetMin(ms) * 60) as any }
