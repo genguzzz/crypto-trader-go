@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { CandlestickSeries, LineSeries, HistogramSeries, type IChartApi, type ISeriesApi, type MouseEventParams, type Time } from 'lightweight-charts'
+import { CandlestickSeries, LineSeries, HistogramSeries, AreaSeries, type IChartApi, type ISeriesApi, type MouseEventParams, type Time } from 'lightweight-charts'
 import { api, type Candle, type FlowBar } from '../api'
 import { chartTime, price as fmtPrice, usd, time as fmtTime } from '../fmt'
 import { baseChart, precisionFor } from './charts'
@@ -22,7 +22,7 @@ let candles: ISeriesApi<'Candlestick'> | undefined
 let vol: ISeriesApi<'Histogram'> | undefined
 let spot: ISeriesApi<'Line'> | undefined
 let delta: ISeriesApi<'Histogram'> | undefined
-let oi: ISeriesApi<'Line'> | undefined
+let oi: ISeriesApi<'Area'> | undefined
 let cvd: ISeriesApi<'Line'> | undefined
 let foot: Footprint | undefined
 let timer: number | undefined
@@ -35,6 +35,7 @@ const barMs: Record<string, number> = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '
 // ---- data kept for the legend ----
 const bars = ref<Candle[]>([])
 const flow = ref<Map<number, FlowBar>>(new Map())
+const spotByT = ref<Map<number, number>>(new Map())
 const oiByT = ref<Map<number, number>>(new Map()) // bar open → OI (USD) at the bar's last sample
 const recording = ref(false)
 const hover = ref<number | null>(null) // index into bars
@@ -48,7 +49,7 @@ const shown = computed(() => {
   const i = hover.value ?? xs.length - 1
   const c = xs[i], prev = i > 0 ? xs[i - 1].c : c.o
   const poc = layer.value === 'foot' && footVer.value >= 0 ? foot?.barStats(chartTime(c.t) as number) ?? null : null
-  return { c, chg: prev ? c.c / prev - 1 : 0, amp: prev ? (c.h - c.l) / prev : 0, f: flow.value.get(c.t), poc, oi: oiByT.value.get(c.t), live: hover.value == null }
+  return { c, chg: prev ? c.c / prev - 1 : 0, amp: prev ? (c.h - c.l) / prev : 0, f: flow.value.get(c.t), poc, oi: oiByT.value.get(c.t), spot: spotByT.value.get(c.t), live: hover.value == null }
 })
 const pct = (v: number, d = 2) => (v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%'
 const tone = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : '')
@@ -65,15 +66,16 @@ async function load(fit = false) {
     if (withSpot.value && props.hasSpot) {
       const ss = await api.candles(props.id, bar.value, Math.min(depth[bar.value] || 400, 1000), 'spot')
       if (!spot) {
-        spot = chart.addSeries(LineSeries, { color: '#f5c542', lineWidth: 1, priceScaleId: 'left', title: '现货' })
-        chart.applyOptions({ leftPriceScale: { visible: true } })
+        // same price axis as the contract: follows zoom/drag of the chart; basis is visible as the gap
+        spot = chart.addSeries(LineSeries, { color: '#f5c542', lineWidth: 1, priceScaleId: 'right', title: '现货', lastValueVisible: false, crosshairMarkerVisible: false })
       }
       spot.applyOptions({ priceFormat: precisionFor(ss[ss.length - 1]?.c || 1) })
       spot.setData(ss.map(c => ({ time: chartTime(c.t), value: c.c })))
+      spotByT.value = new Map(ss.map(c => [c.t, c.c]))
     } else if (spot) {
       chart.removeSeries(spot)
       spot = undefined
-      chart.applyOptions({ leftPriceScale: { visible: false } })
+      spotByT.value = new Map()
     }
     await loadOI(cs)
     if (fit) resetView()
@@ -84,12 +86,14 @@ async function load(fit = false) {
   }
 }
 
-// ---- OI overlay: own hidden scale in the price pane; legend shows the value ----
+// ---- OI: a band at the bottom of the price pane just above volume (own scale); legend shows the value ----
+const PRICE_MARGINS = { top: 0.08, bottom: 0.2 }, PRICE_MARGINS_OI = { top: 0.08, bottom: 0.4 }
 async function loadOI(cs: Candle[]) {
   if (!chart) return
   if (!withOI.value || !props.hasOi) {
     if (oi) { chart.removeSeries(oi); oi = undefined }
     oiByT.value = new Map()
+    candles!.priceScale().applyOptions({ scaleMargins: PRICE_MARGINS })
     return
   }
   const step = barMs[bar.value], from = cs[0].t
@@ -98,8 +102,9 @@ async function loadOI(cs: Candle[]) {
   const m = new Map<number, number>()
   for (const p of pts) if (p.t >= from) m.set(Math.floor(p.t / step) * step, p.u ?? p.v) // ascending: last sample wins
   if (!oi) {
-    oi = chart.addSeries(LineSeries, { color: '#7aa7ff', lineWidth: 2, priceScaleId: 'oi', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false })
-    chart.priceScale('oi').applyOptions({ scaleMargins: { top: 0.08, bottom: 0.3 } })
+    oi = chart.addSeries(AreaSeries, { lineColor: '#7aa7ff', lineWidth: 1, topColor: 'rgba(122,167,255,.28)', bottomColor: 'rgba(122,167,255,.02)', priceScaleId: 'oi', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false })
+    chart.priceScale('oi').applyOptions({ scaleMargins: { top: 0.62, bottom: 0.2 } })
+    candles!.priceScale().applyOptions({ scaleMargins: PRICE_MARGINS_OI })
   }
   oi.setData([...m].map(([t, v]) => ({ time: chartTime(t), value: v })))
   oiByT.value = m
@@ -238,6 +243,7 @@ onMounted(() => {
   candles = chart.addSeries(CandlestickSeries, { upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN })
   vol = chart.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false })
   chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
+  candles.priceScale().applyOptions({ scaleMargins: withOI.value && props.hasOi ? PRICE_MARGINS_OI : PRICE_MARGINS })
   chart.subscribeCrosshairMove(onCrosshair)
   load(true)
   timer = window.setInterval(() => load(), 10_000)
@@ -266,7 +272,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <b>POC / 价值区</b>：黄框为该根 K 线成交最多的价位（Point of Control）；每根 K 线左侧的细金线是价值区（从 POC 向两侧扩展、覆盖 70% 成交额的价格区间），数值见左上角。<b>未回补 POC</b>：已收盘 K 线的 POC 之后没有任何 K 线的最高–最低价穿过它，就用金色虚线画到最右侧，被穿过后不再显示——常用来观察价格是否会回来“回补”。<br />
         <b>失衡</b>（对角比较）：某价位的主动买 ≥ 低一档主动卖的 3 倍，在右侧标绿色竖条、数字变绿；主动卖 ≥ 高一档主动买的 3 倍，在左侧标红色竖条。量太小（低于该 K 线各价位单边成交额中位数）的不算。连续 3 档及以上同方向失衡为<b>堆叠失衡</b>，该侧加描边，常被当作主动方强势的信号，不是必然。<br />
         <b>成交额柱</b>：底部柱为该根 K 线的 USDT 成交额，绿涨红跌。缺失分钟显示为空档；最后一根为未收盘 K 线。<br />
-        <b>现货 / OI</b>：叠加 OKX 同名 USDT 现货收盘价（黄线，左侧独立价格轴）或持仓量（蓝线，独立缩放，数值见左上角；更早的是 1 小时采样，近期逐分钟）。没有对应数据时按钮置灰。<br />
+        <b>现货 / OI</b>：现货为 OKX 同名 USDT 现货收盘价（黄线），和合约 K 线共用右侧价格轴，缩放、拖动都跟随 K 线，两者的间距就是基差；OI 为持仓量（蓝色面积），画在 K 线下方、成交额柱上方的独立区域，数值见左上角（更早的是 1 小时采样，近期逐分钟）。没有对应数据时按钮置灰。<br />
         <b>刷新</b>：打开详情页时最新几根 K 线每秒刷新（服务端 OKX WebSocket 推送的未收盘 K 线），整段数据和订单流每 10 秒刷新；页面切到后台时暂停。<br />
         <b>时间</b>：按设置页选择的时区显示（默认 UTC+8）。右下角 ◎ 或双击图表回到最新并自动缩放。
       </InfoTip></span>
@@ -275,8 +281,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <Segmented v-model="bar" size="sm" aria-label="K 线周期" :options="[{ value: '1m', label: '1m' }, { value: '5m', label: '5m' }, { value: '15m', label: '15m' }, { value: '1H', label: '1H' }, { value: '4H', label: '4H' }]" />
       </span>
       <span class="ovl">
-        <FilterChip v-model="withSpot" label="现货" :disabled="!hasSpot" :title="hasSpot ? '叠加 OKX 同名 USDT 现货收盘价（黄线，左侧价格轴）' : '没有 OKX 同名 USDT 现货'" />
-        <FilterChip v-model="withOI" label="OI" :disabled="!hasOi" :title="hasOi ? '叠加持仓量（蓝线，独立缩放，数值见左上角）' : '没有持仓量数据'" />
+        <FilterChip v-model="withSpot" label="现货" :disabled="!hasSpot" :title="hasSpot ? '叠加 OKX 同名 USDT 现货收盘价（黄线，与 K 线同一价格轴）' : '没有 OKX 同名 USDT 现货'" />
+        <FilterChip v-model="withOI" label="OI" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示持仓量（数值见左上角）' : '没有持仓量数据'" />
       </span>
     </h3>
     <div class="wrap" :class="{ tall: layer !== 'k' }">
@@ -288,6 +294,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <span>低 <b>{{ fmtPrice(shown.c.l) }}</b></span><span>收 <b :class="tone(shown.c.c - shown.c.o)">{{ fmtPrice(shown.c.c) }}</b></span>
         <span>涨跌 <b :class="tone(shown.chg)">{{ pct(shown.chg) }}</b></span><span>振幅 <b>{{ pct(shown.amp) }}</b></span>
         <span>额 <b>{{ usd(shown.c.q) }}</b></span>
+        <span v-if="withSpot && shown.spot != null">现货 <b class="spot">{{ fmtPrice(shown.spot) }}</b> <small class="muted">基差 {{ pct(shown.c.c / shown.spot - 1, 3) }}</small></span>
         <span v-if="withOI && shown.oi != null">OI <b class="oi">{{ usd(shown.oi) }}</b></span>
         <template v-if="layer !== 'k'">
           <br />
@@ -330,7 +337,7 @@ h3 { display: flex; justify-content: space-between; align-items: center; flex-wr
 .legend { position: absolute; left: 6px; top: 4px; max-width: calc(100% - 76px); z-index: 3; pointer-events: none; padding: 0 4px; border-radius: 4px; background: rgba(17, 21, 28, .75); font-size: var(--fs-xs); color: var(--text-3); line-height: 1.6; }
 .legend span { margin-right: 8px; white-space: nowrap; }
 .legend b { color: var(--text-1); font-weight: 500; }
-.legend b.up { color: var(--up); } .legend b.down { color: var(--down); } .legend b.poc { color: #f5c542; } .legend b.oi { color: #7aa7ff; }
+.legend b.up { color: var(--up); } .legend b.down { color: var(--down); } .legend b.poc { color: #f5c542; } .legend b.oi { color: #7aa7ff; } .legend b.spot { color: #f5c542; }
 .axis-lbl { position: absolute; right: 0; z-index: 3; pointer-events: none; display: grid; justify-items: center; padding: 1px 0; background: #2b3242; border-radius: 2px; font-size: 10px; line-height: 15px; color: var(--text-1); }
 .axis-lbl b { font-weight: 500; }
 .axis-lbl .up { color: var(--up); } .axis-lbl .down { color: var(--down); }
