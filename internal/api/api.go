@@ -304,6 +304,10 @@ func spa(web fs.FS) http.Handler {
 	files := http.FileServer(http.FS(web))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
+		if strings.HasPrefix(p, "api/") { // unknown API route: never fall back to the SPA
+			httpErr(w, http.StatusNotFound, "not found")
+			return
+		}
 		if p != "" {
 			if _, err := fs.Stat(web, p); err == nil {
 				if strings.HasPrefix(p, "assets/") {
