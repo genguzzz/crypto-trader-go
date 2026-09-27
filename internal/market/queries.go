@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -343,6 +344,27 @@ type Status struct {
 	History       string           `json:"history"`
 	DB            map[string]int64 `json:"db"`
 	Config        map[string]any   `json:"config"`
+	Mem           MemStats         `json:"mem"`
+}
+
+// MemStats is the process memory view for leak checks (status page, deploy verification).
+type MemStats struct {
+	HeapAllocMB float64 `json:"heapAllocMB"` // live heap
+	HeapSysMB   float64 `json:"heapSysMB"`
+	SysMB       float64 `json:"sysMB"` // total from the OS
+	Goroutines  int     `json:"goroutines"`
+	NumGC       uint32  `json:"numGC"`
+	Insts       int     `json:"insts"` // instruments held in memory
+}
+
+func (e *Engine) memStats() MemStats {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	e.mu.RLock()
+	n := len(e.insts)
+	e.mu.RUnlock()
+	mb := func(b uint64) float64 { return math.Round(float64(b)/(1<<20)*10) / 10 }
+	return MemStats{HeapAllocMB: mb(m.HeapAlloc), HeapSysMB: mb(m.HeapSys), SysMB: mb(m.Sys), Goroutines: runtime.NumGoroutine(), NumGC: m.NumGC, Insts: n}
 }
 
 type WSStatus struct {
@@ -385,5 +407,5 @@ func (e *Engine) Status() Status {
 		RestRateHits: e.rest.RateHits.Load(), WS: wss, Coverage: s.Coverage, AsOfMinute: s.AsOfMinute, ComputedAt: s.ComputedAt,
 		Replay: e.replayMsg.Load().(string), History: e.historyMsg.Load().(string), DB: counts,
 		Config: map[string]any{"threshold": e.conf().Threshold, "topN": e.conf().TopN, "categories": cats, "replayHours": e.conf().ReplayHours,
-			"storageCapMB": e.conf().StorageCap >> 20, "takerFeeBps": 5, "replaySpreadBpsAssumed": ReplaySpreadBps}}
+			"storageCapMB": e.conf().StorageCap >> 20, "takerFeeBps": 5, "replaySpreadBpsAssumed": ReplaySpreadBps}, Mem: e.memStats()}
 }

@@ -715,6 +715,7 @@ func (e *Engine) periodic(ctx context.Context) {
 			}
 		case <-subT.C:
 			e.updateSubscriptions()
+			sweepCaches()
 		case <-priceT.C:
 			e.broadcastPrices()
 		}

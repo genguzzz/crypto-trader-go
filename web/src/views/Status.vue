@@ -48,6 +48,7 @@ onUnmounted(() => clearInterval(timer))
           </tr></tbody>
         </table>
         <p class="note">REST 请求 {{ s.restRequests }} · 错误 {{ s.restErrors }} · 限频 {{ s.restRateLimited }}</p>
+        <p class="note" v-if="s.mem">内存 堆 {{ s.mem.heapAllocMB }} MB · 进程 {{ s.mem.sysMB }} MB · 协程 {{ s.mem.goroutines }} · 内存中合约 {{ s.mem.insts }}</p>
       </div>
       <div class="panel">
         <h3>SQLite 记录 <InfoTip>

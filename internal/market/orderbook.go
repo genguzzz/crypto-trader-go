@@ -27,6 +27,26 @@ var bookCache = struct {
 	m map[string]OrderBook
 }{m: map[string]OrderBook{}}
 
+// sweepCaches drops expired order-book and spot-candle cache entries (they are only reused for
+// ~1s / 20s; without this every instrument ever viewed would stay in memory).
+func sweepCaches() {
+	now := time.Now()
+	bookCache.Lock()
+	for id, b := range bookCache.m {
+		if now.UnixMilli()-b.ReceivedAt > 10_000 {
+			delete(bookCache.m, id)
+		}
+	}
+	bookCache.Unlock()
+	spotCache.Lock()
+	for k, c := range spotCache.m {
+		if now.Sub(c.at) > time.Minute {
+			delete(spotCache.m, k)
+		}
+	}
+	spotCache.Unlock()
+}
+
 // OrderBook fetches up to 400 levels per side via REST, cached ~800ms per instrument so many
 // open views don't multiply requests. Detail views poll it once per second.
 func (e *Engine) OrderBook(ctx context.Context, id string) (OrderBook, error) {
