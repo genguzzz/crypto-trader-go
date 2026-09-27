@@ -20,7 +20,8 @@ context: |
   2026-09-26 evidence revision (docs/blueprint/revision-2026-09-26.md, probes in
   research/poc/) supersedes older blueprint details: all contract categories
   enter the pool, >10M 12h threshold bounds its size, no preset factor direction
-  (fact panel + user rules + out-of-sample record), I0 recorder first on home NAS/N1.
+  (fact panel + user rules + out-of-sample record), I0 recorder first; production runs on zouter
+  (Docker, https://ctg.gugenzzz.top, deploy/deploy.sh). UI rules: docs/design-guidelines.md.
   Earlier research source is docs/blueprint/README.md (feature matrix, runtime,
   scoring, OSS/data sources), superseding draft formulas in the initial report.
   Keep scoring auditable and test with out-of-sample data; score is not a trade.

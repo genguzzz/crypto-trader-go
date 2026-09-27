@@ -1,52 +1,69 @@
-# 运行与部署（I0–I3 实现，2026-09-26）
+# 运行与部署
 
-## 本机运行
+## 线上
 
-```bash
-make build            # 前端 (web/, Vue3+TS+Lightweight Charts) → web/dist 内嵌进 Go 二进制
-CTG_AUTH='user:pass' ./bin/ctg -addr 0.0.0.0:8686 -db data/ctg.db   # 不设 CTG_AUTH 则无登录，只应绑 127.0.0.1
-make test             # go vet + go test -race + vue-tsc
+| 项 | 值 |
+|---|---|
+| 地址 | https://ctg.gugenzzz.top（HTTP Basic 登录，凭据在服务器 `/opt/ctg/ctg.env` 和本机 `data/.auth`，均不入库） |
+| 机器 | zouter（`root@zouter.gugenzzz.top`，Debian 12，1C/1G，x86_64，可直连 OKX） |
+| 进程 | Docker 容器 `ctg`（compose 项目 `/opt/ctg`），`network_mode: host`，监听 `127.0.0.1:8686` |
+| 入口 | nginx stream 按 SNI 默认把 `*.gugenzzz.top` 送到 `127.0.0.1:8444` → `/etc/nginx/conf.d/gateway-ctg.conf` 反代到 8686（SSE 关缓冲）；80 跳 443；证书为已有 `*.gugenzzz.top` 通配符 |
+| DNS | Cloudflare `ctg.gugenzzz.top` A/AAAA → zouter，灰云直连 |
+| 数据 | `/opt/ctg/data/ctg.db`（SQLite WAL，含行情、设置、规则、自选、战绩快照）+ `data/icons/` |
+
+服务器目录：
+
+```
+/opt/ctg/
+├── docker-compose.yml   # 来自仓库 deploy/docker-compose.yml
+├── ctg.env              # CTG_AUTH=user:pass（600）
+├── bin/ctg              # 当前二进制（ctg.prev = 上一版，用于回滚）
+└── data/                # 属主 65532（容器 nonroot 用户）
 ```
 
-首次启动（空库）：约 30 s 出 5m 临时名单，约 4 min 完成全池 1m/1H 回填进入 `live`，随后后台做 120h 历史回放（拉 rubik 1H OI，约 3 min）。重启：从 SQLite 恢复，约 1 min 追平。
+## 更新代码到线上（日常）
 
-| 参数 / 环境变量 | 默认 | 说明 |
+```bash
+deploy/deploy.sh               # 构建前端 + linux/amd64 二进制 → 上传 → 替换 → 重启容器 → 健康检查（失败自动回滚）
+deploy/deploy.sh --status      # 容器状态 + 最近日志
+deploy/deploy.sh --rollback    # 回到上一版二进制
+deploy/deploy.sh --skip-build  # 上传已构建的 bin/ctg-linux-amd64
+```
+
+- **不重建镜像**：容器用官方 `gcr.io/distroless/static-debian12:nonroot`（2 MB，只有 CA 证书/时区/非 root 用户），二进制通过 `./bin:/app:ro` 挂载；升级只替换 `bin/ctg` 并重启，全程约 30 秒。
+- **数据复用**：重启后从 SQLite 恢复，只补停机期间缺口（约 40 秒追平）；设置、规则、自选都在数据库里，不受升级影响。
+- 改了 `deploy/docker-compose.yml` 时运行一次 `deploy/deploy.sh --init`（幂等：建目录、同步 compose 文件、修正数据属主、`docker compose up -d`）。
+- 其他主机：`CTG_HOST=root@host CTG_ARCH=arm64 deploy/deploy.sh --init && deploy/deploy.sh`，另需按该机的 nginx 方式反代 `127.0.0.1:8686`。
+
+## 本机开发
+
+```bash
+make build                     # 前端产物内嵌进 bin/ctg
+./bin/ctg                      # http://127.0.0.1:8686，数据 data/ctg.db（本机不设登录）
+./bin/ctg -web=false & (cd web && npm run dev)   # 前后端分开调试，Vite 代理 /api
+make test                      # go vet + go test -race + vue-tsc
+```
+
+首次（空库）启动：约 30 秒出 5m 临时名单，约 4 分钟全池回填进入 `live`；随后后台 14 天回放与 7 天 1m 历史回补（进度见“系统”页）。迁移数据到新机器：`sqlite3 data/ctg.db ".backup /tmp/ctg.db"` 在线备份后复制到目标 `data/`。
+
+## 参数与环境变量
+
+| 参数 / 变量 | 默认 | 说明 |
 |---|---|---|
-| `-threshold` | 5,000,000 | 首次运行的阈值默认值；之后以设置页保存的为准 |
-| `-top` | 200 | 活跃池上限 |
-| `-categories` | 空=全部 | `1` 加密 / `3` 股票ETF / `4` 商品；用户决定默认全部进池 |
-| `-replay-hours` | 336 | 规则历史回放深度（1H 数据，14 天） |
-| `-web` | true | false 时只提供 API（前后端分开部署/调试） |
-| `-retain-1m` | 720h | 1m K 线、OI 分钟样本保留期（1H/资金费/评分快照长期保留） |
-| `CTG_AUTH` | — | `user:pass`，所有路由 HTTP Basic |
-| `CTG_PROXY` | — | 出站 HTTP 代理（可带凭据，只从环境变量读，不记录日志） |
-| `CTG_DOH` / `-doh` | off | 通过 1.1.1.1 DoH 解析 OKX 域名并按 IP CONNECT |
-| `GOMEMLIMIT` | — | 建议 160MiB（实测常驻约 165 MB） |
+| `-addr` / `CTG_ADDR` | `127.0.0.1:8686` | 监听地址 |
+| `-db` / `CTG_DB` | `data/ctg.db` | SQLite 路径 |
+| `-threshold` / `-top` / `-categories` | 5,000,000 / 200 / 全部 | 仅首次运行默认值；之后以设置页保存的为准 |
+| `-replay-hours` | 336 | 规则历史回放深度（14 天） |
+| `-retain-1m` | 720h | 1m K 线与 OI 分钟样本保留期；1H、资金费、评分快照长期保留 |
+| `-web` | true | false 时只提供 API |
+| `CTG_AUTH` | — | `user:pass`，所有路由 HTTP Basic（公网必须设置） |
+| `CTG_PROXY` / `-doh` | — / off | 无法直连 OKX 的网络：出站 HTTP 代理（可带凭据）、DoH 解析 |
+| `GOMEMLIMIT` | compose 中 180MiB | 常驻约 175 MB；容器 `mem_limit: 400m` |
 
-数据：`data/ctg.db`（SQLite WAL）。全池 1m 约 60 MB/天。
+全池 1m 约 60 MB/天；当前库约 450 MB。
 
-## 家里 NAS / N1（用户选定的 7×24 运行位置）
+## 排查
 
-`make arm64` → `bin/ctg-linux-arm64`（纯 Go，无 CGO）。已在 N1（iStoreOS 22.03，aarch64）实测可启动。
-
-**当前阻塞（2026-09-26 实测）：NAS 无法访问 OKX REST。**
-- 直连超时（本地网络对 okx.com 不通）。
-- 经 OpenClash（需认证的 7890 端口）：clash 的 DNS 把 `www.okx.com` 等解析成 `169.254.0.2`，命中 `GeoIP/lan → DIRECT`，失败；按真实 IP 直连 CONNECT 也会被 SNI 嗅探还原成域名再走 DIRECT。
-- 同一请求在跳板机 dmit 上直接 200，说明只要让 okx.com 走代理节点即可。
-
-需要用户同意后在 OpenClash 加一条规则（放在 GeoIP/lan 之前），例如自定义规则：
-`DOMAIN-SUFFIX,okx.com,🐟 漏网之鱼`（或任一能访问 OKX 的非美国策略组），然后重启 OpenClash（全家网络会短暂中断）。
-
-完成后部署：
-```bash
-scp bin/ctg-linux-arm64 root@192.168.1.2:/mnt/usb1_2-1/Configs/ctg/ctg
-scp deploy/nas/ctg.init root@192.168.1.2:/etc/init.d/ctg
-ssh root@192.168.1.2 'chmod +x /etc/init.d/ctg && /etc/init.d/ctg enable && /etc/init.d/ctg start'
-# 可选登录：在 NAS 上写 /mnt/usb1_2-1/Configs/ctg/auth（内容 user:pass，chmod 600）
-```
-内存：N1 可用约 340 MB 且无 swap，服务设 `GOMEMLIMIT=160MiB`、`GOGC=50`；数据放 HDD（`/mnt/usb1_2-1`）避免 eMMC 磨损。
-
-## macOS 本机对局域网开放
-
-macOS 应用防火墙开启，未签名的 `bin/ctg` 入站连接会被拦（局域网访问超时）。需要在本机点“允许传入连接”，或：
-`sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add $PWD/bin/ctg --unblockapp $PWD/bin/ctg`
+- `deploy/deploy.sh --status` 看日志；关键行：`restored … bars`、`bootstrap complete`、`ws … disconnected`。
+- 页面“系统”：阶段、覆盖率（缺口数）、WS 重连、REST 限频、回放与历史回补进度。
+- nginx：`nginx -t && systemctl reload nginx`；站点配置 `/etc/nginx/conf.d/gateway-ctg.conf`，不需要改 `stream.conf`。

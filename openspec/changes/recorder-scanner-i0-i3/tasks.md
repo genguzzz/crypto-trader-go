@@ -8,7 +8,7 @@
 - [x] 1.6 HTTP + SSE API, embedded Vue UI (scanner desktop split / mobile routes, detail charts, rules & record, status, positions placeholder)
 - [x] 1.7 Unit tests (features, rules, track, window/aggregate/funding, deep gap refill against fake OKX); race run
 - [x] 1.7b 10s intraday preview, 30d hourly / 14d replay / 7d 1m history, coin icons, runtime settings page (default threshold 5M USDT)
-- [ ] 1.8 NAS deployment — blocked on OpenClash routing okx.com (user decision, see docs/operations.md)
+- [x] 1.8 Server deployment — zouter Docker (distroless + bind-mounted binary, deploy.sh swap/rollback), https://ctg.gugenzzz.top, local DB reused (NAS dropped: its OpenClash cannot route okx.com)
 - [ ] 1.9 I0 exit criterion: 72h continuous run with ≥99.9% minute coverage and 0 unrepaired gaps
 - [ ] 1.10 Archive after 1.8–1.9
 

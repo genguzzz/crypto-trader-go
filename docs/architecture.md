@@ -23,7 +23,7 @@
                   │ /api/v1/*（JSON / SSE）     │
                   ▼                           ▼
    前端 web/（Vue 3 + TS + Vite + Lightweight Charts）   SQLite 文件 data/ctg.db
-   开发：Vite dev server 代理 /api；当前生产：内嵌二进制（Docker 见 roadmap）
+   开发：Vite dev server 代理 /api；生产：前端内嵌二进制，Docker 运行（见 §7）
 ```
 
 - **分离方式**：后端只暴露 `/api/v1/*`；前端是独立 Vite 工程。为了本地使用方便，构建产物可 `go:embed` 进二进制（`-web=true` 默认）；`-web=false` 时后端只提供 API，前端可由 Vite 开发服务器或（将来）nginx 容器单独提供。
@@ -54,7 +54,7 @@
 
 | 选择 | 理由 |
 |---|---|
-| Go 1.25 | 长连接/并发、单二进制、交叉编译 arm64（NAS） |
+| Go 1.25 | 长连接/并发、静态单二进制（无 CGO），交叉编译即可部署 |
 | 自研 OKX 窄适配（`net/http` + gorilla/websocket） | 只需约 8 个 REST + 5 个 WS 频道；精确控制单位/时间戳；实测单连接订阅全池无错误 |
 | SQLite（modernc，纯 Go）+ 连接池 | 实测每分钟全池写入 ~12ms、3 天 K 线查询 ~4ms；无需独立数据库服务 |
 | HTTP + SSE | 单向推送足够；客户端每次事件重新拉快照，天然自愈 |
@@ -75,7 +75,7 @@ internal/rules/        规则与打分
 internal/track/        战绩统计
 internal/api/          HTTP 路由、SSE、图标代理、Basic 登录
 web/                   前端工程（src/views 页面，src/components 组件，embed.go 内嵌产物）
-deploy/nas/            NAS（iStoreOS procd）服务脚本
+deploy/                docker-compose.yml（服务器运行定义）、deploy.sh（构建/上传/替换/回滚）
 research/poc/          调研探针（独立 Go module，不是生产代码）
 docs/                  文档；docs/blueprint 为方案与修订
 openspec/              需求与变更记录
@@ -85,3 +85,13 @@ openspec/              需求与变更记录
 
 `GET health|status|meta|settings|universe?scope=active|all|watch|instruments/{id}|candles|compare|series|rules|rules/{id}/track|icons/{ccy}.png|stream(SSE)`；
 `PUT settings|watchlist/{id}`，`POST rules`，`DELETE rules/{id}|watchlist/{id}`；`GET positions` 固定返回未连接（I4 前）。
+
+## 7. 部署形态
+
+```
+本机 deploy/deploy.sh ──scp 静态二进制──▶ zouter:/opt/ctg/bin/ctg ──(bind mount, ro)──▶ 容器 ctg
+                                                                  distroless/static:nonroot (2 MB)
+公网 443 ─▶ nginx stream（SNI 默认路由）─▶ 127.0.0.1:8444 gateway-ctg.conf（TLS *.gugenzzz.top）─▶ 127.0.0.1:8686
+```
+
+镜像不含业务代码，升级只替换二进制并重启容器；数据在 `/opt/ctg/data`（SQLite），与二进制版本解耦。细节见 [运行与部署](operations.md)。
