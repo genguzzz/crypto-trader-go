@@ -72,21 +72,6 @@ button.on, .chip.on { background: var(--accent-bg); border-color: var(--accent);
   #app > main { flex: 1; min-height: 0; overflow: auto; }
 }
 
-/* top bar */
-.topbar {
-  position: sticky; top: 0; z-index: 10; flex: none; display: flex; align-items: center; gap: 20px; height: 48px; padding: 0 16px;
-  background: rgba(11, 14, 19, 0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); flex-wrap: wrap;
-}
-.brand { font-weight: 700; font-size: var(--fs-lg); letter-spacing: .2px; }
-.topbar nav { display: flex; gap: 2px; align-self: stretch; }
-.topbar nav a {
-  display: flex; align-items: center; padding: 0 12px; color: var(--text-3); font-weight: 500;
-  border-bottom: 2px solid transparent; text-decoration: none;
-}
-.topbar nav a:hover { color: var(--text-1); }
-.topbar nav a.router-link-exact-active, .topbar nav a.router-link-active:not([href="/"]) { color: var(--text-1); border-bottom-color: var(--accent); }
-.pool { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: var(--fs-sm); color: var(--text-3); }
-.pool b { color: var(--text-1); font-size: var(--fs-lg); }
 .banner { background: var(--down-bg); color: #ffb4b4; padding: 6px 16px; }
 
 /* panels */
@@ -111,9 +96,4 @@ th { color: var(--text-3); font-weight: 500; text-align: left; font-size: var(--
 }
 @media (max-width: 900px) {
   .hide-sm { display: none !important; }
-  .topbar { gap: 10px; height: auto; padding: 8px 12px; }
-  .topbar nav { align-self: auto; }
-  .topbar nav a { padding: 4px 8px; border-bottom: none; border-radius: var(--radius-sm); }
-  .topbar nav a.router-link-exact-active, .topbar nav a.router-link-active:not([href="/"]) { background: var(--bg-3); }
-  .pool { margin-left: 0; width: 100%; }
 }
