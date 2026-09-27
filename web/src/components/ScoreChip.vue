@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 const props = defineProps<{ v: number | null | undefined; side: 'long' | 'short' }>()
+// Above-neutral scores get the side colour with strength-scaled tint; neutral/below stay quiet.
 const style = computed(() => {
-  if (props.v == null) return {}
-  const a = Math.max(0, (props.v - 50) / 50) // only above-neutral scores are tinted
-  const rgb = props.side === 'long' ? '38,166,154' : '239,83,80'
-  return { background: `rgba(${rgb},${(0.12 + a * 0.6).toFixed(2)})` }
+  if (props.v == null) return { color: 'var(--text-3)' }
+  if (props.v < 50) return { color: 'var(--text-3)', background: 'var(--bg-2)' }
+  const a = (props.v - 50) / 50
+  const rgb = props.side === 'long' ? '14,203,129' : '246,70,93'
+  return {
+    color: a > 0.55 ? '#fff' : props.side === 'long' ? 'var(--up)' : 'var(--down)',
+    background: `rgba(${rgb},${(0.1 + a * 0.75).toFixed(2)})`,
+  }
 })
 </script>
 
