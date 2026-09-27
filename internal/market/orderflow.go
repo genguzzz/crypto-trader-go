@@ -442,19 +442,63 @@ func (e *Engine) OrderFlow(ctx context.Context, id, bar string, limit int, level
 		keys = append(keys, b)
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	var common float64
+	if levels {
+		var groups [][]store.FlowRow
+		for i, b := range keys {
+			if out[b].Src == "trades" && i >= len(keys)-flowLevelBars {
+				groups = append(groups, buckets[b].rows)
+			}
+		}
+		common = commonLevelStep(groups)
+	}
 	for i, b := range keys {
 		fb := out[b]
 		if levels && fb.Src == "trades" && i >= len(keys)-flowLevelBars {
-			fb.Levels, fb.Step = mergeLevels(buckets[b].rows)
+			fb.Levels, fb.Step = mergeLevels(buckets[b].rows, common)
 		}
 		resp.Bars = append(resp.Bars, fb)
 	}
 	return resp, nil
 }
 
-// mergeLevels combines minute footprints into one bar, coarsening the level size (×1/2/5 steps of
-// the minute step) until at most flowLevelsMax levels remain.
-func mergeLevels(rows []store.FlowRow) ([][3]float64, float64) {
+// levelMults are the level-size multipliers used when coarsening; each divides the next, so a
+// coarser footprint is always an exact regrouping of a finer one (the chart regroups further by the
+// same rule when zoomed out).
+var levelMults = []float64{1, 2, 10, 20, 100, 200, 1000, 2000, 10000}
+
+// commonLevelStep is one level size for every bar in a response (so rows line up across bars):
+// the base minute step coarsened until the 90th-percentile bar fits in flowLevelsMax levels.
+// Outlier bars wider than that are coarsened further on their own by mergeLevels.
+func commonLevelStep(groups [][]store.FlowRow) float64 {
+	base := 0.0
+	var spans []float64
+	for _, rows := range groups {
+		lo, hi := math.Inf(1), math.Inf(-1)
+		for _, r := range rows {
+			base = math.Max(base, r.Step)
+			eachLevel(r.Levels, r.Step, func(px, _, _ float64) { lo, hi = math.Min(lo, px), math.Max(hi, px) })
+		}
+		if hi >= lo {
+			spans = append(spans, hi-lo)
+		}
+	}
+	if base == 0 || len(spans) == 0 {
+		return base
+	}
+	sort.Float64s(spans)
+	p90 := spans[len(spans)*9/10]
+	for _, m := range levelMults {
+		if p90/(base*m)+1 <= flowLevelsMax {
+			return base * m
+		}
+	}
+	return base * levelMults[len(levelMults)-1]
+}
+
+// mergeLevels combines minute footprints into one bar at level size `want` (0 = the minute step),
+// coarsening further (by levelMults of the minute step) while more than flowLevelsMax levels remain.
+func mergeLevels(rows []store.FlowRow, want float64) ([][3]float64, float64) {
 	base, lo, hi := 0.0, math.Inf(1), math.Inf(-1)
 	for _, r := range rows {
 		if r.Step > base {
@@ -466,8 +510,11 @@ func mergeLevels(rows []store.FlowRow) ([][3]float64, float64) {
 		return nil, 0
 	}
 	step := base
-	for k := 0; (hi-lo)/step+1 > flowLevelsMax && k < 30; k++ {
-		step = niceStep(step * 1.5)
+	for _, m := range levelMults {
+		step = base * m
+		if step >= want*(1-1e-9) && (hi-lo)/step+1 <= flowLevelsMax {
+			break
+		}
 	}
 	m := map[int64][2]float64{}
 	for _, r := range rows {

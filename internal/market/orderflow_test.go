@@ -64,7 +64,7 @@ func TestMergeLevelsBoundsLevelCount(t *testing.T) {
 	for k := int64(0); k < 500; k++ {
 		m[1000+k] = [2]float64{1, 2}
 	}
-	lv, step := mergeLevels([]store.FlowRow{{Step: 0.1, Levels: packLevels(m)}})
+	lv, step := mergeLevels([]store.FlowRow{{Step: 0.1, Levels: packLevels(m)}}, 0)
 	if len(lv) > flowLevelsMax || step <= 0.1 {
 		t.Fatalf("%d levels step %v", len(lv), step)
 	}
@@ -74,6 +74,36 @@ func TestMergeLevelsBoundsLevelCount(t *testing.T) {
 	}
 	if b < 499.9 || s < 999.9 {
 		t.Fatalf("volume lost in merge: %v %v", b, s)
+	}
+	if r := step / 0.1; math.Abs(r-math.Round(r)) > 1e-6 {
+		t.Fatalf("coarse step %v is not a multiple of the minute step", step)
+	}
+}
+
+// Every bar in one response shares a level size (rows line up across bars); a narrow bar is not
+// kept finer than the common size, a wide outlier may be coarser.
+func TestCommonLevelStep(t *testing.T) {
+	bar := func(n int64) []store.FlowRow {
+		m := map[int64][2]float64{}
+		for k := int64(0); k < n; k++ {
+			m[1000+k] = [2]float64{1, 1}
+		}
+		return []store.FlowRow{{Step: 1, Levels: packLevels(m)}}
+	}
+	var groups [][]store.FlowRow
+	for i := 0; i < 19; i++ {
+		groups = append(groups, bar(60)) // 60 levels → needs ×2
+	}
+	groups = append(groups, bar(5), bar(3000))
+	c := commonLevelStep(groups)
+	if c != 2 {
+		t.Fatalf("common step %v, want 2", c)
+	}
+	if _, s := mergeLevels(groups[19], c); s != 2 {
+		t.Fatalf("narrow bar step %v, want 2", s)
+	}
+	if lv, s := mergeLevels(groups[20], c); s <= 2 || len(lv) > flowLevelsMax {
+		t.Fatalf("outlier bar step %v levels %d", s, len(lv))
 	}
 }
 

@@ -5,7 +5,6 @@ import { api, type Candle, type FlowBar } from '../api'
 import { chartTime, price as fmtPrice, usd, time as fmtTime } from '../fmt'
 import { baseChart, precisionFor } from './charts'
 import { Footprint, type FootBar } from './charts/footprint'
-type PocStats = { poc: number; vah: number; val: number }
 
 const props = defineProps<{ id: string; hasSpot: boolean }>()
 const bar = ref(localStorage.getItem('bar') || '15m')
@@ -33,13 +32,14 @@ const recording = ref(false)
 const hover = ref<number | null>(null) // index into bars
 const axisLabel = ref<{ top: number; px: number; pct: number } | null>(null)
 const axisWidth = ref(60)
+const footVer = ref(0) // bumped when footprint data or its level size changes (legend reads it)
 
 const shown = computed(() => {
   const xs = bars.value
   if (!xs.length) return null
   const i = hover.value ?? xs.length - 1
   const c = xs[i], prev = i > 0 ? xs[i - 1].c : c.o
-  const poc = layer.value === 'foot' ? foot?.barStats(chartTime(c.t) as number) ?? null : null
+  const poc = layer.value === 'foot' && footVer.value >= 0 ? foot?.barStats(chartTime(c.t) as number) ?? null : null
   return { c, chg: prev ? c.c / prev - 1 : 0, amp: prev ? (c.h - c.l) / prev : 0, f: flow.value.get(c.t), poc, live: hover.value == null }
 })
 const pct = (v: number, d = 2) => (v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%'
@@ -109,17 +109,14 @@ async function loadFlow(cs: Candle[]) {
   if (layer.value === 'foot') {
     if (!foot) {
       foot = new Footprint()
+      foot.onRegroup = () => footVer.value++
       candles!.attachPrimitive(foot)
       candles!.applyOptions({ upColor: 'rgba(38,166,154,.18)', downColor: 'rgba(239,83,80,.18)' })
     }
-    const byT = new Map(cs.map(c => [c.t, c]))
     const fm = new Map<number, FootBar>()
-    for (const b of of.bars || []) {
-      if (!b.levels?.length || !b.step) continue
-      const c = byT.get(b.t)
-      if (c) fm.set(chartTime(b.t) as number, { levels: b.levels, step: b.step, low: c.l, high: c.h })
-    }
-    foot.setData(fm)
+    for (const b of of.bars || []) if (b.levels?.length && b.step) fm.set(chartTime(b.t) as number, { levels: b.levels, step: b.step })
+    foot.setData(fm, cs.map(c => ({ time: chartTime(c.t) as number, low: c.l, high: c.h })))
+    footVer.value++
   }
 }
 
@@ -191,9 +188,9 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <b>数据来源</b>：OKX 永续 1m K 线由本机录制（实时 WS + 启动回填）；进过监控池的币额外回补 7 天 1m；1H/4H 来自 1H K 线，保留 30 天。5m/15m/4H 由服务端按 UTC 对齐聚合。<br />
         <b>十字光标</b>：左上角显示所指 K 线的开高低收、涨跌幅（对上一根收盘）、振幅与成交额；右侧价格标签显示光标价位<b>距现价</b>的百分比。手机上长按后拖动。<br />
         <b>订单流</b>：主动买入（taker buy）与主动卖出的 USDT 成交额。<b>Delta</b> = 买 − 卖（下方柱），<b>CVD</b> = 区间内 Delta 累计（黄线）。本机逐笔录制的 K 线颜色较深；更早的由 OKX 统计的 5m/1H 主动买卖量补充（颜色较浅，1m 周期没有）。<br />
-        <b>足迹</b>：每根 K 线内每个价位的主动卖（左，红）/ 主动买（右，绿），颜色深浅按<b>当前可见范围</b>内最大的单价位成交额换算（不是单根 K 线自己的最大值，跨 K 线可比）；一侧总量 ≥3 倍另一侧时数字高亮。只有本机录制了逐笔成交的 K 线有足迹（活跃池、自选、正在查看的合约，从开始录制起）；放大 K 线可显示数字。<br />
-        <b>POC / 价值区</b>：黄框为该根 K 线成交最多的价位（Point of Control）；光标所在 K 线的价值区（成交量 70% 集中的价格区间，从 POC 向两侧扩展）显示在左上角。<b>未回补 POC</b>：某根 K 线的 POC 之后一直没有其他 K 线的最高/最低价范围覆盖到它，就用金色虚线一直画到最右侧，一旦被覆盖就变淡并在覆盖处截断（追踪最近 80 根）——常用来判断价格是否会回来"回补"这个位置。<br />
-        <b>失衡</b>：某价位的主动买 ≥ 相邻低一档主动卖的 3 倍（或主动卖 ≥ 相邻高一档主动买的 3 倍），且不低于该 K 线所有价位的成交中位数，标记一个色块；连续 3 档及以上同方向失衡（"堆叠失衡"）用同色描边整档标出，常被当作趋势延续或强支撑/阻力的信号，不是必然。<br />
+        <b>足迹</b>：每根 K 线内每个价位的主动卖（左，红）/ 主动买（右，绿），颜色深浅按<b>当前可见范围</b>内最大的单价位成交额换算（跨 K 线可比）。价位档会随纵向缩放自动合并（×2、×10…），左上角显示当前每档大小；拖动右侧价格轴可纵向放大看更细的档位，横向放大到够宽时显示数字。只有本机录制了逐笔成交的 K 线有足迹（活跃池、自选、正在查看的合约，从开始录制起）。<br />
+        <b>POC / 价值区</b>：黄框为该根 K 线成交最多的价位（Point of Control）；每根 K 线左侧的细金线是价值区（从 POC 向两侧扩展、覆盖 70% 成交额的价格区间），数值见左上角。<b>未回补 POC</b>：已收盘 K 线的 POC 之后没有任何 K 线的最高–最低价穿过它，就用金色虚线画到最右侧，被穿过后不再显示——常用来观察价格是否会回来“回补”。<br />
+        <b>失衡</b>（对角比较）：某价位的主动买 ≥ 低一档主动卖的 3 倍，在右侧标绿色竖条、数字变绿；主动卖 ≥ 高一档主动买的 3 倍，在左侧标红色竖条。量太小（低于该 K 线各价位单边成交额中位数）的不算。连续 3 档及以上同方向失衡为<b>堆叠失衡</b>，该侧加描边，常被当作主动方强势的信号，不是必然。<br />
         <b>成交额柱</b>：底部柱为该根 K 线的 USDT 成交额，绿涨红跌。缺失分钟显示为空档；最后一根为未收盘 K 线。<br />
         <b>叠加现货</b>：OKX 同名 USDT 现货收盘价（黄线），使用左侧独立价格轴。
       </InfoTip></span>
@@ -219,10 +216,11 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
             <span>主动买 <b class="up">{{ usd(shown.f.buy) }}</b></span><span>主动卖 <b class="down">{{ usd(shown.f.sell) }}</b></span>
             <span>Delta <b :class="tone(shown.f.buy - shown.f.sell)">{{ (shown.f.buy >= shown.f.sell ? '+' : '−') + usd(Math.abs(shown.f.buy - shown.f.sell)) }}</b></span>
             <span class="muted">{{ shown.f.src === 'trades' ? '本机逐笔' : 'OKX 统计' }}</span>
-          </template>
-          <template v-if="shown.poc">
-            <span>POC <b class="poc">{{ fmtPrice(shown.poc.poc) }}</b></span>
-            <span>价值区 <b>{{ fmtPrice(shown.poc.val) }}–{{ fmtPrice(shown.poc.vah) }}</b><small class="muted"> 70%</small></span>
+            <template v-if="shown.poc">
+              <span>POC <b class="poc">{{ fmtPrice(shown.poc.poc) }}</b></span>
+              <span>价值区 <b>{{ fmtPrice(shown.poc.val) }}–{{ fmtPrice(shown.poc.vah) }}</b></span>
+              <span class="muted">每档 {{ fmtPrice(shown.poc.step) }}</span>
+            </template>
           </template>
           <span v-else class="muted">这根 K 线没有订单流数据{{ bar === '1m' ? '（1m 只有本机逐笔录制）' : '' }}</span>
           <span v-if="!recording" class="muted">· 未在录制逐笔</span>
