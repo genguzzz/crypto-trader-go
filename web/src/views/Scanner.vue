@@ -139,10 +139,10 @@ const cols = [
           </select>
           <span class="chip" v-if="store.snap?.removed?.length" :class="{ on: showRemoved }" @click="showRemoved = !showRemoved">最近移出 {{ store.snap.removed.length }}</span>
         </div>
-        <div class="note" v-if="rule">
-          当前规则 <b>{{ rule.name }}</b> <span class="tag warn">未验证</span>
-          <RouterLink :to="`/rules/${rule.id}`">看战绩 →</RouterLink>
-          · 分数 = 池内分位加权，不是胜率或下单建议
+        <div class="rule-line" v-if="rule">
+          <span class="muted">当前规则</span> <b>{{ rule.name }}</b> <span class="tag warn">未验证</span>
+          <InfoTip label="评分原理"><ScoringExplainer /></InfoTip>
+          <RouterLink :to="`/rules/${rule.id}`">战绩 →</RouterLink>
         </div>
       </div>
       <div class="removed" v-if="showRemoved">
@@ -259,5 +259,6 @@ td.up { color: var(--up); } td.down { color: var(--down); }
 .card .px { margin-left: auto; font-weight: 600; }
 .card .l2 { display: flex; gap: 12px; align-items: center; font-size: 12px; }
 .hide-lg { display: none; }
+.rule-line { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); flex-wrap: wrap; }
 .narrow .hide-lg { display: inline-block; }
 </style>

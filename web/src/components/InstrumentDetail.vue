@@ -145,7 +145,6 @@ async function toggleWatch() {
           </div>
         </div>
         <div v-else class="note">暂无评分（数据预热中或缺少输入）</div>
-        <div class="note">分数 = 50 + 各字段在“当前活跃池”内分位（映射到 ±1）× 权重。未经样本外验证，不是胜率/下单建议；看战绩判断是否有用。</div>
       </div>
       </template>
       <template #price>
@@ -159,13 +158,20 @@ async function toggleWatch() {
       </template>
       <template #events>
       <div class="panel">
-        <h3>新闻 / 解锁 / 链上持有人</h3>
-        <div class="note">未接入（计划 I4）。此处显示“未知”——<b>不代表没有事件或没有风险</b>。股票/商品永续本身没有链上数据。</div>
+        <h3>新闻 / 解锁 / 链上持有人 <span class="tag">未接入</span> <InfoTip>
+          计划在 I4 阶段接入可靠来源（项目公告、解锁日程、链上地址分布），并保留发布时间与修订。<br />
+          现在显示“未接入”——<b>不代表没有事件或没有风险</b>。股票/商品永续本身没有链上数据。
+        </InfoTip></h3>
       </div>
       </template>
     </DraggablePanels>
     <Modal :open="showFacts" :title="`${base} 事实面板（全部字段）`" wide @close="showFacts = false">
-      <p class="note" v-if="store.snap?.preview">盘中每 10 秒重算；分位 = 在当前活跃池内的位置（0–100）。</p>
+      <div class="modal-hint"><InfoTip label="字段说明">
+        <b>数值</b>：只使用决策时刻已经可见的数据；盘中每 10 秒按未收盘分钟重算（会变动），战绩只记录分钟确认值。<br />
+        <b>池内分位</b>：该值在当前活跃池里的位置，0 = 最低，100 = 最高；规则打分用的就是它。<br />
+        <b>不可回放</b>：历史回放中没有该字段（点差、基差、预测资金费等只在实时有），含这些字段的规则只能积累上线后战绩。<br />
+        缺失显示“—”，表示未知，不当作 0。
+      </InfoTip></div>
       <table>
             <thead><tr><th>字段</th><th class="num">数值</th><th class="num">池内分位</th><th class="hide-sm">定义</th></tr></thead>
             <tbody>
@@ -209,6 +215,7 @@ async function toggleWatch() {
 h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .small { font-size: 12px; font-weight: 400; }
 .facts-btn { margin-left: auto; padding: 2px 10px; }
+.modal-hint { margin-bottom: 8px; }
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .side .sh { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .sl { font-size: var(--fs-sm); color: var(--text-3); }

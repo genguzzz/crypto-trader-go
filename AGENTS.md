@@ -15,6 +15,12 @@
 - 实时与回放共用 `features.Compute`；整点快照不可改写；预览（10 秒）值不进战绩。
 - 只用 OKX 公共接口；不下单；只读账户（I4）需用户另行批准。
 
+## 界面规范（必须遵守，详见 `docs/design-guidelines.md`）
+
+- 信息分“主/次/弱”三级（颜色 `--text-1/2/3` + 字号字重），颜色只表达涨跌/警示/交互语义；数字等宽。
+- **说明文字不直接铺在页面上**：口径、公式、数据来源放 `<InfoTip>`（PC 悬浮、触屏点击），大量明细用 `<Modal>`；页面上只留动态状态与一句话必要警示。
+- 使用 `web/src/style.css` 的 token，不写零散颜色/字号；PC 专属交互用 `useDesktop()` 判断并给触屏等价方案。
+
 ## 工作方式
 
 - 跨模块或改变口径的改动走 OpenSpec（`openspec/changes/<name>` → 完成后归档到 `archive/`），并更新 `docs/roadmap.md`。

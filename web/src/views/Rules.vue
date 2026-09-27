@@ -92,13 +92,15 @@ const H = (h: number) => `${h}h`
 <template>
   <div class="page rules">
     <div class="panel list">
-      <h3>规则</h3>
+      <h3>规则 <InfoTip>
+        所有规则默认标“未验证”。“对照”是内置的三条比较基准（不是推荐）。<br />
+        判断一条规则有没有用，只看右侧战绩，尤其是“上线后”的样本外记录；历史回放含幸存者偏差，只能参考。
+      </InfoTip></h3>
       <RouterLink v-for="r in rules" :key="r.id" :to="`/rules/${r.id}`" class="item" :class="{ on: cur?.id === r.id }">
         <b>{{ r.name }}</b> <span class="muted">v{{ r.version }}</span>
         <span class="tag" v-if="r.preset">对照</span>
         <div class="muted small">{{ r.id }}</div>
       </RouterLink>
-      <p class="note">所有规则默认“未验证”。只有下方战绩（尤其“上线后”）能支持“这个分有用”。</p>
     </div>
 
     <div class="main" v-if="cur && draft">
@@ -111,7 +113,14 @@ const H = (h: number) => `${h}h`
       </div>
 
       <div class="panel">
-        <h3>战绩</h3>
+        <h3>战绩 <InfoTip>
+          <b>Rank IC</b>：同一时刻活跃池内“分数排名”与“之后 h 小时实际收益排名”的 Spearman 相关，取值 −1～1；0.02–0.05 在因子研究里已算有信号。空头 IC 用 −收益计算。<br />
+          <b>t 值</b>：IC 均值 ÷ 标准误；每个周期只取不重叠样本（1h 每小时、4h 每 4 小时…），避免重复计数。|t| &gt; 2 大致对应 5% 显著性。<br />
+          <b>前 20% 超额 / 净</b>：分数最高的五分之一，平均收益比池均值多多少（毛）；再扣双边 taker 5bps×2 和点差后的绝对收益（净）。<br />
+          <b>结论门槛</b>：≥30 个截面、t &gt; 2 且扣费后为正，才标“有初步证据”；显著为负标“方向相反”。<br />
+          <b>历史回放</b>：用 1H 数据按当时的监控池重算，只含现在仍上市的币（幸存者偏差），点差按 2bps 假设。<b>上线后</b>：每个整点真实快照，不可改写。<br />
+          曲线为多头累计 IC：持续向上 = 稳定有效，向下 = 反向。
+        </InfoTip></h3>
         <div class="note">回放：{{ tr?.replayState }} · 上线后：{{ tr?.liveSince ? '自 ' + time(tr.liveSince, true) + ' 起每整点记录' : '尚无记录（每个整点快照一次活跃池）' }}</div>
         <div class="tables">
           <div v-for="kind in (['replay', 'live'] as const)" :key="kind">
@@ -133,15 +142,15 @@ const H = (h: number) => `${h}h`
           </div>
         </div>
         <div ref="chartEl" class="cum"></div>
-        <div class="note">
-          IC = 同一时点活跃池内“分数排名 vs 未来收益排名”的 Spearman 相关，按周期不重叠抽样；空头 IC 用 −收益。
-          top20% 超额 = 分数最高五分之一的平均收益 − 池均值；净 = 其绝对收益 − 双边 taker 5bps×2 − 点差。
-          结论门槛：≥30 个截面、t&gt;2 且扣费后为正才算“初步证据”。曲线为多头累计 IC。
-        </div>
       </div>
 
       <div class="panel">
-        <h3>编辑权重（保存 = 发布新版本，旧版本战绩保留）</h3>
+        <h3>编辑权重 <InfoTip>
+          <b>正权重</b> = 该字段在池内越高越加分；<b>负权重</b> = 越低越加分；留空或 0 = 不使用。权重只看相对大小（会除以 Σ|w|）。<br />
+          <b>点差门槛</b>：点差超过该值时标“门槛”，分数照算但提示不可交易成本过高。<br />
+          <b>保存</b> = 发布新版本（v+1）：立即对当前池重新打分，后台重算历史回放；旧版本的战绩保留。<br /><br />
+          <ScoringExplainer />
+        </InfoTip></h3>
         <div class="form">
           <label>名称 <input v-model="draft.name" /></label>
           <label>点差门槛 (bps，0=不限) <input type="number" step="1" min="0" v-model.number="draft.gates.maxSpreadBps" /></label>
@@ -158,7 +167,6 @@ const H = (h: number) => `${h}h`
             </tr>
           </tbody>
         </table>
-        <p class="note">分数 = 50 + 50 × Σ(权重 × 池内分位映射到 ±1) ÷ Σ|权重|。正权重 = 该字段越高越加分；负权重 = 越低越加分。任一加权字段缺失 → 未评分。</p>
         <div class="actions">
           <button class="primary" @click="save(false)">保存为 {{ cur.id }} v{{ cur.version + 1 }}</button>
           <input v-model="newId" placeholder="新规则 ID，如 my-rule" />

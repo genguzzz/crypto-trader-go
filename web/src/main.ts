@@ -9,6 +9,8 @@ import Positions from './views/Positions.vue'
 import SettingsView from './views/Settings.vue'
 import { startStream } from './store'
 import './style.css'
+import InfoTip from './components/InfoTip.vue'
+import ScoringExplainer from './components/ScoringExplainer.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -24,4 +26,4 @@ const router = createRouter({
 })
 
 startStream()
-createApp(App).use(router).mount('#app')
+createApp(App).use(router).component('InfoTip', InfoTip).component('ScoringExplainer', ScoringExplainer).mount('#app')

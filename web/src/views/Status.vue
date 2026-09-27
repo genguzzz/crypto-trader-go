@@ -35,7 +35,11 @@ onUnmounted(() => clearInterval(timer))
         </tbody></table>
       </div>
       <div class="panel">
-        <h3>OKX 连接</h3>
+        <h3>OKX 连接 <InfoTip>
+          仅使用 OKX v5 <b>公共</b>接口（无凭据、无下单）。<br />
+          <b>business</b> WS：全池 1m K 线；<b>public</b> WS：全池 OI 与资金费，盘口报价只订阅活跃池和自选（全池订阅约 40GB/天，没必要）。<br />
+          REST：现货行情 15 秒、永续 ticker 30 秒兜底，历史回填与补洞走独立限频。时间戳按交易所时间记录，缺失分钟不当 0。
+        </InfoTip></h3>
         <table>
           <thead><tr><th>WS</th><th>状态</th><th class="num">订阅</th><th class="num">消息</th><th class="num">重连</th><th class="num">最近</th></tr></thead>
           <tbody><tr v-for="w in s.ws" :key="w.name">
@@ -46,14 +50,12 @@ onUnmounted(() => clearInterval(timer))
         <p class="note">REST 请求 {{ s.restRequests }} · 错误 {{ s.restErrors }} · 限频 {{ s.restRateLimited }}</p>
       </div>
       <div class="panel">
-        <h3>SQLite 记录（每分钟刷新）</h3>
+        <h3>SQLite 记录 <InfoTip>
+          行数每分钟刷新一次。1m K 线与 OI 分钟样本保留 {{ s.config.retain1mDays }} 天；1H K 线、资金费、评分快照、规则长期保留。<br />
+          全池 1m 约 60 MB/天。
+        </InfoTip></h3>
         <table><tbody><tr v-for="(v, k) in s.db" :key="k"><td>{{ k }}</td><td class="num">{{ v?.toLocaleString() }}</td></tr></tbody></table>
-        <p class="note">1m K 线与 OI 样本保留 {{ s.config.retain1mDays }} 天；1H、资金费、评分快照长期保留。</p>
       </div>
-    </div>
-    <div class="panel note">
-      数据源：仅 OKX v5 公共接口（无凭据、无下单）。全池 candle1m 走 business WS，OI/资金费全池 + tickers 仅活跃池/自选走 public WS；
-      SPOT 行情 15s、SWAP ticker 30s REST 兜底。所有时间戳按交易所 ts 记录，缺失分钟不当作 0。
     </div>
   </div>
 </template>

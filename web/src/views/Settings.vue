@@ -53,7 +53,12 @@ async function save() {
 <template>
   <div class="page" v-if="s">
     <div class="panel">
-      <h3>监控池</h3>
+      <h3>监控池 <InfoTip>
+        <b>12h 成交额</b> = 连续 720 根已确认 1m K 线的 USDT 成交额（volCcyQuote）之和，每确认一分钟重算一次；缺任何一分钟视为数据缺口，不参与排名。<br />
+        <b>入池条件</b>：严格大于阈值，按成交额从高到低取前 N 个；达标不足 N 就显示实际数量，不拿低流动性合约凑数。<br />
+        <b>类别</b>：加密 / 股票·ETF / 商品永续（OKX instCategory）。股票类成交集中在美股时段，没有现货和链上数据。<br />
+        <b>保存后</b>：立即重算监控池；后台重跑 14 天历史回放，新进入的币会补齐历史数据（进度见“系统”页）。
+      </InfoTip></h3>
       <div class="grid">
         <label>
           <span>12h USDT 成交额阈值（万）</span>
@@ -79,11 +84,14 @@ async function save() {
         <span class="muted">（超过 {{ usd(s.threshold) }} USDT 的共 {{ estimate.raw }} 个<template v-if="estimate.raw > s.topN">，截取前 {{ s.topN }}</template>；
           <template v-for="(n, c) in estimate.byCat" :key="c">{{ catLabel[c] }} {{ n }} </template>）</span>
       </p>
-      <p class="note">口径：连续 720 根已确认 1m K 线的 volCcyQuote 之和，严格大于阈值；按成交额从高到低取前 N。修改后立即重算，并在后台重跑 14 天历史回放。</p>
     </div>
 
     <div class="panel">
-      <h3>入场规则</h3>
+      <h3>入场规则 <InfoTip>
+        这里选择扫描页和详情页<b>默认使用</b>的评分规则；每个人也可以在扫描页临时切换。<br />
+        权重、点差门槛、新建规则在“规则与战绩”页编辑；每次保存都会发布新版本，旧版本的战绩保留，便于比较。<br /><br />
+        <ScoringExplainer />
+      </InfoTip></h3>
       <label class="row">
         <span>默认评分规则（扫描页/详情页默认使用）</span>
         <select v-model="s.defaultRule">
@@ -102,7 +110,6 @@ async function save() {
           </tr>
         </tbody>
       </table>
-      <p class="note">权重、点差门槛、新建规则在“规则与战绩”页编辑；每次保存生成新版本，旧版本战绩保留。</p>
     </div>
 
     <div class="actions">

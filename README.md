@@ -39,6 +39,7 @@ cd web && npm run dev          # Vite 开发服务器，/api 代理到 :8686
 |---|---|
 | [架构与目录](docs/architecture.md) | 模块划分、数据流、关键算法、技术选型、目录结构 |
 | [运行与部署](docs/operations.md) | 参数、环境变量、NAS、网络问题排查 |
+| [界面设计规范](docs/design-guidelines.md) | 信息层级、token、说明文字交互化等前端规则 |
 | [里程碑与待办](docs/roadmap.md) | 已完成 / 进行中 / 待办（含服务器 Docker 部署） |
 | [蓝图修订 2026-09-26](docs/blueprint/revision-2026-09-26.md) | 用实测数据纠正的方案与决策记录 |
 | [调研探针](research/poc/README.md) | 可复跑的公共接口实测程序与结果 |
