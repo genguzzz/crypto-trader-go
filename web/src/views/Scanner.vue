@@ -221,7 +221,7 @@ const cols = [
 </template>
 
 <style scoped>
-.scanner { display: grid; grid-template-columns: minmax(760px, 50%) 6px 1fr; height: calc(100vh - 45px); }
+.scanner { display: grid; grid-template-columns: minmax(760px, 50%) 6px 1fr; height: 100%; }
 .scanner.narrow { display: block; height: auto; }
 .divider { cursor: col-resize; background: var(--line); opacity: 0.5; transition: background 0.15s; }
 .divider:hover { background: var(--accent); opacity: 1; }

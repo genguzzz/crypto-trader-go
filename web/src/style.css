@@ -65,9 +65,16 @@ button.on, .chip.on { background: var(--accent-bg); border-color: var(--accent);
 .dot.bad { background: var(--down); box-shadow: 0 0 0 3px var(--down-bg); }
 .dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); }
 
+/* app shell: on PC the window never scrolls — only content regions do (no double scrollbars) */
+@media (min-width: 901px) {
+  html, body, #app { height: 100%; overflow: hidden; }
+  #app { display: flex; flex-direction: column; }
+  #app > main { flex: 1; min-height: 0; overflow: auto; }
+}
+
 /* top bar */
 .topbar {
-  position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 20px; height: 48px; padding: 0 16px;
+  position: sticky; top: 0; z-index: 10; flex: none; display: flex; align-items: center; gap: 20px; height: 48px; padding: 0 16px;
   background: rgba(11, 14, 19, 0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); flex-wrap: wrap;
 }
 .brand { font-weight: 700; font-size: var(--fs-lg); letter-spacing: .2px; }
