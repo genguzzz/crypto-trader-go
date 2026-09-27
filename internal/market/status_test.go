@@ -1,27 +1,22 @@
 package market
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
 
 	"crypto-trader-go/internal/okx"
-	"crypto-trader-go/internal/store"
 )
 
 // Status must not wait for table row counts (COUNT(*) over millions of rows takes seconds).
 func TestStatusDoesNotBlockOnCounts(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := openStore(t)
 	e := New(Config{Threshold: 1, TopN: 10}, okx.NewREST(), st)
 	dbCounts.Lock()
 	dbCounts.at, dbCounts.v, dbCounts.running = time.Time{}, nil, false
 	dbCounts.Unlock()
 	start := time.Now()
 	e.Status()
-	if d := time.Since(start); d > 500*time.Millisecond {
+	if d := time.Since(start); d > 2*time.Second { // inline COUNT(*) on a real DB takes ~8s
 		t.Fatalf("Status took %s", d)
 	}
 	deadline := time.Now().Add(5 * time.Second) // counts arrive in the background

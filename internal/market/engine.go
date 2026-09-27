@@ -180,6 +180,7 @@ func (e *Engine) Start(ctx context.Context) error {
 			e.watch[id] = true
 		}
 	}
+	e.migrate()
 	if v, err := e.st.Views(); err == nil {
 		e.views = v
 	}
