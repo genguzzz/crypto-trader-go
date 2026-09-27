@@ -16,6 +16,12 @@ secrets*
 /tmp/
 bin/
 dist/
+!web/dist/
+web/dist/*
+!web/dist/.gitkeep
 node_modules/
 .DS_Store
 *.log
+
+# Recorder data
+/data/
