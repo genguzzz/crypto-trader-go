@@ -13,7 +13,7 @@
 | 2026-09-27 | 界面：设计 token 与信息层级重构；说明文字收进 InfoTip/Modal；PC 面板拖拽与顶部布局菜单；Reka UI 组件库（分段/下拉/筛选/搜索）；导航重设计与手机底部标签栏；PC 单滚动区；手机不横向溢出；设置页秒开 + API gzip。规范见 `docs/design-guidelines.md` |
 | 2026-09-27 | 搜索覆盖 OKX 全部 USDT 永续（目录常驻内存，点开才按需下载近 7 天历史）；数据分层淘汰（自选/活跃池/最近查看/全池录制/未跟踪 × 各周期表独立保留期与容量配额，总上限默认 2 GB，设置页可改）（`openspec/changes/storage-retention-and-search`） |
 | 2026-09-27 | 上线：old-server Docker（distroless 运行时 + 挂载二进制，`deploy/deploy.sh` 一键升级/回滚），`https://ctg.gugenzzz.top`（nginx SNI 默认路由 + 通配符证书），复用本机数据库 |
-| 2026-09-27 | 迁移：服务器从 old-server 换到 ctg-prod（东京 2C/4G，Debian 13，xanmod BBRv3）；数据整库迁移，`ctg.gugenzzz.top` A/AAAA 改指 ctg-prod；GitHub Actions 部署密钥与 Secrets 重配到 ctg-prod |
+| 2026-09-27 | 迁移：服务器从 old-server 换到 ctg-prod（VPS 东京 2C/4G，Debian 13，xanmod BBRv3）；数据整库迁移，`ctg.gugenzzz.top` A/AAAA 改指 ctg-prod；GitHub Actions 部署密钥与 Secrets 重配到 ctg-prod |
 
 ## 进行中
 

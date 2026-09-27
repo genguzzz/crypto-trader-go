@@ -5,7 +5,7 @@
 | 项 | 值 |
 |---|---|
 | 地址 | https://ctg.gugenzzz.top（暂无登录，公开可访问；登录见待办） |
-| 机器 | ctg-prod（本机 SSH 别名 `ctg-prod`，地址只在 `~/.ssh/config` 与 GitHub Secrets 中；Debian 13，2C/4G，x86_64，东京，可直连 OKX；2026-09-27 从 old-server 迁来） |
+| 机器 | ctg-prod（本机 SSH 别名 `ctg-prod`，地址只在 `~/.ssh/config` 与 GitHub Secrets 中；Debian 13，2C/4G，x86_64，VPS 东京，可直连 OKX；2026-09-27 从 old-server 迁来） |
 | 进程 | Docker 容器 `ctg`（compose 项目 `/opt/ctg`），`network_mode: host`，监听 `127.0.0.1:8686` |
 | 入口 | nginx stream 按 SNI 默认把 `*.gugenzzz.top` 送到 `127.0.0.1:8444` → `/etc/nginx/conf.d/gateway-ctg.conf` 反代到 8686（SSE 关缓冲）；80 跳 443；证书为已有 `*.gugenzzz.top` 通配符 |
 | DNS | Cloudflare `ctg.gugenzzz.top` A/AAAA → ctg-prod，灰云直连 |

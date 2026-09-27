@@ -59,7 +59,7 @@ jobs:
         run: deploy/deploy.sh
       - name: Public check
         run: |
-          for i in $(seq 1 30); do
+          for i in $(seq 1 100); do   # health stays 503 until the restart backfill finishes (~2 min)
             if curl -fsS -m 5 https://ctg.gugenzzz.top/api/v1/health >/dev/null; then echo "public endpoint OK"; exit 0; fi
             sleep 3
           done
