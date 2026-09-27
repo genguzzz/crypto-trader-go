@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestGzipJSONButNotSSE(t *testing.T) {
@@ -35,5 +36,19 @@ func TestGzipJSONButNotSSE(t *testing.T) {
 	h.ServeHTTP(rec, sse)
 	if rec.Header().Get("Content-Encoding") != "" {
 		t.Fatal("SSE must not be gzipped")
+	}
+}
+
+func TestUnknownAPIRouteIs404(t *testing.T) {
+	h := spa(fstest.MapFS{"index.html": {Data: []byte("<html>")}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/nope", nil))
+	if rec.Code != 404 {
+		t.Fatalf("got %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/rules/x", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<html>") {
+		t.Fatalf("spa fallback broken: %d", rec.Code)
 	}
 }
