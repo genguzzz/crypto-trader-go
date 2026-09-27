@@ -7,6 +7,7 @@ import { usd, price, logPct, fundingH, catLabel, time, sign } from '../fmt'
 import InstrumentDetail from '../components/InstrumentDetail.vue'
 import ScoreChip from '../components/ScoreChip.vue'
 import CoinIcon from '../components/CoinIcon.vue'
+import { useDesktop } from '../composables/device'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +15,29 @@ const narrow = ref(window.innerWidth < 900)
 const onResize = () => (narrow.value = window.innerWidth < 900)
 onMounted(() => window.addEventListener('resize', onResize))
 onUnmounted(() => window.removeEventListener('resize', onResize))
+
+// PC only: drag the divider between list and detail; width saved locally.
+const desktop = useDesktop()
+const listW = ref(Number(localStorage.getItem('ctg.listWidth')) || 0)
+const gridStyle = computed(() => (desktop.value && listW.value ? { gridTemplateColumns: `${listW.value}px 6px 1fr` } : {}))
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  const startX = e.clientX
+  const startW = (e.target as HTMLElement).previousElementSibling!.getBoundingClientRect().width
+  const onMove = (ev: MouseEvent) => {
+    listW.value = Math.max(520, Math.min(window.innerWidth - 480, startW + ev.clientX - startX))
+  }
+  const onUp = () => {
+    localStorage.setItem('ctg.listWidth', String(Math.round(listW.value)))
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+  }
+  document.body.style.cursor = 'col-resize'
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+function resetWidth() { listW.value = 0; localStorage.removeItem('ctg.listWidth') }
 
 const dir = ref<'all' | 'long' | 'short'>((localStorage.getItem('dir') as any) || 'all')
 const cats = ref<Record<string, boolean>>({ '1': true, '3': true, '4': true })
@@ -90,7 +114,7 @@ const cols = [
 </script>
 
 <template>
-  <div class="scanner" :class="{ narrow }">
+  <div class="scanner" :class="{ narrow }" :style="gridStyle">
     <section class="list">
       <div class="controls">
         <div class="row">
@@ -186,6 +210,7 @@ const cols = [
       </div>
     </section>
 
+    <div v-if="!narrow && desktop" class="divider" title="拖动调整列表宽度；双击恢复默认" @mousedown="startResize" @dblclick="resetWidth"></div>
     <section class="detail" v-if="!narrow">
       <InstrumentDetail v-if="selected" :id="selected" :key="selected" />
       <div v-else class="note pad">选择左侧合约查看详情</div>
@@ -194,9 +219,11 @@ const cols = [
 </template>
 
 <style scoped>
-.scanner { display: grid; grid-template-columns: minmax(640px, 46%) 1fr; height: calc(100vh - 45px); }
+.scanner { display: grid; grid-template-columns: minmax(640px, 46%) 6px 1fr; height: calc(100vh - 45px); }
 .scanner.narrow { display: block; height: auto; }
-.list { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.divider { cursor: col-resize; background: var(--line); opacity: 0.5; transition: background 0.15s; }
+.divider:hover { background: var(--accent); opacity: 1; }
+.list { display: flex; flex-direction: column; min-height: 0; }
 .controls { padding: 10px 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
 .controls .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .seg { display: inline-flex; }
