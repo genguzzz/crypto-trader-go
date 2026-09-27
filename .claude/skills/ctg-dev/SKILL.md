@@ -13,6 +13,8 @@ description: crypto-trader-go（OKX 研究台）开发与验证流程：构建�
 
 ## 前端规范速查
 - 读 `docs/design-guidelines.md`。说明/口径 → `<InfoTip>`（全局组件，放 h3 旁），公式 → `<ScoringExplainer />`，明细 → `<Modal>`；页面只放动态状态。
+- 控件用组件库：`<Segmented>`、`<USelect>`（全局）、`ui/ChipGroup`、`ui/FilterChip`、`ui/SearchInput`、Reka `Popover`；布局提示进顶部布局菜单（`useLayoutEntry`）。
+- 截图脚本同时检查手机 `document.documentElement.scrollWidth === 390`。
 - 颜色/字号只用 `style.css` token；指标“标签在上、数值在下”；PC 专属交互用 `composables/device.ts` 的 `useDesktop()`。
 
 ## 常用命令
