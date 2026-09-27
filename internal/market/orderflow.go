@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"crypto-trader-go/internal/okx"
@@ -23,6 +24,8 @@ import (
 //     stream was subscribed for all of it (no partial minutes after (re)subscribe/reconnect).
 //   - rubik: OKX taker-volume history (5m for a few days, 1H for weeks) — delta for any
 //     instrument and for time before recording started; no footprint.
+
+var flowDecodeErrs atomic.Int64 // surfaced in status: a format change must not silently zero the data
 
 const (
 	flowGrace     = 3 * time.Second // minute m is final at m+60s+grace (late trade messages)
@@ -86,9 +89,19 @@ func advanceFlow(in *Inst, to int64) []store.FlowRow {
 	return out
 }
 
+// wsTrade is one OKX "trades" push entry (strings except seqId, which is a JSON number — a
+// map[string]string would fail to decode the whole message).
+type wsTrade struct {
+	Px   string `json:"px"`
+	Sz   string `json:"sz"`
+	Side string `json:"side"`
+	Ts   string `json:"ts"`
+}
+
 func (e *Engine) onTrades(m okx.Message) {
-	var xs []map[string]string
-	if json.Unmarshal(m.Data, &xs) != nil {
+	var xs []wsTrade
+	if err := json.Unmarshal(m.Data, &xs); err != nil {
+		flowDecodeErrs.Add(1)
 		return
 	}
 	var done []store.FlowRow
@@ -100,7 +113,7 @@ func (e *Engine) onTrades(m okx.Message) {
 	}
 	fs := in.flow
 	for _, x := range xs {
-		ts, px, sz := atoi(x["ts"]), atof(x["px"]), atof(x["sz"])
+		ts, px, sz := atoi(x.Ts), atof(x.Px), atof(x.Sz)
 		mt := ts / minuteMs * minuteMs
 		if px <= 0 || sz <= 0 || mt < fs.minute { // late for a closed minute: dropped
 			continue
@@ -114,7 +127,7 @@ func (e *Engine) onTrades(m okx.Message) {
 		q := px * sz * in.CtVal
 		idx := int64(math.Floor(px/fs.step + 1e-9))
 		lv := fs.levels[idx]
-		if x["side"] == "buy" {
+		if x.Side == "buy" {
 			fs.buy += q
 			lv[0] += q
 		} else {
