@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api, type InstrumentInfo } from '../api'
 import { store, setRule, fieldLabel } from '../store'
-import { price, usd, fieldValue, catLabel, time, ago, num } from '../fmt'
+import { price, usd, fieldValue, catLabel, time, ago, num, logPct } from '../fmt'
 import PriceChart from './PriceChart.vue'
 import CompareChart from './CompareChart.vue'
 import SeriesChart from './SeriesChart.vue'
@@ -16,6 +16,21 @@ const panelLabels: Record<string, string> = { head: '行情', score: '评分拆�
 const info = ref<InstrumentInfo | null>(null)
 const err = ref('')
 let timer: number | undefined
+const nowMs = ref(Date.now())
+let clock: number | undefined
+onMounted(() => { clock = window.setInterval(() => (nowMs.value = Date.now()), 1000) })
+onUnmounted(() => clearInterval(clock))
+const base = computed(() => props.id.split('-')[0])
+const ret24 = computed(() => row.value?.values?.ret_24h)
+const ret4 = computed(() => row.value?.values?.ret_4h)
+const chgClass = (v?: number | null) => (v == null || v === 0 ? '' : v > 0 ? 'up' : 'down')
+const countdown = computed(() => {
+  const ft = info.value?.fundingTime
+  if (!ft) return '—'
+  const s = Math.max(0, Math.floor((ft - nowMs.value) / 1000))
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`
+})
 
 async function load() {
   try {
@@ -49,23 +64,51 @@ async function toggleWatch() {
     <DraggablePanels storage-key="ctg.detailLayout" :ids="panelIds" :labels="panelLabels">
       <template #head>
       <div class="head panel">
-        <div class="title">
-          <CoinIcon :inst-id="info.instId" :size="32" />
-          <h2>{{ info.instId }}</h2>
-          <span class="tag">{{ catLabel[info.category] || info.category }}</span>
-          <span class="tag" :class="row?.status === 'live' ? 'good' : 'warn'">{{ statusText[row?.status || ''] || '未知' }}</span>
-          <span class="tag" v-if="row?.active">活跃 #{{ row.rank }}</span>
-          <span class="tag" v-else>非活跃（未达 12h 阈值或数据不全）</span>
-          <button class="watch" @click="toggleWatch">{{ row?.watch ? '★ 已自选' : '☆ 加自选' }}</button>
+        <div class="h-top">
+          <CoinIcon :inst-id="info.instId" :size="36" />
+          <div class="h-name">
+            <div class="h-sym">{{ base }}<span class="h-quote">/USDT</span></div>
+            <div class="h-meta">永续 · {{ catLabel[info.category] || info.category }}</div>
+          </div>
+          <span class="tag" :class="row?.status === 'live' ? 'good' : 'warn'"><span class="dot" :class="row?.status === 'live' ? 'ok' : 'warn'"></span>{{ statusText[row?.status || ''] || '未知' }}</span>
+          <span class="tag info" v-if="row?.active">活跃 #{{ row.rank }}</span>
+          <span class="tag" v-else title="未达 12h 阈值或数据不全">非活跃</span>
+          <button class="watch" :class="{ on: row?.watch }" @click="toggleWatch">{{ row?.watch ? '★ 已自选' : '☆ 自选' }}</button>
         </div>
-        <div class="kv">
-          <div><span class="muted">最新</span><b class="big">{{ price(live) }}</b></div>
-          <div><span class="muted">买/卖</span>{{ price(info.bid) }} / {{ price(info.ask) }}<span class="muted"> ({{ num(spread, 1) }}bps)</span></div>
-          <div><span class="muted">12h 成交额</span>{{ usd(row?.turnover12h) }} USDT</div>
-          <div><span class="muted">OI</span>{{ usd(info.oiUsd) }} USD<span class="muted"> · {{ usd(info.oiCcy) }} 币</span></div>
-          <div><span class="muted">资金费</span>{{ (info.fundingRate * 100).toFixed(4) }}%<span class="muted"> / {{ info.fundingIntervalH || '?' }}h · 结算 {{ time(info.fundingTime) }}</span></div>
-          <div><span class="muted">现货</span>{{ info.spotId ? price(info.spotLast) : '无 OKX USDT 现货映射' }}</div>
-          <div><span class="muted">更新</span>{{ info.tickTs ? ago(info.tickTs) + ' 前' : '—' }}</div>
+
+        <div class="h-price">
+          <span class="px tnum" :class="chgClass(ret24)">{{ price(live) }}</span>
+          <span class="chg" :class="chgClass(ret24)"><small>24h</small>{{ logPct(ret24) }}</span>
+          <span class="chg" :class="chgClass(ret4)"><small>4h</small>{{ logPct(ret4) }}</span>
+          <span class="fresh">{{ info.tickTs ? ago(info.tickTs) + ' 前更新' : '' }}</span>
+        </div>
+
+        <div class="stats">
+          <div class="stat">
+            <div class="l">买一 / 卖一</div>
+            <div class="v tnum">{{ price(info.bid) }} <span class="sep">/</span> {{ price(info.ask) }}</div>
+            <div class="s">点差 {{ num(spread, 1) }} bps</div>
+          </div>
+          <div class="stat">
+            <div class="l">12h 成交额</div>
+            <div class="v tnum">{{ usd(row?.turnover12h) }}<small> USDT</small></div>
+            <div class="s" title="近 4h 成交额 ÷ 过去 7 天 4h 中位数">4h 放量 {{ row?.values?.vol_surprise_4h != null ? '×' + Math.exp(row.values.vol_surprise_4h).toFixed(2) : '—' }}</div>
+          </div>
+          <div class="stat">
+            <div class="l">持仓量 OI</div>
+            <div class="v tnum">{{ usd(info.oiUsd) }}<small> USD</small></div>
+            <div class="s" :title="`${usd(info.oiCcy)} 币（币本位）`">4h <span :class="chgClass(row?.values?.oi_chg_4h)">{{ logPct(row?.values?.oi_chg_4h) }}</span> · {{ usd(info.oiCcy) }} 币</div>
+          </div>
+          <div class="stat">
+            <div class="l">资金费（{{ info.fundingIntervalH || '?' }}h 结算）</div>
+            <div class="v tnum" :class="chgClass(info.fundingRate)">{{ (info.fundingRate * 100).toFixed(4) }}%</div>
+            <div class="s" :title="`结算时间 ${time(info.fundingTime)}`">距结算 {{ countdown }}</div>
+          </div>
+          <div class="stat">
+            <div class="l">OKX 现货</div>
+            <div class="v tnum">{{ info.spotId ? price(info.spotLast) : '—' }}</div>
+            <div class="s">{{ info.spotId ? '基差 ' + fieldValue('basis', row?.values?.basis) : '无同名 USDT 现货' }}</div>
+          </div>
         </div>
       </div>
       </template>
@@ -81,7 +124,8 @@ async function toggleWatch() {
         <div v-if="score" class="sides">
           <div v-for="side in (['long', 'short'] as const)" :key="side" class="side">
             <div class="sh">
-              {{ side === 'long' ? '多头' : '空头' }} <ScoreChip :v="score[side].score" :side="side" />
+              <span class="sl">{{ side === 'long' ? '多头分' : '空头分' }}</span>
+              <span class="sv" :class="score[side].score != null && score[side].score! >= 50 ? side : ''">{{ score[side].score != null ? score[side].score!.toFixed(0) : '—' }}</span>
               <span class="tag bad" v-if="score.gate !== 'PASS'">{{ score.gate.replace('BLOCKED:', '门槛：') }}</span>
             </div>
             <div v-for="c in score[side].contrib || []" :key="c.field" class="contrib">
@@ -136,21 +180,47 @@ async function toggleWatch() {
 
 <style scoped>
 .detail { padding: 12px 12px 12px 16px; }
-.head .title { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.head h2 { margin: 0; font-size: 18px; }
+.head { padding: 16px 18px 14px; }
+.h-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.h-name { display: grid; line-height: 1.2; margin-right: 4px; }
+.h-sym { font-size: var(--fs-2xl); font-weight: 700; color: var(--text-1); letter-spacing: .2px; }
+.h-quote { font-size: var(--fs-lg); font-weight: 500; color: var(--text-3); margin-left: 2px; }
+.h-meta { font-size: var(--fs-xs); color: var(--text-3); }
 .watch { margin-left: auto; }
-.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px 16px; margin-top: 8px; }
-.kv > div { display: flex; gap: 6px; align-items: baseline; }
-.big { font-size: 18px; }
+.h-price { display: flex; align-items: baseline; gap: 10px; margin: 14px 0 16px; flex-wrap: wrap; }
+.px { font-size: var(--fs-3xl); font-weight: 700; line-height: 1; letter-spacing: -.3px; color: var(--text-1); }
+.chg { font-size: var(--fs-md); font-weight: 600; padding: 2px 8px; border-radius: 4px; background: var(--bg-3); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.chg.up { background: var(--up-bg); } .chg.down { background: var(--down-bg); }
+.chg small { font-size: var(--fs-xs); font-weight: 500; opacity: .75; margin-right: 4px; }
+.fresh { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); }
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--line); padding-top: 12px; gap: 12px 0; }
+.stat { padding: 0 14px; border-left: 1px solid var(--line); min-width: 0; }
+.stat:first-child { padding-left: 0; border-left: none; }
+.stat .l { font-size: var(--fs-xs); color: var(--text-3); margin-bottom: 4px; white-space: nowrap; }
+.stat .v { font-size: var(--fs-lg); font-weight: 600; color: var(--text-1); white-space: nowrap; }
+.stat .v.up { color: var(--up); } .stat .v.down { color: var(--down); }
+.stat .v small { font-size: var(--fs-xs); font-weight: 500; color: var(--text-3); }
+.stat .v .sep { color: var(--text-3); font-weight: 400; }
+.stat .s { font-size: var(--fs-xs); color: var(--text-2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .small { font-size: 12px; font-weight: 400; }
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.side .sh { font-weight: 600; margin-bottom: 6px; display: flex; gap: 6px; align-items: center; }
-.contrib { display: grid; grid-template-columns: 90px 70px 56px 1fr 44px; gap: 6px; align-items: center; font-size: 12px; padding: 2px 0; }
-.barwrap { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; }
+.side .sh { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.sl { font-size: var(--fs-sm); color: var(--text-3); }
+.sv { font-size: var(--fs-3xl); font-weight: 700; line-height: 1; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.sv.long { color: var(--up); } .sv.short { color: var(--down); }
+.contrib { display: grid; grid-template-columns: 96px 72px 56px 1fr 48px; gap: 8px; align-items: center; font-size: var(--fs-sm); padding: 3px 0; }
+.contrib .f { color: var(--text-1); } .contrib .v { color: var(--text-2); font-variant-numeric: tabular-nums; } .contrib .p { color: var(--text-3); }
+.pts { font-weight: 600; }
+.barwrap { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
 .bar { display: block; height: 100%; }
 .bar.pos { background: var(--up); } .bar.neg { background: var(--down); }
 .wrap { white-space: normal; }
 .pad { padding: 16px; }
-@media (max-width: 900px) { .sides { grid-template-columns: 1fr; } .detail { padding: 8px; } }
+@media (max-width: 900px) {
+  .sides { grid-template-columns: 1fr; } .detail { padding: 8px; }
+  .stats { grid-template-columns: 1fr 1fr; gap: 14px 12px; }
+  .stat, .stat:first-child { padding: 0; border-left: none; }
+  .px { font-size: 26px; }
+}
 </style>

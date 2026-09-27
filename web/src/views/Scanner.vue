@@ -171,18 +171,18 @@ const cols = [
               <td>
                 <span class="dot" :class="r.status === 'live' ? 'ok' : r.status === 'stale' ? 'bad' : 'warn'" :title="r.status"></span>
                 <CoinIcon :inst-id="r.instId" class="ic" />
-                <b>{{ sym(r.instId) }}</b>
+                <b class="symb">{{ sym(r.instId) }}</b>
                 <span class="tag" v-if="r.category !== '1'">{{ catLabel[r.category] }}</span>
                 <span class="tag" v-if="!r.active">非活跃</span>
                 <span class="tag bad" v-if="r.scores?.[store.ruleId]?.gate?.startsWith('BLOCKED')" :title="r.scores?.[store.ruleId]?.gate">门槛</span>
               </td>
               <td class="num"><ScoreChip :v="scoreOf(r, 'long')" side="long" /></td>
               <td class="num"><ScoreChip :v="scoreOf(r, 'short')" side="short" /></td>
-              <td class="num">{{ price(livePrice(r)) }}</td>
-              <td v-for="[k] in cols" :key="k" class="num" :class="k === 'funding_hourly' ? '' : sign(r.values?.[k] ?? 0)">
+              <td class="num px">{{ price(livePrice(r)) }}</td>
+              <td v-for="[k] in cols" :key="k" class="num" :class="k === 'funding_hourly' || k === 'vol_surprise_4h' ? 'sec' : sign(r.values?.[k] ?? 0)">
                 {{ k === 'funding_hourly' ? fundingH(r.values?.[k]) : k === 'vol_surprise_4h' ? (r.values?.[k] != null ? '×' + Math.exp(r.values[k]).toFixed(2) : '—') : logPct(r.values?.[k]) }}
               </td>
-              <td class="num">{{ usd(r.turnover12h) }}<span v-if="r.provisional" class="muted">*</span></td>
+              <td class="num sec">{{ usd(r.turnover12h) }}<span v-if="r.provisional" class="muted">*</span></td>
             </tr>
           </tbody>
         </table>
@@ -219,12 +219,12 @@ const cols = [
 </template>
 
 <style scoped>
-.scanner { display: grid; grid-template-columns: minmax(640px, 46%) 6px 1fr; height: calc(100vh - 45px); }
+.scanner { display: grid; grid-template-columns: minmax(760px, 50%) 6px 1fr; height: calc(100vh - 45px); }
 .scanner.narrow { display: block; height: auto; }
 .divider { cursor: col-resize; background: var(--line); opacity: 0.5; transition: background 0.15s; }
 .divider:hover { background: var(--accent); opacity: 1; }
 .list { display: flex; flex-direction: column; min-height: 0; }
-.controls { padding: 10px 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+.controls { padding: 12px 14px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); background: var(--bg-1); }
 .controls .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .seg { display: inline-flex; }
 .seg button { border-radius: 0; margin-left: -1px; }
@@ -234,10 +234,18 @@ const cols = [
 .tablewrap { overflow: auto; flex: 1; }
 thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 .sortable { cursor: pointer; user-select: none; }
-tbody tr { cursor: pointer; }
-tbody tr:hover { background: var(--panel2); }
-tbody tr.sel { background: #1f2a40; }
-tbody tr.inactive { opacity: 0.7; }
+tbody td, thead th { padding: 0 6px; }
+tbody td:last-child, thead th:last-child { padding-right: 12px; }
+thead th { height: 32px; border-bottom: 1px solid var(--line-2); }
+tbody tr { cursor: pointer; height: 36px; }
+tbody td { border-bottom-color: rgba(34, 40, 52, 0.6); }
+tbody tr:hover { background: var(--bg-2); }
+tbody tr.sel { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
+tbody tr.inactive { opacity: 0.6; }
+.symb { font-weight: 600; font-size: var(--fs-md); color: var(--text-1); }
+td.px { color: var(--text-1); font-weight: 500; }
+td.sec { color: var(--text-2); }
+td.up { color: var(--up); } td.down { color: var(--down); }
 .ic { margin: 0 4px 0 2px; }
 .star { color: var(--muted); cursor: pointer; width: 18px; }
 .star.on { color: #f5c542; }
