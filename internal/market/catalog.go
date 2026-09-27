@@ -186,7 +186,13 @@ func (e *Engine) syncInst(ctx context.Context, id string) {
 		set("历史下载失败：" + err.Error())
 		return
 	}
-	set(fmt.Sprintf("已就绪（本次补 %d 根 1m）", n))
+	nf, err := e.backfillFlow(ctx, id, set)
+	if err != nil {
+		log.Printf("orderflow backfill %s: %v", id, err)
+		set(fmt.Sprintf("已就绪（本次补 %d 根 1m；订单流回补中断：%v）", n, err))
+		return
+	}
+	set(fmt.Sprintf("已就绪（本次补 %d 根 1m、%d 分钟订单流）", n, nf))
 }
 
 // historyFill pages /market/history-candles backwards until `keep` of 1m bars is stored. With

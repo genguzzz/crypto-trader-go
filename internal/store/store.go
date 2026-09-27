@@ -569,6 +569,31 @@ func (s *Store) Flow(instID string, from, to int64, withLevels bool) ([]FlowRow,
 	return out, rows.Err()
 }
 
+// FlowMinutes returns the set of stored minute timestamps in [from, to].
+func (s *Store) FlowMinutes(instID string, from, to int64) (map[int64]bool, error) {
+	rows, err := s.DB.Query(`SELECT ts FROM orderflow_1m WHERE inst_id=? AND ts>=? AND ts<=?`, instID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var ts int64
+		if err := rows.Scan(&ts); err != nil {
+			return nil, err
+		}
+		out[ts] = true
+	}
+	return out, rows.Err()
+}
+
+// LastFlowStep is the footprint level size of the newest stored minute (0 = none).
+func (s *Store) LastFlowStep(instID string) float64 {
+	var step float64
+	_ = s.DB.QueryRow(`SELECT step FROM orderflow_1m WHERE inst_id=? AND step>0 ORDER BY ts DESC LIMIT 1`, instID).Scan(&step)
+	return step
+}
+
 type TakerRow struct {
 	Ts        int64
 	Buy, Sell float64

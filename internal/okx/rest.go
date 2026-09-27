@@ -61,6 +61,7 @@ type REST struct {
 	books    *Limiter // /market/books 40/2s
 	rubik    *Limiter // /rubik/* 5/2s
 	fundHist *Limiter // /public/funding-rate-history 10/2s
+	trades   *Limiter // /market/history-trades 20/2s
 	misc     *Limiter // instruments/tickers/oi/funding 20/2s
 
 	Requests atomic.Int64
@@ -77,6 +78,7 @@ func NewREST() *REST {
 		books:    NewLimiter(20, 2*time.Second),
 		rubik:    NewLimiter(4, 2*time.Second),
 		fundHist: NewLimiter(8, 2*time.Second),
+		trades:   NewLimiter(12, 2*time.Second),
 		misc:     NewLimiter(10, 2*time.Second),
 	}
 }
