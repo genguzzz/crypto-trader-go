@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Radar, FlaskConical, Wallet, SlidersHorizontal, Activity } from 'lucide-vue-next'
+import { Radar, FlaskConical, BellRing, Wallet, SlidersHorizontal, Activity } from 'lucide-vue-next'
 import { store } from './store'
 import LayoutMenu from './components/LayoutMenu.vue'
 import CoinIcon from './components/CoinIcon.vue'
@@ -17,6 +17,7 @@ const phase = computed(() => {
 const nav = [
   { to: '/', label: '扫描', icon: Radar, exact: true },
   { to: '/rules', label: '规则与战绩', short: '规则', icon: FlaskConical },
+  { to: '/alerts', label: '监控', icon: BellRing },
   { to: '/positions', label: '仓位', icon: Wallet },
   { to: '/settings', label: '设置', icon: SlidersHorizontal },
   { to: '/status', label: '系统', icon: Activity },
@@ -135,7 +136,7 @@ const pulse = computed(() =>
   .nav { display: none; }
   .word small { display: none; }
   .tabbar {
-    display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); background: rgba(0, 0, 0, .94); backdrop-filter: blur(10px);
     border-top: 1px solid var(--line);
   }
