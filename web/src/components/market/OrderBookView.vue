@@ -11,15 +11,15 @@ import DepthChart from '../charts/DepthChart.vue'
 const props = withDefaults(defineProps<{ id: string; compact?: boolean }>(), { compact: false })
 const { data: book, error } = usePolling(() => api.orderbook(props.id), 1000)
 
-const ranges = [0.5, 1, 2, 5]
-const pick = ref(Number(localStorage.getItem('ctg.depthRange')) || 2)
-function setRange(r: number) { pick.value = r; localStorage.setItem('ctg.depthRange', String(r)) }
-// OKX publishes at most 5000 levels per side; a range is usable when the book reaches half of it
-const cover = computed(() => (book.value?.levels ? Math.min(book.value.coverBid, book.value.coverAsk) : Infinity))
-const usable = (r: number) => cover.value >= r * 0.5
-const range = computed(() => (usable(pick.value) ? pick.value : [...ranges].reverse().find(usable) ?? ranges[0]))
-const rangeOpts = computed(() => ranges.map(r => ({ value: r, label: `±${r}%`, disabled: !usable(r), title: usable(r) ? undefined : `盘口数据只覆盖约 ±${cover.value.toFixed(2)}%` })))
-
+// One view instead of range buttons: as deep as the fetched book reaches, capped at ±5%
+// (OKX books-full gives ≤5000 levels per side; BTC covers ~±1%, thin alts reach 5%).
+const MAX_RANGE = 5
+const cover = computed(() => (book.value?.levels ? Math.min(book.value.coverBid, book.value.coverAsk) : MAX_RANGE))
+const range = computed(() => {
+  const r = Math.min(MAX_RANGE, cover.value)
+  const step = r >= 2 ? 0.5 : r >= 0.5 ? 0.1 : 0.01 // round down so axis ticks stay readable
+  return Math.max(step, Math.floor(r / step + 1e-9) * step)
+})
 const bids = computed(() => (book.value ? cumulative(book.value.bids, book.value.mid, book.value.ctVal) : []))
 const asks = computed(() => (book.value ? cumulative(book.value.asks, book.value.mid, book.value.ctVal) : []))
 const table = computed(() => {
@@ -55,8 +55,8 @@ const ladderMax = computed(() => Math.max(ladderAsks.value[0]?.cum || 0, ladderB
       </div>
 
       <div class="depth-head">
-        <span class="t">深度图 <small>USDT 累计 · 悬浮查看推动价格所需资金<template v-if="book.levels"> · 数据覆盖 −{{ book.coverBid.toFixed(2) }}% / +{{ book.coverAsk.toFixed(2) }}%（{{ book.levels }} 档）</template></small></span>
-        <Segmented :model-value="range" size="sm" aria-label="深度范围" :options="rangeOpts" @update:model-value="setRange" />
+        <span class="t">深度图 <small>±{{ +range.toFixed(2) }}% · USDT 累计</small>
+          <InfoTip>横轴为距中间价的百分比，纵轴为累计挂单 USDT。范围自动取 <b>±5%</b> 与盘口数据覆盖范围中较小者<template v-if="book.levels">（当前覆盖 −{{ book.coverBid.toFixed(2) }}% / +{{ book.coverAsk.toFixed(2) }}%，{{ book.levels }} 档）</template>。悬浮或点按图表查看把价格推到该处需要吃掉多少资金。</InfoTip></span>
       </div>
       <DepthChart :bids="bids" :asks="asks" :mid="book.mid" :range="range" :height="compact ? 200 : 260" />
 
@@ -102,7 +102,7 @@ const ladderMax = computed(() => Math.max(ladderAsks.value[0]?.cum || 0, ladderB
 .imb .bar i { display: block; height: 100%; background: var(--up); }
 .live { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); display: inline-flex; align-items: center; gap: 4px; }
 .depth-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.depth-head .t { font-weight: 600; } .depth-head small { font-weight: 400; color: var(--text-3); margin-left: 6px; }
+.depth-head .t { font-weight: 600; display: inline-flex; align-items: center; gap: 4px; } .depth-head small { font-weight: 400; color: var(--text-3); margin-left: 6px; }
 .grid2 { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start; }
 .dtab td { height: 30px; } .dtab .gt { color: var(--warn); margin-left: 1px; }
 .ladder { font-size: var(--fs-sm); }

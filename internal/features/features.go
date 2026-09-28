@@ -48,6 +48,15 @@ var Fields = []Field{
 	{"basis", "期现基差", "log", "log(永续价/OKX 同名 USDT 现货价)；无现货映射为未知（仅实时）", false},
 	{"spread_bps", "点差", "bps", "(ask−bid)/mid，成本 gate 用（仅实时）", false},
 	{"turnover12h", "12h 成交额", "USDT", "连续 720 根已确认 1m K 线 volCcyQuote 之和", false},
+	// Research additions 2026-09-28 (docs/research-trend-signals.md). Direction-free like the rest;
+	// whether any of them predicts anything is decided only by the rule track record.
+	{"beta_btc_48h", "BTC β 48h", "x", "过去 48 根 1H 对数收益对 BTC-USDT-SWAP 的回归斜率（跟随大盘的倍数）", true},
+	{"resid_1h", "残差收益 1h", "log", "ret_1h − β×BTC 同期收益：剔除大盘带动后的自身涨跌（β 中性相对强弱）", true},
+	{"resid_4h", "残差收益 4h", "log", "ret_4h − β×BTC 同期收益", true},
+	{"trend_ema", "EMA 趋势", "z", "(EMA8 − EMA24)（1H 收盘）÷ 价格 ÷ 1H 收益标准差：按波动率归一化的均线趋势（MACD 类，参见 Baz 等 2015）", true},
+	{"eff_ratio_24h", "趋势效率 24h", "0–1", "Kaufman 效率比：|24h 净变动| ÷ 24 根 1H 变动绝对值之和；1 = 单边直线，0 = 来回震荡", true},
+	{"ret_15m", "15m 涨跌", "log", "永续收盘对数收益，15 分钟（仅实时：回放只有整点数据）", false},
+	{"resid_15m", "残差收益 15m", "log", "ret_15m − β×BTC 同期收益（仅实时）", false},
 }
 
 var fieldIndex = func() map[string]Field {
@@ -88,23 +97,63 @@ func Compute(s Series, btc Series, t int64) Values {
 			v["excess_btc_4h"] = r4 - math.Log(b0/b4)
 		}
 	}
-	// hourly volatility over past 48h (hour-aligned closes ending at t's hour floor)
-	if r4, ok := v["ret_4h"]; ok {
-		h0 := t - t%Hour
-		var rets []float64
-		prev, okp := s.Close(h0 - 48*Hour)
-		for k := int64(47); k >= 0 && okp; k-- {
-			c, ok := s.Close(h0 - k*Hour)
-			if !ok || c <= 0 || prev <= 0 {
-				okp = false
-				break
-			}
-			rets = append(rets, math.Log(c/prev))
-			prev = c
+	// hourly closes over the past 48h (hour-aligned, ending at t's hour floor), plus t itself when
+	// t is inside an hour (live): volatility, beta and the EMA trend read these
+	h0 := t - t%Hour
+	cs := hourlyCloses(s, h0)
+	var bcs []float64
+	if btc != nil {
+		bcs = hourlyCloses(btc, h0)
+	}
+	var sd float64
+	if cs != nil {
+		sd = stdev(logRets(cs))
+	}
+	if r4, ok := v["ret_4h"]; ok && sd > 1e-9 { // guard against float noise on flat/constant series
+		v["trend_z_4h"] = r4 / (sd * 2)
+	}
+	if cs != nil && sd > 1e-9 {
+		px := cs
+		if t != h0 {
+			px = append(append([]float64(nil), cs...), c0)
 		}
-		if okp && len(rets) == 48 {
-			if sd := stdev(rets); sd > 1e-9 { // guard against float noise on flat/constant series
-				v["trend_z_4h"] = r4 / (sd * 2)
+		v["trend_ema"] = (ema(px, 8) - ema(px, 24)) / c0 / sd
+	}
+	// efficiency ratio over the 24 hours ending at t, from closes at t−k·1h
+	w := make([]float64, 0, 25)
+	for k := int64(24); k >= 0; k-- {
+		c, ok := s.Close(t - k*Hour)
+		if !ok || c <= 0 {
+			w = nil
+			break
+		}
+		w = append(w, c)
+	}
+	if w != nil {
+		path := 0.0
+		for i := 1; i < len(w); i++ {
+			path += math.Abs(w[i] - w[i-1])
+		}
+		if path > 0 {
+			v["eff_ratio_24h"] = math.Abs(w[len(w)-1]-w[0]) / path
+		}
+	}
+	if c15, ok := s.Close(t - 15*Minute); ok && c15 > 0 {
+		v["ret_15m"] = math.Log(c0 / c15)
+	}
+	if cs != nil && bcs != nil {
+		if beta, ok := slope(logRets(bcs), logRets(cs)); ok {
+			v["beta_btc_48h"] = beta
+			b0, ok0 := btc.Close(t)
+			for _, x := range []struct {
+				key, ret string
+				d        int64
+			}{{"resid_15m", "ret_15m", 15 * Minute}, {"resid_1h", "ret_1h", Hour}, {"resid_4h", "ret_4h", 4 * Hour}} {
+				r, ok1 := v[x.ret]
+				bp, ok2 := btc.Close(t - x.d)
+				if ok0 && ok1 && ok2 && b0 > 0 && bp > 0 {
+					v[x.key] = r - beta*math.Log(b0/bp)
+				}
 			}
 		}
 	}
@@ -147,6 +196,60 @@ func Percentiles(pool []float64) func(float64) float64 {
 		hi := sort.Search(len(xs), func(i int) bool { return xs[i] > x })
 		return (float64(lo) + float64(hi-lo)/2) / n * 100
 	}
+}
+
+// hourlyCloses returns the 49 closes at h0−48h … h0, or nil if any is missing.
+func hourlyCloses(s Series, h0 int64) []float64 {
+	out := make([]float64, 0, 49)
+	for k := int64(48); k >= 0; k-- {
+		c, ok := s.Close(h0 - k*Hour)
+		if !ok || c <= 0 {
+			return nil
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func logRets(cs []float64) []float64 {
+	out := make([]float64, 0, len(cs))
+	for i := 1; i < len(cs); i++ {
+		out = append(out, math.Log(cs[i]/cs[i-1]))
+	}
+	return out
+}
+
+// ema of the series with span n (α = 2/(n+1)), seeded with the first value.
+func ema(x []float64, n int) float64 {
+	a := 2 / float64(n+1)
+	e := x[0]
+	for _, v := range x[1:] {
+		e += a * (v - e)
+	}
+	return e
+}
+
+// slope is the OLS slope of y on x (beta); false when x has no variance.
+func slope(x, y []float64) (float64, bool) {
+	if len(x) != len(y) || len(x) < 2 {
+		return 0, false
+	}
+	mx, my := 0.0, 0.0
+	for i := range x {
+		mx += x[i]
+		my += y[i]
+	}
+	mx /= float64(len(x))
+	my /= float64(len(y))
+	cov, vx := 0.0, 0.0
+	for i := range x {
+		cov += (x[i] - mx) * (y[i] - my)
+		vx += (x[i] - mx) * (x[i] - mx)
+	}
+	if vx < 1e-12 {
+		return 0, false
+	}
+	return cov / vx, true
 }
 
 func stdev(x []float64) float64 {

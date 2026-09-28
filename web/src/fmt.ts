@@ -31,7 +31,8 @@ export function fieldValue(key: string, v?: number | null) {
     case 'turnover12h': return usd(v)
     case 'funding_hourly': case 'funding_pred_hourly': return fundingH(v) + '/h'
     case 'spread_bps': return v.toFixed(1) + 'bps'
-    case 'trend_z_4h': return v.toFixed(2)
+    case 'trend_z_4h': case 'trend_ema': case 'eff_ratio_24h': return v.toFixed(2)
+    case 'beta_btc_48h': return v.toFixed(2) + 'β'
     case 'vol_surprise_4h': return '×' + Math.exp(v).toFixed(2)
     default: return logPct(v)
   }

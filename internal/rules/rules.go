@@ -148,5 +148,21 @@ func Presets() []Rule {
 			Long:        map[string]float64{"funding_hourly": 1},
 			Short:       map[string]float64{"funding_hourly": -1},
 			Gates:       Gates{MaxSpreadBps: 15}},
+		// 2026-09-28 research baselines (docs/research-trend-signals.md), also unvalidated.
+		{ID: "resid-reversal", Name: "残差反转（β 中性）", Version: 1, Preset: true,
+			Description: "剔除 BTC 带动（按 48h β）后，自身 1h/4h 跌得多的看多、涨得多的看空。短期反转 + 残差化（Blitz 等 2011），用来检验山寨相对大盘的超涨超跌是否回归。",
+			Long:        map[string]float64{"resid_4h": -0.6, "resid_1h": -0.4},
+			Short:       map[string]float64{"resid_4h": 0.6, "resid_1h": 0.4},
+			Gates:       Gates{MaxSpreadBps: 15}},
+		{ID: "ema-trend", Name: "趋势跟随（EMA + 效率比）", Version: 1, Preset: true,
+			Description: "时间序列动量：波动率归一化的 EMA8−EMA24（Baz 等 2015 的 MACD 类信号），并偏好走得干脆（Kaufman 效率比高）的币。经典 CTA 做法，文献中在日/周级有效，小时级待检验。",
+			Long:        map[string]float64{"trend_ema": 0.7, "eff_ratio_24h": 0.3},
+			Short:       map[string]float64{"trend_ema": -0.7, "eff_ratio_24h": 0.3},
+			Gates:       Gates{MaxSpreadBps: 15}},
+		{ID: "fast-resid-momentum", Name: "快速残差动量（15m，仅实时）", Version: 1, Preset: true,
+			Description: "15 分钟与 1 小时 β 中性残差收益越强越看多。反应最快的一条，但 15m 字段回放中没有，只能积累上线后战绩；若战绩显示方向相反，就是短线反转。",
+			Long:        map[string]float64{"resid_15m": 0.6, "resid_1h": 0.4},
+			Short:       map[string]float64{"resid_15m": -0.6, "resid_1h": -0.4},
+			Gates:       Gates{MaxSpreadBps: 15}},
 	}
 }
