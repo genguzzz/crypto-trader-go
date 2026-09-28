@@ -36,8 +36,8 @@ func TestRefreshBySymbolKeepsPreviousOnFailedBatch(t *testing.T) {
 	c := New(srv.Client())
 	c.URL, c.Pause, c.Backoff = srv.URL, 0, 0
 	c.Save = func(s string) error { saved = s; return nil }
-	if err := c.refresh(context.Background(), []string{"BTC", "xdp", "DOGE"}); err != nil {
-		t.Fatal(err)
+	if failed, err := c.refresh(context.Background(), []string{"BTC", "xdp", "DOGE"}); err != nil || len(failed) != 0 {
+		t.Fatal(err, failed)
 	}
 	if x, ok := c.Get("btc"); !ok || x.ID != "bitcoin" || x.Total != 20 || x.Max != 21 || x.Rank != 1 {
 		t.Fatalf("btc: %+v %v", x, ok)
@@ -52,8 +52,8 @@ func TestRefreshBySymbolKeepsPreviousOnFailedBatch(t *testing.T) {
 		t.Fatalf("snapshot not saved: %q", saved)
 	}
 	fail = true // rate limited: previous figures must survive
-	if err := c.refresh(context.Background(), []string{"BTC"}); err == nil {
-		t.Fatal("expected error when every batch fails")
+	if failed, err := c.refresh(context.Background(), []string{"BTC"}); err == nil || len(failed) != 1 || failed[0] != "btc" {
+		t.Fatalf("expected the failed batch back: %v %v", failed, err)
 	}
 	if x, ok := c.Get("BTC"); !ok || x.MarketCap != 100 {
 		t.Fatalf("previous entry lost: %+v", x)

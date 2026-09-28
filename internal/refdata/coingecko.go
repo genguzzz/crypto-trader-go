@@ -56,7 +56,6 @@ type Cache struct {
 
 	mu sync.RWMutex
 	by map[string]Coin // upper-case symbol → coin
-	at time.Time
 }
 
 func New(client *http.Client) *Cache {
@@ -83,18 +82,22 @@ func (c *Cache) Run(ctx context.Context) {
 			}
 		}
 	}
+	var retry []string // symbols of rate-limited batches: retried soon, alone
 	for {
-		if syms := c.Symbols(); len(syms) > 0 { // empty until the instrument list is loaded
-			if err := c.refresh(ctx, syms); err != nil {
+		wait := every
+		if len(retry) > 0 {
+			retry, _ = c.refresh(ctx, retry)
+		} else if syms := c.Symbols(); len(syms) > 0 { // empty until the instrument list is loaded
+			var err error
+			if retry, err = c.refresh(ctx, syms); err != nil {
 				log.Printf("coingecko: %v", err)
 			}
+		} else {
+			wait = 30 * time.Second
 		}
-		wait := every
-		c.mu.RLock()
-		if c.at.IsZero() {
-			wait = 30 * time.Second // not refreshed yet: retry soon
+		if len(retry) > 0 {
+			wait = 3 * time.Minute
 		}
-		c.mu.RUnlock()
 		select {
 		case <-ctx.Done():
 			return
@@ -103,9 +106,9 @@ func (c *Cache) Run(ctx context.Context) {
 	}
 }
 
-// refresh queries every symbol in batches. A failed batch keeps its previous entries, so a
-// rate-limited run never blanks figures that were already known.
-func (c *Cache) refresh(ctx context.Context, syms []string) error {
+// refresh queries the symbols in batches and returns those of failed batches. A failed batch
+// keeps its previous entries, so a rate-limited run never blanks figures already known.
+func (c *Cache) refresh(ctx context.Context, syms []string) (failedSyms []string, err error) {
 	uniq := map[string]bool{}
 	for _, s := range syms {
 		uniq[strings.ToLower(s)] = true
@@ -141,9 +144,10 @@ func (c *Cache) refresh(ctx context.Context, syms []string) error {
 		q := url.Values{"vs_currency": {"usd"}, "symbols": {strings.Join(part, ",")}, "include_tokens": {"top"}, "per_page": {"250"}}
 		if err := c.get(ctx, c.URL+"?"+q.Encode(), &raw); err != nil {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return nil, ctx.Err()
 			}
 			failed++
+			failedSyms = append(failedSyms, part...)
 			log.Printf("coingecko batch %d/%d: %v (keeping previous entries)", i/batch+1, (len(list)+batch-1)/batch, err)
 			continue
 		}
@@ -164,15 +168,15 @@ func (c *Cache) refresh(ctx context.Context, syms []string) error {
 		}
 		select { // free tier: ~30 calls/min; stay far below
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(c.Pause):
 		}
 	}
 	if got == 0 && failed > 0 {
-		return fmt.Errorf("all %d batches failed", failed)
+		return failedSyms, fmt.Errorf("all %d batches failed", failed)
 	}
 	c.mu.Lock()
-	c.by, c.at = by, time.Now()
+	c.by = by
 	c.mu.Unlock()
 	if c.Save != nil {
 		if b, err := json.Marshal(by); err == nil {
@@ -182,7 +186,7 @@ func (c *Cache) refresh(ctx context.Context, syms []string) error {
 		}
 	}
 	log.Printf("coingecko: %d/%d symbols (%d batches failed)", got, len(list), failed)
-	return nil
+	return failedSyms, nil
 }
 
 func (c *Cache) get(ctx context.Context, u string, out any) error {
