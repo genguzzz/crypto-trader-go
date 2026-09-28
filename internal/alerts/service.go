@@ -85,7 +85,7 @@ type Service struct {
 func New(st *store.Store, env Env, client *http.Client) (*Service, error) {
 	s := &Service{st: st, env: env, rules: map[int64]*compiled{}, state: map[store.AlertKey]bool{}, last: map[store.AlertKey]int64{},
 		queue: make(chan job, queueSize),
-		send:  sender{client: client, telegramBase: "https://api.telegram.org", attempts: 3, timeout: 10 * time.Second, backoff: 2 * time.Second}}
+		send:  sender{client: client, hook: PublicOnlyClient(), telegramBase: "https://api.telegram.org", attempts: 3, timeout: 10 * time.Second, backoff: 2 * time.Second}}
 	if raw, ok := st.Setting(settingKey); ok {
 		if err := json.Unmarshal([]byte(raw), &s.ch); err != nil {
 			log.Printf("alerts: ignoring unreadable channel config")
