@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"crypto-trader-go/internal/features"
@@ -283,6 +284,11 @@ func (e *Engine) buildRow(in *Inst, m, now int64) Row {
 	if in.lastBar > 0 {
 		r.Freshness = now - (in.lastBar + minuteMs)
 	}
+	if e.Ref != nil && in.Category == "1" {
+		if c, ok := e.Ref.Get(strings.SplitN(in.ID, "-", 2)[0]); ok {
+			r.MarketCap = c.MarketCap
+		}
+	}
 	switch {
 	case in.ListTime > m-719*minuteMs:
 		r.Status = "new"
@@ -306,4 +312,17 @@ func (e *Engine) buildRow(in *Inst, m, now int64) Row {
 		in.liveValues(r.Values, r.Turnover12h)
 	}
 	return r
+}
+
+// CryptoBases lists the base currencies of every crypto perpetual (market cap lookups).
+func (e *Engine) CryptoBases() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make([]string, 0, len(e.insts))
+	for id, in := range e.insts {
+		if in.Category == "1" {
+			out = append(out, strings.SplitN(id, "-", 2)[0])
+		}
+	}
+	return out
 }

@@ -69,6 +69,9 @@ func main() {
 
 	eng := market.New(cfg, okx.NewREST(), st)
 	eng.Ref = refdata.New(okx.HTTPClient())
+	eng.Ref.Symbols = eng.CryptoBases
+	eng.Ref.Load = func() (string, bool) { return st.Setting("refdata.coingecko") }
+	eng.Ref.Save = func(s string) error { return st.PutSetting("refdata.coingecko", s) }
 	go eng.Ref.Run(ctx)
 	if err := eng.Start(ctx); err != nil {
 		log.Fatal(err)
