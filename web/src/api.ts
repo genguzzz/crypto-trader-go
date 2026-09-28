@@ -7,7 +7,7 @@ export interface Row {
   active: boolean; rank?: number; turnover12h: number; provisional?: boolean; have: number
   last: number; values: Record<string, number> | null; pct: Record<string, number> | null
   scores?: Record<string, Score>; watch?: boolean; hasSpot: boolean; listTime: number; freshnessMs: number
-  eligible?: boolean
+  eligible?: boolean; mcap?: number
 }
 export interface Removed { instId: string; reason: string; at: number; turnover12h: number }
 export interface Coverage { eligible: number; ready: number; warming: number; stale: number; new: number; active: number }
