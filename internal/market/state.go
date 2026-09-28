@@ -45,6 +45,9 @@ type Inst struct {
 	fund fundingState
 
 	last, bid, ask float64
+	open24h        float64 // WS tickers (rolling 24h)
+	high24h        float64
+	low24h         float64
 	tickTs         int64
 	spotLast       float64
 	spotTs         int64
@@ -159,6 +162,17 @@ func (in *Inst) addOI(x store.OISample) {
 // window12h returns the 720-minute turnover ending with bar open m, and whether all bars exist.
 func (in *Inst) window12h(m int64) (sum float64, have int) {
 	for ts := m - 719*minuteMs; ts <= m; ts += minuteMs {
+		if b, ok := in.bars.get(ts); ok {
+			sum += b.Quote
+			have++
+		}
+	}
+	return
+}
+
+// window24h sums the USDT turnover of the last 1440 confirmed 1m bars ending at m.
+func (in *Inst) window24h(m int64) (sum float64, have int) {
+	for ts := m - 1439*minuteMs; ts <= m; ts += minuteMs {
 		if b, ok := in.bars.get(ts); ok {
 			sum += b.Quote
 			have++

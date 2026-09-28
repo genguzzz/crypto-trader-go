@@ -292,6 +292,12 @@ type InstrumentInfo struct {
 	Ask         float64       `json:"ask"`
 	TickTs      int64         `json:"tickTs"`
 	SpotLast    float64       `json:"spotLast,omitempty"`
+	Open24h     float64       `json:"open24h,omitempty"`
+	High24h     float64       `json:"high24h,omitempty"`
+	Low24h      float64       `json:"low24h,omitempty"`
+	Turnover24h float64       `json:"turnover24h,omitempty"` // USDT, sum of 1440 recorded 1m bars (0 if incomplete)
+	MarkPx      float64       `json:"markPx,omitempty"`
+	IndexPx     float64       `json:"indexPx,omitempty"`
 	FundingRate float64       `json:"fundingRate"`
 	FundingTime int64         `json:"fundingTime"`
 	IntervalH   float64       `json:"fundingIntervalH"`
@@ -318,8 +324,15 @@ func (e *Engine) Instrument(id string) (InstrumentInfo, bool) {
 	info := InstrumentInfo{InstID: id, Category: in.Category, SpotID: in.SpotID, ListTime: in.ListTime, Last: in.price(),
 		Bid: in.bid, Ask: in.ask, TickTs: max(in.tickTs, in.liveRecv), SpotLast: in.spotLast, FundingRate: in.fund.Rate,
 		FundingTime: in.fund.FundingTime, IntervalH: in.fund.IntervalH, OiCcy: in.oiNow.OiCcy, OiUsd: in.oiNow.OiUsd, OiTs: in.oiNow.Ts,
-		Watch: e.watch[id], Eligible: in.Eligible, Tier: tierNames[e.tierOf(id, time.Now().UnixMilli())], Syncing: in.syncing, SyncMsg: in.syncMsg}
+		Watch: e.watch[id], Eligible: in.Eligible, Tier: tierNames[e.tierOf(id, time.Now().UnixMilli())], Syncing: in.syncing, SyncMsg: in.syncMsg,
+		Open24h: in.open24h, High24h: in.high24h, Low24h: in.low24h}
+	if in.lastBar > 0 {
+		if sum, have := in.window24h(in.lastBar); have == 1440 {
+			info.Turnover24h = sum
+		}
+	}
 	e.mu.RUnlock()
+	info.MarkPx, info.IndexPx = e.markIndex(id)
 	if e.Ref != nil && info.Category == "1" {
 		if c, ok := e.Ref.Get(strings.SplitN(id, "-", 2)[0]); ok {
 			info.Coin = &c
@@ -447,4 +460,31 @@ func (e *Engine) Status() Status {
 		Replay: e.replayMsg.Load().(string), History: e.historyMsg.Load().(string), DB: counts,
 		Config: map[string]any{"threshold": e.conf().Threshold, "topN": e.conf().TopN, "categories": cats, "replayHours": e.conf().ReplayHours,
 			"storageCapMB": e.conf().StorageCap >> 20, "takerFeeBps": 5, "replaySpreadBpsAssumed": ReplaySpreadBps}, Mem: e.memStats()}
+}
+
+// markIndex fetches mark and index price on demand (detail view polls every few seconds; cached 3 s).
+func (e *Engine) markIndex(id string) (mark, index float64) {
+	now := time.Now()
+	e.miMu.Lock()
+	if c, ok := e.miCache[id]; ok && now.Sub(c.at) < 3*time.Second {
+		e.miMu.Unlock()
+		return c.mark, c.index
+	}
+	e.miMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	mark, _ = e.rest.MarkPrice(ctx, id)
+	index, _ = e.rest.IndexPrice(ctx, strings.TrimSuffix(id, "-SWAP"))
+	e.miMu.Lock()
+	if e.miCache == nil {
+		e.miCache = map[string]markIdx{}
+	}
+	e.miCache[id] = markIdx{mark, index, now}
+	e.miMu.Unlock()
+	return
+}
+
+type markIdx struct {
+	mark, index float64
+	at          time.Time
 }

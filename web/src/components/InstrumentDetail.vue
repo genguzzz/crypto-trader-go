@@ -2,7 +2,7 @@
 import Loading from './ui/Loading.vue'
 import { computed, ref } from 'vue'
 import { ChevronLeft, Star } from 'lucide-vue-next'
-import { price, usd, fieldValue, catLabel, ago, num, logPct } from '../fmt'
+import { price, usd, fieldValue, catLabel, ago, num, logPct, fundingClass } from '../fmt'
 import { useInstrument, chgClass, statusText } from '../composables/instrument'
 import PriceChart from './PriceChart.vue'
 import CompareChart from './CompareChart.vue'
@@ -61,7 +61,7 @@ const scoreTone = (side: 'long' | 'short') => ((score.value?.[side].score ?? 0) 
           <div class="kv tnum">
             <button type="button" @click="openDetail('funding')">
               <span class="k">资金费 {{ info.fundingIntervalH || '?' }}h</span>
-              <b :class="chgClass(info.fundingRate)">{{ (info.fundingRate * 100).toFixed(4) }}%</b>
+              <b :class="fundingClass(info.fundingRate, info.fundingIntervalH)">{{ (info.fundingRate * 100).toFixed(4) }}%</b>
               <span class="kx">{{ countdown }}</span>
             </button>
             <button type="button" @click="openDetail('oi')">
