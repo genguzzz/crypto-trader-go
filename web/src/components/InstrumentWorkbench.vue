@@ -2,13 +2,14 @@
 import Loading from './ui/Loading.vue'
 import { computed, markRaw, ref, watch, type Component } from 'vue'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
-import { BookOpenText, Gauge, GitCompareArrows, ChartColumn, LayoutGrid, PanelLeftClose, PanelLeftOpen, ChevronLeft, Star } from 'lucide-vue-next'
+import { BookOpenText, Flame, Gauge, GitCompareArrows, ChartColumn, LayoutGrid, PanelLeftClose, PanelLeftOpen, ChevronLeft, Star } from 'lucide-vue-next'
 import { price, usd, fieldValue, catLabel, logPct, num, fundingClass, fundingLevel, fundingLevelText } from '../fmt'
 import { useInstrument, chgClass, statusText } from '../composables/instrument'
 import { useLayoutEntry } from '../composables/layout'
 import PriceChart from './PriceChart.vue'
 import CompareChart from './CompareChart.vue'
 import SeriesChart from './SeriesChart.vue'
+import LiqPanel from './LiqPanel.vue'
 import CoinIcon from './CoinIcon.vue'
 import StatCard from './ui/StatCard.vue'
 import StatDetailDialog from './details/StatDetailDialog.vue'
@@ -45,6 +46,7 @@ const sides: SideDef[] = [
   { key: 'score', label: '评分', icon: markRaw(Gauge) },
   { key: 'compare', label: '相对走势', icon: markRaw(GitCompareArrows) },
   { key: 'series', label: 'OI / 资金费', icon: markRaw(ChartColumn) },
+  { key: 'liq', label: '强平', icon: markRaw(Flame) },
 ]
 const DEFAULT_OPEN = ['info', 'book']
 const PANELS_KEY = 'ctg.wb.panels.v2' // v2: 概况 first and open by default
@@ -151,6 +153,7 @@ useLayoutEntry('ctg.wb', '工作台面板与比例', () => open.value.join() !==
                       <ScoreDetail v-else-if="s.key === 'score'" :ctx="detailCtx" />
                       <CompareChart v-else-if="s.key === 'compare'" :id="id" />
                       <SeriesChart v-else-if="s.key === 'series'" :id="id" />
+                      <LiqPanel v-else-if="s.key === 'liq'" :id="id" />
                       <div v-else-if="s.key === 'info'" class="cards">
                         <StatCard label="总市值" :icon="detailIcon('supply')" @open="openDetail('supply')">
                           <template #value>{{ info.coin ? usd(info.coin.marketCap) : '—' }}<small v-if="info.coin"> USD</small></template>

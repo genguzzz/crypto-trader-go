@@ -7,6 +7,7 @@ import { useInstrument, chgClass, statusText } from '../composables/instrument'
 import PriceChart from './PriceChart.vue'
 import CompareChart from './CompareChart.vue'
 import SeriesChart from './SeriesChart.vue'
+import LiqPanel from './LiqPanel.vue'
 import CoinIcon from './CoinIcon.vue'
 import StatCard from './ui/StatCard.vue'
 import StatDetailDialog from './details/StatDetailDialog.vue'
@@ -106,6 +107,7 @@ const scoreTone = (side: 'long' | 'short') => ((score.value?.[side].score ?? 0) 
       </div>
       <CompareChart :id="id" />
       <SeriesChart :id="id" />
+      <LiqPanel :id="id" />
       <div class="panel">
         <h3>新闻 / 解锁 / 链上持有人 <span class="tag">未接入</span> <InfoTip>
           计划在 I4 阶段接入可靠来源（项目公告、解锁日程、链上地址分布），并保留发布时间与修订。<br />

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { CandlestickSeries, LineSeries, HistogramSeries, AreaSeries, type IChartApi, type ISeriesApi, type MouseEventParams, type Time } from 'lightweight-charts'
-import { api, type Candle, type FlowBar, type OrderFlow, type SeriesPoint } from '../api'
+import { api, type Candle, type FlowBar, type OrderFlow, type SeriesPoint, type Liquidations, type LiqMap, type LiqBar } from '../api'
 import { chartTime, price as fmtPrice, usd, time as fmtTime } from '../fmt'
 import { baseChart, precisionFor } from './charts'
 import { Footprint, type FootBar } from './charts/footprint'
+import { LiqMapOverlay } from './charts/liqmap'
 import { C, alpha } from '../theme'
 import { LocateFixed, Maximize2, Minimize2 } from 'lucide-vue-next'
 import FilterChip from './ui/FilterChip.vue'
@@ -19,6 +20,8 @@ const layer = ref<Layer>((localStorage.getItem('ctg.chartLayer') as Layer) || 'k
 const withSpot = ref(localStorage.getItem('ctg.chartSpot') === '1')
 const withOIL = ref(localStorage.getItem('ctg.chartOIL') === '1') // OI level area: off by default
 const withOID = ref(localStorage.getItem('ctg.chartOID') !== '0') // OI change bars: on by default
+const withLiq = ref(localStorage.getItem('ctg.chartLiq') !== '0') // liquidation bars: on by default
+const withMap = ref(localStorage.getItem('ctg.chartLiqMap') === '1') // estimated liquidation map overlay
 const err = ref('')
 const loading = ref(false)
 const el = ref<HTMLElement>()
@@ -31,6 +34,9 @@ let oiL: ISeriesApi<'Area'> | undefined
 let oiD: ISeriesApi<'Histogram'> | undefined
 let cvd: ISeriesApi<'Line'> | undefined
 let foot: Footprint | undefined
+let liqS: ISeriesApi<'Histogram'> | undefined // short liquidations, up from 0
+let liqL: ISeriesApi<'Histogram'> | undefined // long liquidations, down from 0
+let lmap: LiqMapOverlay | undefined
 let timer: number | undefined
 let hotTimer: number | undefined
 
@@ -42,6 +48,8 @@ const volColor = (c: Candle) => (c.c >= c.o ? alpha('up', 0.35) : alpha('down', 
 const bars = ref<Candle[]>([])
 const flow = ref<Map<number, FlowBar>>(new Map())
 const spotByT = ref<Map<number, number>>(new Map())
+const liqByT = ref<Map<number, LiqBar>>(new Map())
+const mapInfo = ref<LiqMap | null>(null)
 const oiByT = ref<Map<number, { v: number; d?: number }>>(new Map()) // bar open → OI (USD, last sample) and change vs the previous bar
 const recording = ref(false)
 const hover = ref<number | null>(null) // index into bars
@@ -56,27 +64,33 @@ const shown = computed(() => {
   const i = hover.value ?? xs.length - 1
   const c = xs[i], prev = i > 0 ? xs[i - 1].c : c.o
   const poc = layer.value === 'foot' && footVer.value >= 0 ? foot?.barStats(chartTime(c.t) as number) ?? null : null
-  return { c, chg: prev ? c.c / prev - 1 : 0, amp: prev ? (c.h - c.l) / prev : 0, f: flow.value.get(c.t), poc, oi: oiByT.value.get(c.t), spot: spotByT.value.get(c.t), live: hover.value == null }
+  return { c, chg: prev ? c.c / prev - 1 : 0, amp: prev ? (c.h - c.l) / prev : 0, f: flow.value.get(c.t), poc, oi: oiByT.value.get(c.t), liq: liqByT.value.get(c.t), spot: spotByT.value.get(c.t), live: hover.value == null }
 })
 const pct = (v: number, d = 2) => (v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%'
 const tone = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : '')
 
 // ---- loading: every source in parallel, newest request wins, results cached per view ----
-interface Loaded { cs: Candle[]; of?: OrderFlow; ss?: Candle[]; oi?: SeriesPoint[] }
+interface Loaded { cs: Candle[]; of?: OrderFlow; ss?: Candle[]; oi?: SeriesPoint[]; lq?: Liquidations; lm?: LiqMap }
 const cache = new Map<string, Loaded>() // switching back to a period/layer paints at once, then refreshes
-const cacheKey = () => [bar.value, layer.value, withSpot.value && props.hasSpot, withOIL.value || withOID.value].join('|')
+const cacheKey = () => [bar.value, layer.value, withSpot.value && props.hasSpot, withOIL.value || withOID.value, withLiq.value, withMap.value].join('|')
+let mapCache: { id: string; at: number; m: LiqMap } | undefined // the map is hourly: refetch at most once a minute
 let seq = 0
 
 async function fetchAll(): Promise<Loaded> {
   const b = bar.value, n = depth[b] || 400, lay = layer.value
   const hours = Math.min(24 * 30, Math.ceil((n * barMs[b]) / 3600e3) + 1)
-  const [cs, of, ss, oi] = await Promise.all([
+  const wantMap = withMap.value && props.hasOi
+  const mapFresh = mapCache && mapCache.id === props.id && Date.now() - mapCache.at < 60e3
+  const [cs, of, ss, oi, lq, lm] = await Promise.all([
     api.candles(props.id, b, n),
     lay !== 'k' ? api.orderflow(props.id, b, n, lay === 'foot') : undefined,
     withSpot.value && props.hasSpot ? api.candles(props.id, b, Math.min(n, 1000), 'spot') : undefined,
     (withOIL.value || withOID.value) && props.hasOi ? api.series(props.id, 'oi', hours) : undefined,
+    withLiq.value ? api.liquidations(props.id, b, n).catch(() => undefined) : undefined,
+    wantMap && !mapFresh ? api.liqmap(props.id, 7).catch(() => undefined) : undefined,
   ])
-  return { cs, of, ss, oi: oi || undefined }
+  if (lm) mapCache = { id: props.id, at: Date.now(), m: lm }
+  return { cs, of, ss, oi: oi || undefined, lq, lm: wantMap ? lm ?? mapCache?.m : undefined }
 }
 
 /**
@@ -112,6 +126,8 @@ function apply(d: Loaded, mode: 'fit' | 'anchor' | 'keep', view: View | null) {
   applyFlow(cs, d.of)
   applySpot(d.ss)
   applyOI(cs, d.oi)
+  applyLiq(cs, d.lq)
+  applyMap(d.lm)
   if (mode === 'fit') resetView()
   else if (mode === 'anchor' && view) restoreView(view)
   requestAnimationFrame(() => { if (chart) axisWidth.value = chart.priceScale('right').width() })
@@ -179,7 +195,8 @@ function layoutBands() {
   let bottom = 0.2
   if (oiD) { chart.priceScale('oid').applyOptions({ scaleMargins: { top: 1 - bottom - BAND, bottom } }); bottom += BAND }
   if (oiL) { chart.priceScale('oil').applyOptions({ scaleMargins: { top: 1 - bottom - BAND, bottom } }); bottom += BAND }
-  candles.priceScale().applyOptions({ scaleMargins: { top: topMargin(), bottom: bottom + (oiD || oiL ? 0.02 : 0) } })
+  if (liqS) { chart.priceScale('liq').applyOptions({ scaleMargins: { top: 1 - bottom - BAND, bottom } }); bottom += BAND }
+  candles.priceScale().applyOptions({ scaleMargins: { top: topMargin(), bottom: bottom + (oiD || oiL || liqS ? 0.02 : 0) } })
 }
 function applyOI(cs: Candle[], pts?: SeriesPoint[]) {
   if (!chart) return
@@ -206,6 +223,44 @@ function applyOI(cs: Candle[], pts?: SeriesPoint[]) {
   oiByT.value = m
   layoutBands()
 }
+
+// ---- liquidations: per-bar totals in their own band (shorts up, longs down) ----
+function applyLiq(cs: Candle[], lq?: Liquidations) {
+  if (!chart) return
+  if (!lq) {
+    if (liqS) { chart.removeSeries(liqS); liqS = undefined }
+    if (liqL) { chart.removeSeries(liqL); liqL = undefined }
+    liqByT.value = new Map()
+    layoutBands()
+    return
+  }
+  const opts = { priceScaleId: 'liq', priceFormat: { type: 'volume' as const }, lastValueVisible: false, priceLineVisible: false, base: 0 }
+  liqS ??= chart.addSeries(HistogramSeries, { ...opts, color: alpha('up', 0.8) })
+  liqL ??= chart.addSeries(HistogramSeries, { ...opts, color: alpha('down', 0.8) })
+  const m = new Map<number, LiqBar>()
+  for (const x of lq.bars || []) m.set(x.t, x)
+  // bars after the recorded start with no orders are real zeros; before it they're unknown (left empty)
+  const since = lq.since ? Math.floor(lq.since / barMs[bar.value]) * barMs[bar.value] : Infinity
+  const known = cs.filter(c => c.t >= since)
+  liqS.setData(known.map(c => ({ time: chartTime(c.t), value: m.get(c.t)?.short ?? 0 })))
+  liqL.setData(known.map(c => ({ time: chartTime(c.t), value: -(m.get(c.t)?.long ?? 0) })))
+  for (const c of known) if (!m.has(c.t)) m.set(c.t, { t: c.t, long: 0, short: 0, nl: 0, ns: 0 })
+  liqByT.value = m
+  layoutBands()
+}
+
+// ---- estimated liquidation map: histogram against the right edge of the price pane ----
+function applyMap(lm?: LiqMap) {
+  if (!lm) {
+    if (lmap) { candles!.detachPrimitive(lmap); lmap = undefined }
+    mapInfo.value = null
+    return
+  }
+  if (!lmap) { lmap = new LiqMapOverlay(); candles!.attachPrimitive(lmap) }
+  lmap.setData(lm)
+  mapInfo.value = lm
+}
+const mapAt = computed(() => (axisLabel.value && lmap && mapInfo.value ? lmap.cumAt(axisLabel.value.px) : null))
 
 // ---- hot data: while this chart is on screen, the forming bars refresh every second ----
 let hotBusy = false
@@ -359,6 +414,8 @@ watch(layer, v => { localStorage.setItem('ctg.chartLayer', v); load('anchor') })
 watch(withSpot, v => { localStorage.setItem('ctg.chartSpot', v ? '1' : '0'); load('anchor') })
 watch(withOIL, v => { localStorage.setItem('ctg.chartOIL', v ? '1' : '0'); load('anchor') })
 watch(withOID, v => { localStorage.setItem('ctg.chartOID', v ? '1' : '0'); load('anchor') })
+watch(withLiq, v => { localStorage.setItem('ctg.chartLiq', v ? '1' : '0'); load('anchor') })
+watch(withMap, v => { localStorage.setItem('ctg.chartLiqMap', v ? '1' : '0'); load('anchor') })
 // ---- full screen: native Fullscreen API where the element supports it; otherwise (iPhone Safari)
 // a fixed overlay covering the viewport. Esc / the button leaves either way.
 const root = ref<HTMLElement>()
@@ -398,6 +455,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <b>失衡</b>（对角比较）：某价位的主动买 ≥ 低一档主动卖的 3 倍，在右侧标绿色竖条、数字变绿；主动卖 ≥ 高一档主动买的 3 倍，在左侧标红色竖条。量太小（低于该 K 线各价位单边成交额中位数）的不算。连续 3 档及以上同方向失衡为<b>堆叠失衡</b>，该侧加描边，常被当作主动方强势的信号，不是必然。<br />
         <b>成交额柱</b>：底部柱为该根 K 线的 USDT 成交额，绿涨红跌。缺失分钟显示为空档；最后一根为未收盘 K 线。<br />
         <b>现货 / OI</b>：现货为 OKX 同名 USDT 现货收盘价（黄线），和合约 K 线共用右侧价格轴，缩放、拖动都跟随 K 线，两者的间距就是基差；<b>OI Δ</b>（默认开）为持仓量变化柱：每根 K 线相对上一根的增减，蓝增橙减，和成交额柱一样画在 K 线下方的独立区域；<b>OI</b> 为持仓量走势（面积图），在变化柱上方再占一条。左上角显示持仓量与变化（近期逐分钟采样；更早只有 1 小时采样，小周期在那段没有变化柱）。没有对应数据时按钮置灰。<br />
+        <b>强平</b>（默认开）：OKX 公共接口的逐笔强平单（不需要账户），按 K 线汇总的 USDT 金额。绿柱向上 = 空单被强平（强制买入），红柱向下 = 多单被强平（强制卖出）。活跃池、自选、最近查看的合约每分钟同步一次；OKX 只提供最近约 24 小时，更早的只有本机开始同步之后的记录（保留 30 天），没有记录的时段不画柱。<br />
+        <b>清算图</b>（估算，非交易所数据）：用近 7 天每小时持仓量变化推算“新开仓位”，按 5/10/25/50/100 倍杠杆（超过该合约最大杠杆的档去掉）分配，放在各自的大致强平价（维持保证金率按 0.5%）；持仓减少时按比例缩小，之后被 K 线价格穿过的价位视为已清算并移除。右侧横条为每个价位剩余的估算强平金额（红 = 多单，在现价下方；绿 = 空单，在现价上方），细线为从现价向外的累计金额。十字光标移到某价位时，左上角显示价格走到那里预计触发的累计强平额。只能看作“仓位可能扎堆的位置”，不代表真实仓位。<br />
         <b>刷新</b>：打开详情页时最新几根 K 线每秒刷新（服务端 OKX WebSocket 推送的未收盘 K 线），整段数据和订单流每 10 秒刷新；页面切到后台时暂停。<br />
         <b>时间</b>：按设置页选择的时区显示（默认 UTC+8）。右下角 ◎ 或双击图表回到最新并自动缩放。
       </InfoTip></span>
@@ -408,6 +467,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
       <span class="ovl">
         <FilterChip v-model="withSpot" label="现货" :disabled="!hasSpot" :title="hasSpot ? '叠加 OKX 同名 USDT 现货收盘价（黄线，与 K 线同一价格轴）' : '没有 OKX 同名 USDT 现货'" />
         <FilterChip v-model="withOID" label="OI Δ" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示每根 K 线的持仓量变化柱（蓝增橙减）' : '没有持仓量数据'" />
+        <FilterChip v-model="withLiq" label="强平" title="在 K 线下方显示每根 K 线的强平金额（绿 = 空单被强平，向上；红 = 多单被强平，向下）" />
+        <FilterChip v-model="withMap" label="清算图" :disabled="!hasOi" :title="hasOi ? '在价格区右侧叠加估算的清算地图（按近 7 天持仓变化与杠杆分布推算，非交易所数据）' : '没有持仓量数据，无法估算'" />
         <FilterChip v-model="withOIL" label="OI" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示持仓量走势（面积图）' : '没有持仓量数据'" />
         <button type="button" class="fs-btn" :title="full ? '退出全屏（Esc）' : '全屏'" :aria-label="full ? '退出全屏' : '全屏'" @click="toggleFull">
           <Minimize2 v-if="full" :size="15" /><Maximize2 v-else :size="15" />
@@ -427,6 +488,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <span>额 <b>{{ usd(shown.c.q) }}</b></span>
         <span v-if="withSpot && shown.spot != null">现货 <b class="spot">{{ fmtPrice(shown.spot) }}</b> <small class="muted">基差 {{ pct(shown.c.c / shown.spot - 1, 3) }}</small></span>
         <span v-if="(withOID || withOIL) && shown.oi">OI <b class="oi">{{ usd(shown.oi.v) }}</b> <small v-if="shown.oi.d !== undefined" :class="tone(shown.oi.d)">{{ (shown.oi.d >= 0 ? '+' : '−') + usd(Math.abs(shown.oi.d)) }}（{{ pct(shown.oi.d / (shown.oi.v - shown.oi.d)) }}）</small></span>
+        <span v-if="withLiq && shown.liq">强平 <small class="muted">多</small> <b class="down">{{ usd(shown.liq.long) }}</b> <small class="muted">空</small> <b class="up">{{ usd(shown.liq.short) }}</b></span>
+        <span v-if="mapAt" class="muted">清算图 · {{ mapAt.long ? '跌到' : '涨到' }}光标价 ≈ <b :class="mapAt.long ? 'down' : 'up'">{{ usd(mapAt.usd) }}</b> {{ mapAt.long ? '多单' : '空单' }}（估算）</span>
         <template v-if="layer !== 'k'">
           <br />
           <template v-if="shown.f">

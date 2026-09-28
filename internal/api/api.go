@@ -60,6 +60,28 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, out)
 	})
+	mux.HandleFunc("GET /api/v1/liquidations", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		bar := q.Get("bar")
+		if bar == "" {
+			bar = "1H"
+		}
+		out, err := s.E.Liquidations(r.Context(), q.Get("instId"), bar, atoiDefault(q.Get("limit"), 300), atoiDefault(q.Get("recent"), 0))
+		if err != nil {
+			httpErr(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, out)
+	})
+	mux.HandleFunc("GET /api/v1/liqmap", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		out, err := s.E.LiqMap(r.Context(), q.Get("instId"), atoiDefault(q.Get("days"), 7))
+		if err != nil {
+			httpErr(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, out)
+	})
 	mux.HandleFunc("GET /api/v1/rules", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.E.Rules()) })
 	mux.HandleFunc("POST /api/v1/rules", s.saveRule)
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.deleteRule)
