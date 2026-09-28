@@ -299,7 +299,7 @@ func (e *Engine) buildRow(in *Inst, m, now int64) Row {
 	}
 	if r.Status == "live" || r.Status == "stale" || r.Provisional {
 		var bs features.Series
-		if btc := e.insts[BTC]; btc != nil {
+		if btc := e.insts[BTC]; btc != nil && in.ID != BTC { // BTC vs itself carries no information
 			bs = liveSeries{btc}
 		}
 		r.Values = features.Compute(liveSeries{in}, bs, T)
