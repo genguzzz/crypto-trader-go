@@ -198,6 +198,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	go e.bootstrap(ctx)
 	go e.retentionLoop(ctx)
 	go e.flowLoop(ctx)
+	go e.liqLoop(ctx)
 	return nil
 }
 

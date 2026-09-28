@@ -33,6 +33,12 @@ export interface CatalogItem {
 export interface FlowBar { t: number; buy: number; sell: number; n?: number; src: 'trades' | 'rubik'; levels?: [number, number, number][]; step?: number }
 /** Series sample: v = value (OI in coins), u = USD value where known. */
 export interface SeriesPoint { t: number; v: number; u?: number }
+/** Liquidations per bar (USDT): long = long positions liquidated (forced sells). */
+export interface LiqBar { t: number; long: number; short: number; nl: number; ns: number }
+export interface LiqEvent { t: number; long: boolean; px: number; usd: number }
+export interface Liquidations { bars: LiqBar[]; since: number; recent?: LiqEvent[]; err?: string }
+/** Estimated liquidation map: USDT per price bin (p = bin low). */
+export interface LiqMap { px: number; step: number; from: number; days: number; lever: number; levers: number[]; bins: { p: number; long: number; short: number }[] }
 export interface OrderFlow { bars: FlowBar[] | null; recording: boolean; since: number }
 export interface Coin { id: string; symbol: string; name: string; rank: number; marketCap: number; fdv: number; circulating: number; total: number; max: number; updatedAt: string; fetchedAt: number }
 export interface TableUsage { name: string; table: string; bytes: number; budget: number; ages: string[]; tight: boolean }
@@ -87,6 +93,9 @@ export const api = {
   storage: () => req<Storage | null>('/api/v1/storage'),
   orderflow: (id: string, bar: string, limit: number, levels: boolean) =>
     req<OrderFlow>(`/api/v1/orderflow?instId=${encodeURIComponent(id)}&bar=${bar}&limit=${limit}&levels=${levels ? 1 : 0}`),
+  liquidations: (id: string, bar: string, limit: number, recent = 0) =>
+    req<Liquidations>(`/api/v1/liquidations?instId=${encodeURIComponent(id)}&bar=${bar}&limit=${limit}&recent=${recent}`),
+  liqmap: (id: string, days = 7) => req<LiqMap>(`/api/v1/liqmap?instId=${encodeURIComponent(id)}&days=${days}`),
   candles: (id: string, bar: string, limit = 300, market = 'swap') =>
     req<Candle[]>(`/api/v1/candles?instId=${encodeURIComponent(id)}&bar=${bar}&limit=${limit}&market=${market}`),
   compare: (id: string, bar: string, limit = 300) =>

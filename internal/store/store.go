@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS alert_rules(id INTEGER PRIMARY KEY AUTOINCREMENT, nam
 CREATE TABLE IF NOT EXISTS alert_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, rule_id INTEGER NOT NULL,
   rule_name TEXT NOT NULL, inst_id TEXT NOT NULL, type TEXT NOT NULL, value REAL, message TEXT NOT NULL, delivery TEXT NOT NULL DEFAULT '{}');
 CREATE INDEX IF NOT EXISTS alert_events_ts ON alert_events(ts);
+CREATE TABLE IF NOT EXISTS liquidations(inst_id TEXT NOT NULL, ts INTEGER NOT NULL, long INTEGER NOT NULL, px REAL NOT NULL,
+  sz REAL NOT NULL, usd REAL NOT NULL, PRIMARY KEY(inst_id, ts, long, px, sz)) WITHOUT ROWID;
 `
 
 func Open(path string) (*Store, error) {
