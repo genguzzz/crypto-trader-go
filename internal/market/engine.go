@@ -44,7 +44,8 @@ type Row struct {
 	Eligible    bool                   `json:"eligible"` // in the recording universe (else: watched adhoc)
 	HasSpot     bool                   `json:"hasSpot"`
 	ListTime    int64                  `json:"listTime"`
-	Freshness   int64                  `json:"freshnessMs"` // now - last confirmed bar close
+	Freshness   int64                  `json:"freshnessMs"`    // now - last confirmed bar close
+	MarketCap   float64                `json:"mcap,omitempty"` // CoinGecko USD market cap (crypto only; display)
 }
 
 type Removed struct {
