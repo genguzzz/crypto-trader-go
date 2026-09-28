@@ -11,6 +11,7 @@
   --bg-1: #0e0e0e;       /* panel */
   --bg-2: #1a1a1a;       /* raised / hover */
   --bg-3: #262626;       /* input / selected */
+  --oi-bar: #141414;     /* scanner list open-interest bar (row background) */
   --line: #1d1d1d;       /* hairline */
   --line-2: #383838;     /* stronger border (inputs, chips) */
   /* text */

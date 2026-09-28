@@ -4,7 +4,7 @@ import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { Radar, FlaskConical, Database, Monitor, Undo2 } from 'lucide-vue-next'
 import { api, type Settings, type Storage } from '../api'
 import { store, refreshMeta, followDefaultRule, ruleOptions } from '../store'
-import { usd, catLabel, tzOptions, tzSetting } from '../fmt'
+import { usd, catLabel, tzOptions, tzSetting, oiHalf, setOiHalf, oiFrac } from '../fmt'
 import ChipGroup from '../components/ui/ChipGroup.vue'
 import Meter from '../components/ui/Meter.vue'
 import Loading from '../components/ui/Loading.vue'
@@ -98,6 +98,9 @@ function setTz(v: string) {
   localStorage.setItem('ctg.tz', v)
   location.reload() // every chart and time label re-renders in the new zone
 }
+// scanner OI bar: the OI (万 USD) that fills half a row; applies live
+const oiHalfWan = computed({ get: () => Math.round(oiHalf.value / 1e4), set: (v: number) => setOiHalf(v * 1e4) })
+const oiSamples = [5e5, 5e6, 5e7, 5e8, 5e9]
 
 function revert() { if (saved.value) s.value = clone(saved.value); msg.value = null }
 async function save() {
@@ -212,10 +215,20 @@ onBeforeRouteLeave(() => !nChanged.value || window.confirm('有未保存的设�
 
     <!-- 显示 -->
     <SettingsSection id="display" title="显示" :icon="Monitor">
-      <template #tip>只保存在本浏览器，切换后立即生效（页面会刷新）。<b>时区</b>决定 K 线横轴、十字光标与页面上所有时间的显示；服务端按 UTC 对齐 K 线（4H 在 UTC+8 下为 0/4/8/12/16/20 点），数据本身不变。</template>
+      <template #tip>只保存在本浏览器，改完立即生效（切换时区会刷新页面）。<b>时区</b>决定 K 线横轴、十字光标与页面上所有时间的显示；服务端按 UTC 对齐 K 线（4H 在 UTC+8 下为 0/4/8/12/16/20 点），数据本身不变。<br />
+        <b>持仓量条</b>：扫描列表每行的底色长条表示该合约持仓量（USDT）。按对数平滑换算：占比 = r / (1 + r)，r = √(持仓量 ÷ 半满点)。持仓量等于半满点时正好半行；10 倍 ≈ 76%，100 倍 ≈ 91%，1000 倍 ≈ 97%；1/10 ≈ 24%，1/100 ≈ 9%。这样 BTC 与中小山寨都能拉开差距，不会像线性那样只剩 BTC 一条。</template>
       <template #aside><span class="tag">仅本浏览器 · 立即生效</span></template>
       <SettingRow label="时区" desc="K 线横轴与页面时间">
         <Segmented :model-value="tz" size="sm" aria-label="时区" :options="tzOptions" @update:model-value="setTz" />
+      </SettingRow>
+      <SettingRow label="持仓量条半满点" desc="扫描列表底色长条：持仓量等于它时占半行，按对数平滑" for-id="f-oih">
+        <div class="ctl-line">
+          <Segmented :model-value="oiHalfWan" size="sm" aria-label="半满点预设" :options="[100, 500, 2000, 10000].map(v => ({ value: v, label: v >= 10000 ? v / 10000 + '亿' : v + '万' }))" @update:model-value="v => (oiHalfWan = v)" />
+          <span class="unit-in"><input id="f-oih" type="number" min="1" step="100" :value="oiHalfWan" @change="e => (oiHalfWan = Number((e.target as HTMLInputElement).value))" /><span>万</span></span>
+        </div>
+        <div class="oi-demo">
+          <div v-for="v in oiSamples" :key="v" class="oi-b"><span class="oi-f" :style="{ width: oiFrac(v) * 100 + '%' }"></span><span class="tnum">{{ usd(v) }}</span><span class="muted tnum">{{ Math.round(oiFrac(v) * 100) }}%</span></div>
+        </div>
       </SettingRow>
     </SettingsSection>
 
@@ -263,6 +276,10 @@ onBeforeRouteLeave(() => !nChanged.value || window.confirm('有未保存的设�
 .unit-in input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .unit-in span { padding: 0 10px 0 2px; color: var(--text-3); font-size: var(--fs-sm); }
 :deep(.invalid) .unit-in { border-color: var(--down); }
+.oi-demo { display: grid; gap: 3px; width: 260px; max-width: 100%; }
+.oi-b { position: relative; display: flex; justify-content: space-between; gap: 8px; padding: 2px 8px; font-size: var(--fs-xs); background: var(--bg-0); border-radius: 4px; overflow: hidden; }
+.oi-b > span:not(.oi-f) { position: relative; }
+.oi-f { position: absolute; inset: 0 auto 0 0; background: var(--oi-bar); }
 
 .est { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
 .el { font-size: var(--fs-sm); color: var(--text-3); }

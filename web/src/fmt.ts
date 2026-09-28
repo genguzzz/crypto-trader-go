@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 export function usd(v?: number | null) {
   if (v == null || !isFinite(v)) return '—'
   const a = Math.abs(v)
@@ -88,3 +89,23 @@ export function fundingClass(rate: number | null | undefined, intervalH = 8) {
   return l ? `fr${l} ${rate! > 0 ? 'pos' : 'neg'}` : ''
 }
 export const fundingLevelText = ['常态（≤0.01%/8h）', '偏高（≤0.05%/8h）', '高（≤0.1%/8h）', '极端（>0.1%/8h）']
+
+// ---- open-interest bar (scanner list): share of the row filled by a symbol's OI in USD ----
+/** OI (USD) that fills exactly half the row; per-browser setting, default 5,000,000 (500万). */
+export const oiHalf = ref(Number(localStorage.getItem('ctg.oiHalf')) || 5e6)
+export function setOiHalf(v: number) {
+  if (!(v > 0)) return
+  oiHalf.value = v
+  localStorage.setItem('ctg.oiHalf', String(v))
+}
+/**
+ * Log-logistic fill: (x/h)^k / (1 + (x/h)^k), h = half point, k = 0.5. Smooth and monotone in
+ * log(OI): h → 50%, 10h → 76%, 100h → 91%, 1000h → 97%; h/10 → 24%, h/100 → 9%. BTC (≈1000×)
+ * stays distinguishable from a mid alt (≈10×) while small caps don't collapse to nothing.
+ */
+export const OI_BAR_K = 0.5
+export function oiFrac(v?: number | null, half = oiHalf.value) {
+  if (v == null || !(v > 0) || !(half > 0)) return 0
+  const x = Math.pow(v / half, OI_BAR_K)
+  return x / (1 + x)
+}
