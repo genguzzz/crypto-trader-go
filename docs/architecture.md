@@ -17,6 +17,7 @@
    │ internal/features 事实面板公式（实时/回放共用）              │
    │ internal/rules    规则定义、校验、打分、预置对照规则         │
    │ internal/track    战绩统计（Rank IC、t、分位收益、成本）     │
+   │ internal/alerts   监控规则：每分钟检查 → Telegram/Webhook 推送 │
    │ internal/store    SQLite（WAL）+ database/sql 连接池         │
    │ internal/api      REST JSON + SSE 推送 + 图标代理            │
    └──────────────┬───────────────────────────┬──────────────┘
@@ -37,6 +38,7 @@
 | 每个确认分钟（收齐或最迟 +65s） | 12h 窗口 → 监控池增删（带原因）→ 事实面板 → 规则评分 → SSE `universe` |
 | 每 10 秒 | 用未收盘分钟重算活跃池/自选的事实面板与分数（`preview`，会变动） |
 | 每 2 秒 | SSE `prices` 推送最新价 |
+| 每个确认分钟（之后） | 监控规则检查（`internal/alerts`，边沿触发 + 冷却），异步推送 Telegram/Webhook |
 | 每个整点 | 保存每条规则对活跃池的打分快照（不可改写，用于战绩） |
 | 15s / 30s / 5min | 现货行情、永续 ticker 兜底（同时是搜索目录的行情）、合约目录刷新 |
 | 30min | 数据淘汰：按分层保留期删除，超出容量配额时从低层收紧（`retention.go`） |
@@ -89,6 +91,7 @@ internal/market/       引擎：engine.go（启动/录制/WS）、universe.go（
 internal/features/     事实面板
 internal/rules/        规则与打分
 internal/track/        战绩统计
+internal/alerts/       监控规则（类型注册在 conditions.go）、推送渠道（掩码/发送/重试）、历史
 internal/api/          HTTP 路由、SSE、图标代理、gzip
 web/                   前端工程（src/views 页面，src/components 组件，embed.go 内嵌产物）
 deploy/                docker-compose.yml（服务器运行定义）、deploy.sh（构建/上传/替换/回滚）
@@ -101,6 +104,7 @@ openspec/              需求与变更记录
 
 `GET health|status|meta|settings|catalog|storage|orderflow|universe?scope=active|all|watch|instruments/{id}|candles|compare|series|rules|rules/{id}/track|icons/{ccy}.png|stream(SSE)`；
 `PUT settings|watchlist/{id}`，`POST rules`，`DELETE rules/{id}|watchlist/{id}`；`GET positions` 固定返回未连接（I4 前）。
+监控：`GET|POST alerts/rules`，`PUT|DELETE alerts/rules/{id}`，`GET|PUT alerts/channels`（密钥只返回掩码，留空/掩码=不变），`DELETE alerts/channels/{telegram|webhook}`，`POST alerts/channels/{ch}/test`，`GET alerts/history?limit=`。
 
 ## 7. 部署形态
 
