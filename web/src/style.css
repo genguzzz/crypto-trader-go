@@ -22,6 +22,7 @@
   --down: #ca3f64; --down-bg: rgba(202, 63, 100, 0.14);
   --warn: #f7a600; --warn-bg: rgba(247, 166, 0, 0.12);
   --accent: #bcff2f; --accent-bg: rgba(188, 255, 47, 0.1); --on-accent: #000;
+  --accent-bg-solid: #1f2611; /* --accent-bg over a panel, opaque (sticky cells) */
   --info: #5b9bff; --info-bg: rgba(91, 155, 255, 0.14);
   --gold: #f5c542;       /* chart marks: POC, spot line, CVD */
   --long: var(--up); --short: var(--down);

@@ -68,7 +68,7 @@ const filtered = computed(() => !!q.value || onlyWatch.value || onlyPass.value |
 function clearFilters() { q.value = ''; onlyWatch.value = false; onlyPass.value = false; catSel.value = ['1', '3', '4'] }
 const ruleModel = computed({ get: () => store.ruleId, set: (v: string) => setRule(v) })
 const sortOptions = computed(() => [
-  { value: 'score', label: '按方向分' }, { value: 'long', label: '多头分' }, { value: 'short', label: '空头分' }, { value: 'turnover12h', label: '12h 成交额' },
+  { value: 'score', label: '按方向分' }, { value: 'long', label: '多头分' }, { value: 'short', label: '空头分' }, { value: 'mcap', label: '总市值' }, { value: 'turnover12h', label: '12h 成交额' },
   ...(store.meta?.fields.filter(f => f.key !== 'turnover12h').map(f => ({ value: f.key, label: f.label })) || []),
 ])
 const selected = computed(() => (route.query.sel as string) || '')
@@ -88,6 +88,7 @@ function sortVal(r: Row): number | null {
   switch (sortKey.value) {
     case 'score': return dirScore(r)
     case 'turnover12h': return r.turnover12h || null
+    case 'mcap': return r.mcap || null
     case 'long': return scoreOf(r, 'long')
     case 'short': return scoreOf(r, 'short')
     default: return r.values?.[sortKey.value] ?? null
@@ -178,12 +179,11 @@ const sym = (id: string) => id.replace('-USDT-SWAP', '')
 watch(() => store.snap, s => {
   if (!narrow.value && !selected.value && s?.rows?.length) router.replace({ query: { sel: s.rows[0].instId } })
 }, { immediate: true })
-const allCols = [
+const allCols: [string, string][] = [
   ['ret_4h', '4h'], ['excess_btc_4h', '相对BTC'], ['oi_chg_4h', 'OIΔ4h'], ['vol_surprise_4h', '放量'], ['funding_hourly', '费/h'],
 ]
-// columns by list width: market list (4h only) → + relative/OI → full screener
-const cols = computed(() => (listW.value < 420 ? [] : listW.value < 560 ? allCols.slice(0, 1) : listW.value < 760 ? allCols.slice(0, 3) : allCols))
-const showTurnover = computed(() => listW.value >= 480)
+// every column is always there; a narrow list scrolls sideways with the symbol column pinned
+const cols = allCols
 </script>
 
 <template>
@@ -205,7 +205,7 @@ const showTurnover = computed(() => listW.value >= 480)
           <span class="vsep"></span>
           <FilterChip v-model="onlyWatch" label="自选" :icon="Star" :count="watchCount" />
           <FilterChip v-model="onlyPass" label="门槛通过" :icon="ShieldCheck" title="只看当前规则点差门槛通过的合约" />
-          <span class="hide-lg"><USelect v-model="sortKey" size="sm" :options="sortOptions" :icon="ArrowDownWideNarrow" aria-label="排序" /></span>
+          <USelect v-model="sortKey" size="sm" :options="sortOptions" :icon="ArrowDownWideNarrow" aria-label="排序" />
           <span class="spacer"></span>
           <PopoverRoot v-if="store.snap?.removed?.length">
             <PopoverTrigger class="fchip removed-btn"><LogOut :size="13" class="fc-ic" /><span>最近移出</span><span class="fc-n">{{ store.snap.removed.length }}</span></PopoverTrigger>
@@ -228,19 +228,20 @@ const showTurnover = computed(() => listW.value >= 480)
         <table>
           <thead>
             <tr>
-              <th></th>
-              <th>合约</th>
+              <th class="pin p0"></th>
+              <th class="pin p1">合约</th>
               <th class="num sortable" @click="sortBy('long')">多{{ sortKey === 'long' ? (sortDesc ? '↓' : '↑') : '' }}</th>
               <th class="num sortable" @click="sortBy('short')">空{{ sortKey === 'short' ? (sortDesc ? '↓' : '↑') : '' }}</th>
               <th class="num">价格</th>
               <th v-for="[k, l] in cols" :key="k" class="num sortable" :title="fieldLabel(k)" @click="sortBy(k)">{{ l }}{{ sortKey === k ? (sortDesc ? '↓' : '↑') : '' }}</th>
-              <th v-if="showTurnover" class="num sortable" @click="sortBy('turnover12h')">12h额{{ sortKey === 'turnover12h' ? (sortDesc ? '↓' : '↑') : '' }}</th>
+              <th class="num sortable" @click="sortBy('mcap')">总市值{{ sortKey === 'mcap' ? (sortDesc ? '↓' : '↑') : '' }}</th>
+              <th class="num sortable" @click="sortBy('turnover12h')">12h额{{ sortKey === 'turnover12h' ? (sortDesc ? '↓' : '↑') : '' }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="r in rows" :key="r.instId" :class="{ sel: r.instId === selected, inactive: !r.active }" @click="open(r)">
-              <td @click.stop="toggleWatch(r)" class="star" :class="{ on: r.watch }">{{ r.watch ? '★' : '☆' }}</td>
-              <td>
+              <td @click.stop="toggleWatch(r)" class="star pin p0" :class="{ on: r.watch }">{{ r.watch ? '★' : '☆' }}</td>
+              <td class="pin p1">
                 <span class="dot" :class="r.status === 'live' ? 'ok' : r.status === 'stale' ? 'bad' : 'warn'" :title="r.status"></span>
                 <CoinIcon :inst-id="r.instId" class="ic" />
                 <b class="symb">{{ sym(r.instId) }}</b>
@@ -254,7 +255,8 @@ const showTurnover = computed(() => listW.value >= 480)
               <td v-for="[k] in cols" :key="k" class="num" :class="k === 'funding_hourly' || k === 'vol_surprise_4h' ? 'sec' : sign(r.values?.[k] ?? 0)">
                 {{ k === 'funding_hourly' ? fundingH(r.values?.[k]) : k === 'vol_surprise_4h' ? (r.values?.[k] != null ? '×' + Math.exp(r.values[k]).toFixed(2) : '—') : logPct(r.values?.[k]) }}
               </td>
-              <td v-if="showTurnover" class="num sec">{{ usd(r.turnover12h) }}<span v-if="r.provisional" class="muted">*</span></td>
+              <td class="num sec">{{ r.mcap ? usd(r.mcap) : '—' }}</td>
+              <td class="num sec">{{ usd(r.turnover12h) }}<span v-if="r.provisional" class="muted">*</span></td>
             </tr>
           </tbody>
         </table>
@@ -299,7 +301,8 @@ const showTurnover = computed(() => listW.value >= 480)
             <span>多 <ScoreChip :v="scoreOf(r, 'long')" side="long" /></span>
             <span>空 <ScoreChip :v="scoreOf(r, 'short')" side="short" /></span>
             <span :class="sign(r.values?.ret_4h ?? 0)">4h {{ logPct(r.values?.ret_4h) }}</span>
-            <span class="muted">{{ usd(r.turnover12h) }}</span>
+            <span class="muted" title="12h 成交额">{{ usd(r.turnover12h) }}</span>
+            <span v-if="r.mcap" class="muted" title="总市值">市值 {{ usd(r.mcap) }}</span>
           </div>
         </div>
         <Loading v-if="!store.snap" text="加载行情" />
@@ -359,7 +362,15 @@ const showTurnover = computed(() => listW.value >= 480)
 .count { font-size: var(--fs-sm); color: var(--text-1); font-weight: 600; }
 .clear { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border: none; background: transparent; color: var(--text-3); font-size: var(--fs-xs); }
 @media (hover: hover) { .clear:hover { color: var(--text-1); background: var(--bg-2); } }
-.tablewrap { overflow: auto; flex: 1; }
+.tablewrap { overflow: auto; flex: 1; overscroll-behavior-x: contain; }
+.tablewrap > table:first-child { min-width: 760px; } /* all columns; narrower lists scroll sideways */
+/* pinned star + symbol columns while scrolling sideways */
+.pin { position: sticky; z-index: 2; background: var(--bg-1); }
+thead .pin { z-index: 3; }
+.p0 { left: 0; width: 24px; min-width: 24px; }
+.p1 { left: 24px; box-shadow: 1px 0 0 var(--line); }
+@media (hover: hover) { tbody tr:hover .pin { background: var(--bg-2); } }
+tbody tr.sel .pin { background: var(--accent-bg-solid); }
 thead th { position: sticky; top: 0; background: var(--bg-1); z-index: 1; }
 .sortable { cursor: pointer; user-select: none; }
 tbody td, thead th { padding: 0 6px; }
@@ -388,8 +399,6 @@ td.up { color: var(--up); } td.down { color: var(--down); }
 .oh { display: flex; align-items: center; gap: 6px; padding: 14px 12px 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); border-top: 1px solid var(--line-2); }
 table.others { width: 100%; }
 table.others td:first-child { width: 24px; }
-.hide-lg { display: none; }
-.narrow .hide-lg { display: inline-block; }
 </style>
 
 <style>
