@@ -56,6 +56,7 @@
 | 下拉选择（规则、排序、默认值） | `<USelect>`（全局组件，支持分组/说明/徽标/勾选） | 原生 `<select>` |
 | 多选筛选（类别） | `ui/ChipGroup.vue`（ToggleGroup multiple，可 `at-least-one`） | 手写 span.chip |
 | 开关筛选（自选、门槛） | `ui/FilterChip.vue`（Toggle；未启用虚线、启用强调色实线 + 计数） | |
+| 启用/停用（列表项开关，如监控规则） | `ui/Switch.vue`（Reka Switch；开 = 强调色轨道） | 复选框 |
 | 搜索 | `ui/SearchInput.vue`（图标、清空、`/` 聚焦、Esc 清空） | 裸 input |
 | 浮层菜单 / 列表 | Reka `Popover`（样式类 `.lm-pop`） | 页面内展开大块内容 |
 | 指标卡片 / 详情 | `ui/StatCard.vue` + `details/registry.ts` | |
