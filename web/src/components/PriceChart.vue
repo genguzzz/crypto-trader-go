@@ -159,12 +159,27 @@ function applySpot(ss?: Candle[]) {
 
 // ---- OI: level (area) and per-bar change (bars, like volume), each in its own band above volume ----
 const BAND = 0.14 // height of each OI band; volume keeps the bottom 18%
+// Top margin of the candles: clear the legend overlay (2–3 lines on phones) so the latest bars
+// aren't hidden under it; re-measured whenever the legend or the chart resizes.
+const legendEl = ref<HTMLElement>()
+function topMargin() {
+  const h = chart?.panes()[0]?.getHeight() || el.value?.clientHeight || 0
+  const lh = legendEl.value?.offsetHeight ?? 0
+  return h ? Math.min(0.35, Math.max(0.08, (lh + 12) / h)) : 0.08
+}
+let legendRO: ResizeObserver | undefined
+onMounted(() => {
+  legendRO = new ResizeObserver(() => layoutBands())
+  if (el.value) legendRO.observe(el.value)
+})
+watch(legendEl, (n, o) => { if (o) legendRO?.unobserve(o); if (n) legendRO?.observe(n) })
+onUnmounted(() => legendRO?.disconnect())
 function layoutBands() {
   if (!chart || !candles) return
   let bottom = 0.2
   if (oiD) { chart.priceScale('oid').applyOptions({ scaleMargins: { top: 1 - bottom - BAND, bottom } }); bottom += BAND }
   if (oiL) { chart.priceScale('oil').applyOptions({ scaleMargins: { top: 1 - bottom - BAND, bottom } }); bottom += BAND }
-  candles.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: bottom + (oiD || oiL ? 0.02 : 0) } })
+  candles.priceScale().applyOptions({ scaleMargins: { top: topMargin(), bottom: bottom + (oiD || oiL ? 0.02 : 0) } })
 }
 function applyOI(cs: Candle[], pts?: SeriesPoint[]) {
   if (!chart) return
@@ -404,7 +419,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
       <Loading overlay :show="loading" />
       <div v-if="layer === 'foot' && spacing < 20 && bars.length" class="foot-hint">横向放大（滚轮 / 双指）到足够宽才显示足迹</div>
       <button type="button" class="reset" title="回到最新、自动缩放（PC 也可双击图表）" aria-label="重置视图" :style="{ right: axisWidth + 6 + 'px' }" @click="resetView"><LocateFixed :size="15" /></button>
-      <div class="legend tnum" v-if="shown">
+      <div ref="legendEl" class="legend tnum" v-if="shown">
         <span class="muted">{{ fmtTime(shown.c.t, true) }}</span>
         <span>开 <b>{{ fmtPrice(shown.c.o) }}</b></span><span>高 <b>{{ fmtPrice(shown.c.h) }}</b></span>
         <span>低 <b>{{ fmtPrice(shown.c.l) }}</b></span><span>收 <b :class="tone(shown.c.c - shown.c.o)">{{ fmtPrice(shown.c.c) }}</b></span>
