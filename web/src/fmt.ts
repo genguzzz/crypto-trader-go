@@ -72,3 +72,19 @@ export function sign(v: number) { return v > 0 ? 'up' : v < 0 ? 'down' : '' }
 export const catLabel: Record<string, string> = { '1': '加密', '3': '股票', '4': '商品' }
 /** Chart time: seconds shifted so lightweight-charts (which renders UTC) shows the display zone. */
 export function chartTime(ms: number) { return Math.floor(ms / 1000 + tzOffsetMin(ms) * 60) as any }
+
+/**
+ * Funding rate level on its 8h-equivalent value: 0 ≤ 0.01% (OKX's baseline), 1 ≤ 0.05%,
+ * 2 ≤ 0.1%, 3 above. `rate` is per settlement, `intervalH` the settlement interval.
+ */
+export function fundingLevel(rate: number | null | undefined, intervalH = 8) {
+  if (rate == null || !isFinite(rate)) return 0
+  const r8 = (Math.abs(rate) * 8) / (intervalH || 8) * 100
+  return r8 <= 0.01 ? 0 : r8 <= 0.05 ? 1 : r8 <= 0.1 ? 2 : 3
+}
+/** CSS classes for a funding value (style.css: .fr1–.fr3 × .pos/.neg). */
+export function fundingClass(rate: number | null | undefined, intervalH = 8) {
+  const l = fundingLevel(rate, intervalH)
+  return l ? `fr${l} ${rate! > 0 ? 'pos' : 'neg'}` : ''
+}
+export const fundingLevelText = ['常态（≤0.01%/8h）', '偏高（≤0.05%/8h）', '高（≤0.1%/8h）', '极端（>0.1%/8h）']

@@ -52,6 +52,7 @@ export interface Track { ruleId: string; version: number; replayable: boolean; r
 export interface InstrumentInfo {
   instId: string; category: string; spotId?: string; listTime: number; last: number; bid: number; ask: number; tickTs: number
   spotLast?: number; fundingRate: number; fundingTime: number; fundingIntervalH: number
+  open24h?: number; high24h?: number; low24h?: number; turnover24h?: number; markPx?: number; indexPx?: number
   oiCcy: number; oiUsd: number; oiTs: number; row?: Row
   watch: boolean; eligible: boolean; tier: string; syncing: boolean; syncMsg?: string; coin?: Coin
 }

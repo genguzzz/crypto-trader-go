@@ -415,3 +415,27 @@ func (c *REST) TakerVolumeHistory(ctx context.Context, instID, period string, en
 	}
 	return out, nil
 }
+
+// MarkPrice returns the mark price of one instrument (/public/mark-price).
+func (c *REST) MarkPrice(ctx context.Context, instID string) (float64, error) {
+	var raw []map[string]string
+	if err := c.get(ctx, c.misc, "/public/mark-price", url.Values{"instType": {"SWAP"}, "instId": {instID}}, &raw); err != nil {
+		return 0, err
+	}
+	if len(raw) == 0 {
+		return 0, fmt.Errorf("mark-price %s: empty", instID)
+	}
+	return f(raw[0]["markPx"]), nil
+}
+
+// IndexPrice returns the index price for an index id such as BTC-USDT (/market/index-tickers).
+func (c *REST) IndexPrice(ctx context.Context, index string) (float64, error) {
+	var raw []map[string]string
+	if err := c.get(ctx, c.misc, "/market/index-tickers", url.Values{"instId": {index}}, &raw); err != nil {
+		return 0, err
+	}
+	if len(raw) == 0 {
+		return 0, fmt.Errorf("index-tickers %s: empty", index)
+	}
+	return f(raw[0]["idxPx"]), nil
+}

@@ -8,7 +8,7 @@ import SearchInput from '../components/ui/SearchInput.vue'
 import FilterChip from '../components/ui/FilterChip.vue'
 import ChipGroup from '../components/ui/ChipGroup.vue'
 import { api, type Row, type CatalogItem } from '../api'
-import { usd, price, logPct, fundingH, catLabel, time, sign } from '../fmt'
+import { usd, price, logPct, fundingH, fundingClass, catLabel, time, sign } from '../fmt'
 import Loading from '../components/ui/Loading.vue'
 import InstrumentWorkbench from '../components/InstrumentWorkbench.vue'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
@@ -253,7 +253,8 @@ const cols = allCols
               <td class="num"><ScoreChip :v="scoreOf(r, 'short')" side="short" /></td>
               <td class="num px">{{ price(livePrice(r)) }}</td>
               <td v-for="[k] in cols" :key="k" class="num" :class="k === 'funding_hourly' || k === 'vol_surprise_4h' ? 'sec' : sign(r.values?.[k] ?? 0)">
-                {{ k === 'funding_hourly' ? fundingH(r.values?.[k]) : k === 'vol_surprise_4h' ? (r.values?.[k] != null ? '×' + Math.exp(r.values[k]).toFixed(2) : '—') : logPct(r.values?.[k]) }}
+                <span v-if="k === 'funding_hourly'" :class="fundingClass(r.values?.[k], 1)">{{ fundingH(r.values?.[k]) }}</span>
+                {{ k === 'funding_hourly' ? '' : k === 'vol_surprise_4h' ? (r.values?.[k] != null ? '×' + Math.exp(r.values[k]).toFixed(2) : '—') : logPct(r.values?.[k]) }}
               </td>
               <td class="num sec">{{ r.mcap ? usd(r.mcap) : '—' }}</td>
               <td class="num sec">{{ usd(r.turnover12h) }}<span v-if="r.provisional" class="muted">*</span></td>

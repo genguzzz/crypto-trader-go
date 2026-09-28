@@ -3,7 +3,7 @@ import Loading from './ui/Loading.vue'
 import { computed, markRaw, ref, watch, type Component } from 'vue'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import { BookOpenText, Gauge, GitCompareArrows, ChartColumn, LayoutGrid, PanelLeftClose, PanelLeftOpen, ChevronLeft, Star } from 'lucide-vue-next'
-import { price, usd, fieldValue, catLabel, logPct, num } from '../fmt'
+import { price, usd, fieldValue, catLabel, logPct, num, fundingClass, fundingLevel, fundingLevelText } from '../fmt'
 import { useInstrument, chgClass, statusText } from '../composables/instrument'
 import { useLayoutEntry } from '../composables/layout'
 import PriceChart from './PriceChart.vue'
@@ -28,21 +28,24 @@ const { info, err, row, base, live, chartPx, score, ruleName, spread, countdown,
 const detailKey = ref<string | null>(null)
 const openDetail = (k: string) => (detailKey.value = k)
 const detailCtx = computed(() => ({ id: props.id, info: info.value!, row: row.value }))
-const ret24 = computed(() => row.value?.values?.ret_24h)
-const ret4 = computed(() => row.value?.values?.ret_4h)
+// 24h change like OKX: last vs the rolling 24h open from the WS ticker
+const chg24 = computed(() => {
+  const o = info.value?.open24h, l = live.value
+  return o && l ? { abs: l - o, pct: l / o - 1 } : null
+})
 const sc = (side: 'long' | 'short') => score.value?.[side].score ?? null
 
 // ---- side panels: toggled from the activity bar; the open set and its order are saved ----
 interface SideDef { key: string; label: string; icon: Component }
 const sides: SideDef[] = [
+  { key: 'info', label: '概况', icon: markRaw(LayoutGrid) },
   { key: 'book', label: '盘口', icon: markRaw(BookOpenText) },
   { key: 'score', label: '评分', icon: markRaw(Gauge) },
   { key: 'compare', label: '相对走势', icon: markRaw(GitCompareArrows) },
   { key: 'series', label: 'OI / 资金费', icon: markRaw(ChartColumn) },
-  { key: 'info', label: '概况', icon: markRaw(LayoutGrid) },
 ]
-const DEFAULT_OPEN = ['book', 'score']
-const PANELS_KEY = 'ctg.wb.panels'
+const DEFAULT_OPEN = ['info', 'book']
+const PANELS_KEY = 'ctg.wb.panels.v2' // v2: 概况 first and open by default
 function loadOpen(): string[] {
   try {
     const v = JSON.parse(localStorage.getItem(PANELS_KEY) || 'null')
@@ -52,11 +55,11 @@ function loadOpen(): string[] {
 }
 const open = ref<string[]>(loadOpen())
 watch(open, v => { try { localStorage.setItem(PANELS_KEY, JSON.stringify(v)) } catch { /* ignore */ } }, { deep: true })
-const openSides = computed(() => sides.filter(s => open.value.includes(s.key)).sort((a, b) => open.value.indexOf(a.key) - open.value.indexOf(b.key)))
+const openSides = computed(() => sides.filter(s => open.value.includes(s.key))) // activity-bar order
 function toggleSide(k: string) {
   open.value = open.value.includes(k) ? open.value.filter(x => x !== k) : [...open.value, k]
 }
-const sideKey = computed(() => 'ctg.wb.side.' + open.value.join('+')) // one saved split per panel set
+const sideKey = computed(() => 'ctg.wb.side.' + openSides.value.map(s => s.key).join('+')) // one saved split per panel set
 useLayoutEntry('ctg.wb', '工作台面板与比例', () => open.value.join() !== DEFAULT_OPEN.join() || Object.keys(localStorage).some(k => k.startsWith('ctg.wb.')), () => {
   for (const k of Object.keys(localStorage)) if (k.startsWith('ctg.wb.') || k.startsWith('ctg.scanner.split')) localStorage.removeItem(k)
   open.value = [...DEFAULT_OPEN]
@@ -85,36 +88,38 @@ useLayoutEntry('ctg.wb', '工作台面板与比例', () => open.value.join() !==
         </div>
       </div>
       <div class="pxb">
-        <span class="px tnum" :class="chgClass(ret24)">{{ price(live) }}</span>
-        <span class="chgs tnum">
-          <span :class="chgClass(ret24)"><small>24h</small>{{ logPct(ret24) }}</span>
-          <span :class="chgClass(ret4)"><small>4h</small>{{ logPct(ret4) }}</span>
-        </span>
+        <span class="px tnum" :class="chgClass(chg24?.abs)">{{ price(live) }}</span>
+        <span class="chg tnum" :class="chgClass(chg24?.abs)">{{ chg24 ? (chg24.abs >= 0 ? '+' : '−') + price(Math.abs(chg24.abs)) + ' (' + (chg24.pct >= 0 ? '+' : '') + (chg24.pct * 100).toFixed(2) + '%)' : '—' }}</span>
       </div>
+      <!-- OKX-style ticker items: label on top (12px grey), value below (12px medium); scrolls sideways -->
       <div class="kvs tnum">
-        <button type="button" class="kv" @click="openDetail('score')">
-          <span class="k">评分 · {{ ruleName }}</span>
-          <span class="v"><small>多</small><b :class="(sc('long') ?? 0) >= 50 ? 'up' : ''">{{ sc('long')?.toFixed(0) ?? '—' }}</b><small>空</small><b :class="(sc('short') ?? 0) >= 50 ? 'down' : ''">{{ sc('short')?.toFixed(0) ?? '—' }}</b></span>
+        <div class="kv"><span class="k">标记价格</span><span class="v">{{ info.markPx ? price(info.markPx) : '—' }}</span></div>
+        <div class="kv"><span class="k">指数价格</span><span class="v">{{ info.indexPx ? price(info.indexPx) : '—' }}</span></div>
+        <button type="button" class="kv" :title="'资金费水平：' + fundingLevelText[fundingLevel(info.fundingRate, info.fundingIntervalH)]" @click="openDetail('funding')">
+          <span class="k">资金费率 ({{ info.fundingIntervalH || '?' }} 小时) / 倒计时</span>
+          <span class="v"><b :class="fundingClass(info.fundingRate, info.fundingIntervalH)">{{ (info.fundingRate * 100).toFixed(4) }}%</b> / {{ countdown }}</span>
         </button>
-        <button type="button" class="kv" @click="openDetail('funding')">
-          <span class="k">资金费 {{ info.fundingIntervalH || '?' }}h · {{ countdown }}</span>
-          <span class="v"><b :class="chgClass(info.fundingRate)">{{ (info.fundingRate * 100).toFixed(4) }}%</b></span>
-        </button>
+        <div class="kv"><span class="k">24 小时最低</span><span class="v">{{ info.low24h ? price(info.low24h) : '—' }}</span></div>
+        <div class="kv"><span class="k">24 小时最高</span><span class="v">{{ info.high24h ? price(info.high24h) : '—' }}</span></div>
         <button type="button" class="kv" @click="openDetail('oi')">
-          <span class="k">持仓量 · 4h</span>
-          <span class="v"><b>{{ usd(info.oiUsd) }}</b><em :class="chgClass(row?.values?.oi_chg_4h)">{{ logPct(row?.values?.oi_chg_4h) }}</em></span>
+          <span class="k">持仓量 (USDT) · 4h</span>
+          <span class="v">{{ usd(info.oiUsd) }} <em :class="chgClass(row?.values?.oi_chg_4h)">{{ logPct(row?.values?.oi_chg_4h) }}</em></span>
         </button>
         <button type="button" class="kv" @click="openDetail('turnover')">
-          <span class="k">12h 成交额</span>
-          <span class="v"><b>{{ usd(row?.turnover12h) }}</b><em>{{ row?.values?.vol_surprise_4h != null ? '×' + Math.exp(row.values.vol_surprise_4h).toFixed(2) : '' }}</em></span>
+          <span class="k">24 小时额 (USDT)</span>
+          <span class="v">{{ info.turnover24h ? usd(info.turnover24h) : '—' }} <em title="12h 成交额">12h {{ usd(row?.turnover12h) }}</em></span>
         </button>
-        <button type="button" class="kv hide-md" @click="openDetail('book')">
-          <span class="k">点差</span>
-          <span class="v"><b>{{ num(spread, 1) }}</b><em>bps</em></span>
+        <button type="button" class="kv" @click="openDetail('supply')">
+          <span class="k">总市值</span>
+          <span class="v">{{ info.coin?.marketCap ? usd(info.coin.marketCap) : '—' }}</span>
         </button>
-        <button v-if="info.spotId" type="button" class="kv hide-md" @click="openDetail('spot')">
+        <button type="button" class="kv" @click="openDetail('score')">
+          <span class="k">评分 · {{ ruleName }}</span>
+          <span class="v"><small>多</small> <b :class="(sc('long') ?? 0) >= 50 ? 'up' : ''">{{ sc('long')?.toFixed(0) ?? '—' }}</b> <small>空</small> <b :class="(sc('short') ?? 0) >= 50 ? 'down' : ''">{{ sc('short')?.toFixed(0) ?? '—' }}</b></span>
+        </button>
+        <button v-if="info.spotId" type="button" class="kv" @click="openDetail('spot')">
           <span class="k">现货 · 基差</span>
-          <span class="v"><b>{{ price(info.spotLast) }}</b><em>{{ fieldValue('basis', row?.values?.basis) }}</em></span>
+          <span class="v">{{ price(info.spotLast) }} <em>{{ fieldValue('basis', row?.values?.basis) }}</em></span>
         </button>
       </div>
       <button class="star" :class="{ on: info.watch }" :aria-pressed="info.watch" :title="info.watch ? '取消自选' : '加入自选'" @click="toggleWatch">
@@ -199,24 +204,24 @@ useLayoutEntry('ctg.wb', '工作台面板与比例', () => open.value.join() !==
 .sym-t b small { font-size: var(--fs-sm); color: var(--text-3); font-weight: 500; }
 .sym-m { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
 .rk { color: var(--accent); }
-.pxb { display: grid; line-height: 1.15; flex: none; min-width: 110px; }
-.px { font-size: var(--fs-xl); font-weight: 700; color: var(--text-1); }
-.chgs { display: inline-flex; gap: 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); }
-.chgs small { font-weight: 500; color: var(--text-3); margin-right: 3px; }
+.pxb { display: grid; line-height: 1.2; flex: none; min-width: 120px; }
+.px { font-size: var(--fs-xl); font-weight: 600; color: var(--text-1); }
+.chg { font-size: var(--fs-sm); font-weight: 500; color: var(--text-2); }
 .up { color: var(--up) !important; } .down { color: var(--down) !important; }
-.kvs { display: flex; gap: 2px; min-width: 0; overflow: hidden; flex: 1; }
-.kv { all: unset; box-sizing: border-box; display: grid; line-height: 1.25; padding: 4px 10px; border-radius: 6px; cursor: pointer; min-width: 0; flex: none; }
-@media (hover: hover) { .kv:hover { background: var(--bg-3); } }
+.kvs { display: flex; gap: 20px; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; padding: 0 4px; }
+.kvs::-webkit-scrollbar { display: none; }
+.kv { all: unset; box-sizing: border-box; display: grid; gap: 2px; line-height: 16px; flex: none; font-size: var(--fs-sm); }
+button.kv { cursor: pointer; }
+@media (hover: hover) { button.kv:hover .k { color: var(--text-1); } }
 .kv:focus-visible { outline: 2px solid var(--accent); }
-.kv .k { font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.kv .v { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; font-size: var(--fs-sm); }
-.kv .v b { color: var(--text-1); font-weight: 600; }
-.kv .v small { color: var(--text-3); font-size: var(--fs-xs); }
-.kv .v em { font-style: normal; color: var(--text-3); font-size: var(--fs-xs); }
+.kv .k { color: var(--text-3); white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; transition: color .12s; }
+.kv .v { color: var(--text-1); font-weight: 500; white-space: nowrap; }
+.kv .v b { font-weight: 600; }
+.kv .v small { color: var(--text-3); font-size: var(--fs-sm); font-weight: 400; }
+.kv .v em { font-style: normal; color: var(--text-3); font-weight: 400; }
 .star { all: unset; box-sizing: border-box; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: var(--text-3); cursor: pointer; flex: none; }
 .star.on { color: var(--gold); }
 @media (hover: hover) { .star:hover { background: var(--bg-3); } }
-@media (max-width: 1400px) { .hide-md { display: none; } }
 
 /* body: splitters + activity bar */
 .body { flex: 1; min-height: 0; display: flex; }
