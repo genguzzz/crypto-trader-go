@@ -12,15 +12,17 @@ import (
 	"strings"
 	"time"
 
+	"crypto-trader-go/internal/alerts"
 	"crypto-trader-go/internal/features"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/rules"
 )
 
 type Server struct {
-	E     *market.Engine
-	Web   fs.FS        // built SPA (index.html + assets)
-	Icons http.Handler // coin icon proxy (optional)
+	E      *market.Engine
+	Web    fs.FS           // built SPA (index.html + assets)
+	Icons  http.Handler    // coin icon proxy (optional)
+	Alerts *alerts.Service // monitoring rules + delivery (optional)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -72,6 +74,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/settings", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.E.Settings()) })
 	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
 	mux.HandleFunc("GET /api/v1/stream", s.stream)
+	if s.Alerts != nil {
+		s.alertRoutes(mux)
+	}
 	if s.Icons != nil {
 		mux.Handle("GET /api/v1/icons/{ccy}", s.Icons)
 	}

@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS orderflow_1m(inst_id TEXT NOT NULL, ts INTEGER NOT NU
   step REAL, levels BLOB, PRIMARY KEY(inst_id, ts)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS taker_volume(inst_id TEXT NOT NULL, period TEXT NOT NULL, ts INTEGER NOT NULL, buy REAL, sell REAL,
   PRIMARY KEY(inst_id, period, ts)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS alert_rules(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, enabled INTEGER NOT NULL,
+  type TEXT NOT NULL, params TEXT NOT NULL, scope TEXT NOT NULL, inst_id TEXT NOT NULL DEFAULT '', cooldown_min INTEGER NOT NULL,
+  channels TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, rule_id INTEGER NOT NULL,
+  rule_name TEXT NOT NULL, inst_id TEXT NOT NULL, type TEXT NOT NULL, value REAL, message TEXT NOT NULL, delivery TEXT NOT NULL DEFAULT '{}');
+CREATE INDEX IF NOT EXISTS alert_events_ts ON alert_events(ts);
 `
 
 func Open(path string) (*Store, error) {

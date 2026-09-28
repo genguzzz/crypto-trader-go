@@ -137,6 +137,9 @@ type Engine struct {
 	subMu sync.Mutex
 	subs  map[chan Event]bool
 
+	confirmedMu sync.Mutex
+	onConfirmed []func(*Snapshot) // called once per confirmed live minute (alerts)
+
 	trackMu    sync.Mutex
 	trackCache map[string]trackEntry
 
