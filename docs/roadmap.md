@@ -1,45 +1,45 @@
-# 里程碑与待办
+# Roadmap
 
-> 单一入口：新需求先记在这里（待办），开始做时开 OpenSpec change，完成后移到“已完成”。
+Planned work lives in GitHub issues, tracked by the pinned **[Roadmap issue #6](https://github.com/genguzzz/crypto-trader-go/issues/6)**. Anyone can pick up an unclaimed item — see [claiming work](contributing.md#claiming-work). This file records what has shipped.
 
-## 已完成
+## Planned
 
-| 日期 | 里程碑 |
+| Priority | Issue | Status |
+|---|---|---|
+| P1 | [#1 Authentication and access control](https://github.com/genguzzz/crypto-trader-go/issues/1) | needs design |
+| P1 | [#2 Monitoring: complete alert conditions, delivery and noise control](https://github.com/genguzzz/crypto-trader-go/issues/2) | needs design |
+| P2 | [#3 Strategy system with backtesting and paper trading](https://github.com/genguzzz/crypto-trader-go/issues/3) | needs design |
+| P2 | [#4 Agent access: documented API and MCP server](https://github.com/genguzzz/crypto-trader-go/issues/4) | blocked by #1 |
+| P3 | [#5 Internationalization: English and Chinese UI](https://github.com/genguzzz/crypto-trader-go/issues/5) | ready |
+
+The backlog of smaller, not yet filed items is listed in the Roadmap issue. Issue labels are the source of truth for status.
+
+## Shipped
+
+| Date | Milestone |
 |---|---|
-| 2026-09-19 | 阶段 1 调研与端到端蓝图（`openspec/changes/archive/2026-09-19-*`） |
-| 2026-09-26 | 实测修订蓝图：候选池规模、股票/商品永续、tickers 带宽、评分方向证伪（`docs/blueprint/revision-2026-09-26.md`） |
-| 2026-09-26 | I0–I3 首版：全池录制、每分钟监控池、事实面板、规则与战绩、Vue 界面（`openspec/changes/recorder-scanner-i0-i3`） |
-| 2026-09-27 | 功能：每 10 秒盘中重算；1H 深度 30 天、回放 14 天、7 天 1m 历史回补；币种图标；设置页（阈值默认 500 万 USDT、N、类别、默认规则）；指标卡片详情（实时盘口 400 档、USDT 深度图与推价成本、成交额/持仓量/资金费/基差） |
-| 2026-09-27 | 界面：设计 token 与信息层级重构；说明文字收进 InfoTip/Modal；PC 面板拖拽与顶部布局菜单；Reka UI 组件库（分段/下拉/筛选/搜索）；导航重设计与手机底部标签栏；PC 单滚动区；手机不横向溢出；设置页秒开 + API gzip。规范见 `docs/design-guidelines.md` |
-| 2026-09-27 | 搜索覆盖 OKX 全部 USDT 永续（目录常驻内存，点开才按需下载近 7 天历史）；数据分层淘汰（自选/活跃池/最近查看/全池录制/未跟踪 × 各周期表独立保留期与容量配额，总上限默认 2 GB，设置页可改）（`openspec/changes/storage-retention-and-search`） |
-| 2026-09-27 | 上线：old-server Docker（distroless 运行时 + 挂载二进制，`deploy/deploy.sh` 一键升级/回滚），`https://ctg.gugenzzz.top`（nginx SNI 默认路由 + 通配符证书），复用本机数据库 |
-| 2026-09-27 | K 线订单流：Delta/CVD（本机逐笔 + OKX rubik 主动买卖量历史）与足迹图（活跃池/自选/查看中合约逐笔录制）；K 线十字光标明细与距现价百分比；详情页总市值/流通比例（CoinGecko）；手机端点击稳定性（排序冻结、悬停/按压分离）、详情自选大按钮、弹窗改底部抽屉（PC 顶部对齐） |
-| 2026-09-27 | 迁移：服务器从 old-server 换到 ctg-prod（VPS 东京 2C/4G，Debian 13，xanmod BBRv3）；数据整库迁移，`ctg.gugenzzz.top` A/AAAA 改指 ctg-prod；GitHub Actions 部署密钥与 Secrets 重配到 ctg-prod |
-| 2026-09-29 | 扫描列表：排序下拉旁加升/降序切换按钮；资金费（已结算，折合每小时，分级色同详情）PC 列表移到价格前、手机卡片第一行显示；每行底色长条表示持仓量（USDT），对数平滑 r/(1+r)、r=√(OI/半满点)，半满点默认 500 万、设置 → 显示可改（仅本浏览器）；排序新增“持仓量” |
-| 2026-09-28 | 显示时区（默认 UTC+8，设置页可改）；K 线未收盘 K 线每秒刷新（仅详情页可见时），1H/4H 未收盘 K 线含当前分钟；叠加按钮改为“现货 / OI”开关，无数据置灰；盘口改用 books-full（每侧 5000 档，BTC 覆盖约 ±1%），超出覆盖的深度范围置灰；卡片顺序 评分 → 总市值 → 盘口 → 现货 |
-| 2026-09-28 | 更名 OKX Helper，新应用图标与 PWA manifest；配色改为 OKX 风格（纯黑底、中性灰、荧光绿强调、OKX 涨跌色），图表颜色集中到 `theme.ts`；K 线切换图层/周期/叠加时保持视图锚点（右边缘时间、可见根数、手动价格轴），请求并行 + 过期丢弃 + 按周期缓存；图表与盘口加载动画；删除 DraggablePanels 与旧颜色别名，开启 noUnusedLocals |
-| 2026-09-28 | PC 工作台布局（TradingView/OKX 式）：左侧合约列表可折叠、列数随宽度自适应；K 线为主区域铺满高度；右侧 IDE 式面板栏（盘口/评分/相对走势/OI 资金费/概况）由活动栏开关；所有分割线可拖动、比例自动保存（Reka UI Splitter）；K 线全屏按钮（原生全屏，iPhone 退回整窗覆盖）；手机保留纵向详情页 |
-| 2026-09-28 | 深度图去掉 0.5/1/2/5% 切换，固定显示 ±5%（不足则取盘口覆盖范围）；足迹图未回补 POC 只画最近 5 条、图例加颜色说明与读法；趋势信号调研（`docs/research-trend-signals.md`）：新增 β 中性残差收益、EMA 趋势、效率比、15m 字段与三条对照规则；默认评分规则改为“残差反转（β 中性）”（浏览器只记住手动选择的规则，未手动选过的跟随服务器默认） |
-| 2026-09-28 | 系统页 / 设置页重做：系统页顶部健康总览（一眼看是否正常 + 5 个关键数）+ 左侧分区导航（scroll-spy，手机为横向胶囊），存储占用/配额/保留期明细从设置移到系统页“数据存储”；设置页按监控池 / 评分规则 / 数据存储 / 显示分组卡片，标签+说明在左、控件在右，未保存计数 + 撤销 + 行内校验 |
-| 2026-09-28 | 强平数据与清算图：OKX 公共 `liquidation-orders`（免费、无需账户，逐笔不节流，OKX 保留约 24h）每分钟同步活跃池/自选/最近查看的合约，本机存逐笔、保留 30 天；K 线“强平”叠加（每根 K 线多/空强平额，独立区域）；工作台“强平”侧栏与手机详情页（近 1/4/24h 多空合计、15m/1H/4H 柱图、最新 20 笔）；“清算图”叠加（估算：近 7 天每小时 OI 增量按 5–100x 杠杆分布推算强平价，OI 减少按比例缩小、被 K 线穿过即移除，价格区右侧横条 + 累计线，光标处显示累计额）。调研：Coinglass 等清算热力图 API 需付费；Binance/OKX WS 强平频道每合约每秒只推 1 笔，故用 REST |
-| 2026-09-27 | 足迹图完善：统一档位 + 随缩放自动合并、POC/70% 价值区/对角与堆叠失衡/未回补 POC；详情页头部重排（K 线首屏可见）：返回/自选改小图标，价格右侧资金费/持仓量/12h 额可点开详情，评分拆解并入卡片（详情里含全部字段），卡片改单行横滑 |
+| 2026-09-19 | Research and end-to-end plan (superseded by [decisions](decisions.md)) |
+| 2026-09-26 | Plan revised with measured public-API data: pool size, stock/commodity perps, ticker bandwidth, score direction falsified |
+| 2026-09-26 | I0–I3 first release: universe recording, per-minute pool, fact panel, rules and track record, Vue UI |
+| 2026-09-27 | 10 s intraminute preview; 30-day 1H depth, 14-day replay, 7-day 1m backfill; coin icons; Settings page (threshold default 5M USDT, N, categories, default rule); metric cards with detail views (live order book, USDT depth chart with price-impact cost, turnover / OI / funding / basis) |
+| 2026-09-27 | UI overhaul: design tokens and information hierarchy; explanations moved into InfoTip/Modal; Reka UI component library; new navigation with a phone tab bar; single scroll area on PC; no horizontal overflow on phones; instant Settings and gzip API ([guidelines](design-guidelines.md)) |
+| 2026-09-27 | Search covers every OKX USDT perp (in-memory catalog, history downloaded on first open); tiered retention with per-table retention and quotas, 2 GB default cap |
+| 2026-09-27 | Production on Docker (distroless runtime + mounted binary, `deploy/deploy.sh` upgrade/rollback) at https://ctg.gugenzzz.top |
+| 2026-09-27 | K-line order flow: delta/CVD (local trades + OKX rubik taker volume) and footprint; crosshair details; market cap / circulating share (CoinGecko); tap stability on phones; bottom-sheet dialogs |
+| 2026-09-27 | Footprint: shared level step with zoom-based merging, POC / 70% value area / diagonal and stacked imbalances / naked POCs; detail header reorganized so the chart is visible on the first screen |
+| 2026-09-27 | Server moved from old-server to ctg-prod (VPS Tokyo 2C/4G); database migrated; DNS and CI secrets repointed |
+| 2026-09-28 | Display time zone (default UTC+8); per-second updates of the open candle; spot/OI overlay toggles; full-depth order book (5000 levels per side) |
+| 2026-09-28 | Renamed OKX Helper with new icon and PWA manifest; OKX palette; chart view anchored across layer/period switches; loading states |
+| 2026-09-28 | PC workbench layout: collapsible contract list, chart-first main area, IDE-style side panels, resizable splits, K-line fullscreen |
+| 2026-09-28 | Depth chart fixed at ±5%; trend-signal research ([report](research-trend-signals.md)): β-neutral residual returns, EMA trend, efficiency ratio, 15m fields and three reference rules; default rule "Residual reversal (β-neutral)" |
+| 2026-09-28 | System and Settings pages redone: health summary, section navigation, storage details on System; grouped settings with unsaved count, undo and inline validation |
+| 2026-09-28 | Monitoring tab: price move, score and funding alert rules evaluated each confirmed minute, Telegram/webhook delivery, history (open questions moved to [#2](https://github.com/genguzzz/crypto-trader-go/issues/2)) |
+| 2026-09-28 | Liquidations: OKX public liquidation orders recorded per minute for the order-flow set (30 days); K-line liquidation band, liquidation panel, estimated liquidation map overlay (hourly OI increments over 5–100x leverage tiers). Paid heatmap APIs and the throttled WS channel were rejected |
+| 2026-09-29 | Scanner list: sort-direction toggle; funding column moved forward on PC and shown on phone cards (graded colors); open-interest bar as the row background (log-logistic scale, configurable half point) |
+| 2026-09-29 | English documentation, contribution conventions, worktree + pull request workflow, issue-based roadmap |
 
-## 进行中
+## Rules
 
-- **监控提醒（demo，分支 `worktree-agent-a7e6b1bb286ec0d71`，未上线）**：新增“监控”标签页与 `internal/alerts`。每个已收盘分钟（不含 10 秒预览）用事实面板与规则分数检查三类规则：价格异动（15m/1h/4h/24h 涨跌幅 ≥ X%，可选方向）、规则分数（某评分规则多/空分 ≥ 阈值）、资金费（已结算或预测，每小时 ≥ X%）；范围 = 活跃池 / 自选 / 单个合约。统一边沿触发（条件由不满足变满足才触发）+ 每（规则, 合约）冷却；新建/修改/重启后第一分钟只记录状态不触发；缺字段不改变状态。推送：Telegram（同一分钟合并一条消息）与 Webhook（每条一个 POST JSON，可选 `X-CTG-Secret` 请求头），异步发送、10s 超时、网络错误/429/5xx 重试 3 次；Token/密钥/Webhook 地址只存服务器，接口只返回末 4 位。历史保留 30 天、最多 5000 条。
-  - 待定设计问题：① 是否需要“持续满足时每隔 N 分钟重复提醒”的电平触发选项（目前只有边沿触发）；② 规则分数是池内分位，行情剧烈时同一分钟可能有几十个合约同时越线——是否需要“每分钟每规则最多 N 条 / 只推前 N 名”；③ 是否要更多类型（OI 变化、放量倍数、点差、任意事实面板字段的通用“字段 阈值”规则、组合条件 AND/OR）；④ 阈值口径：价格用简单收益 %，资金费用 %/小时（是否改成按结算周期或年化显示）；⑤ 线上目前无登录，任何人可改推送配置并触发测试发送（依赖待办 1“账号登录”）；⑥ 是否需要静默时段、按规则选不同 Telegram 会话。
-
-## 待办（按优先级）
-
-1. [ ] **账号登录**：目前线上无登录、任何人可访问并修改设置/规则/自选。计划做正式登录（会话 Cookie + 密码哈希、登录页、写操作鉴权、登录限速），替代已移除的 HTTP Basic（2026-09-27 移除）。
-2. [ ] **I0 退出条件**：服务器（ctg-prod）连续运行 72h，分钟覆盖 ≥99.9%、0 未修复缺口（看“系统”页与 `deploy/deploy.sh --status`）。
-3. [ ] 战绩积累后复盘：≥30 天上线后记录再评估三条对照规则与自定义规则。
-4. [ ] 评分方法可选项：z-score（截尾）替代分位、BTC beta 中性化、按滚动 IC 加权组合（需先有足够样本外数据）。
-5. [ ] 订单流失衡作为评分字段（15m/1h 主动买卖差占比）：需要全池逐笔或 rubik 5m 主动买卖量进入实时序列（`docs/research-trend-signals.md` §2）。
-6. [ ] 数据库迁移预案：多实例或数据量超出 SQLite 时改 PostgreSQL（只改 `internal/store`）。
-7. [ ] I4（需单独批准）：只读 OKX 仓位与离场评估；新闻/解锁/链上持有人数据源。
-
-## 约定
-
-- 不改变口径的前提下可直接做；改变口径/新增数据源/涉及账户权限的，先在这里记录并与用户确认。
-- 每个里程碑完成后更新本文件与 `README.md` 状态。
+- New work starts as an issue ([requirement conventions](contributing.md#requirements)); add it to the Roadmap issue.
+- Changing a definition (pool rules, field formulas, scoring semantics), adding a data source or touching account permissions needs the owner's confirmation first.
+- When a change ships, add a row above in the same pull request.

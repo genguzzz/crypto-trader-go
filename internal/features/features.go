@@ -1,6 +1,6 @@
 // Package features computes the "fact panel": direction-free, unit-labelled per-instrument
 // measurements. The same Compute runs on live 1m-backed series and on hourly replay series, so
-// live and historical values share one definition (blueprint revision §2.1).
+// live and historical values share one definition (docs/decisions.md).
 package features
 
 import (

@@ -9,7 +9,7 @@ name: deploy
 on:
   push:
     branches: [main]
-    paths-ignore: ['**.md', 'docs/**', 'research/**', 'openspec/**', '.claude/**']
+    paths-ignore: ['**.md', 'docs/**', 'research/**', '.claude/**', '.github/ISSUE_TEMPLATE/**', '.github/pull_request_template.md']
   workflow_dispatch:
 
 concurrency:
