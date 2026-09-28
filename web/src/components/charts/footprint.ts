@@ -18,6 +18,7 @@ const STACK_MIN = 3
 const VALUE_AREA = 0.7
 const MIN_ROW_PX = 12 // regroup levels (×2, ×10, …) until a row is at least this tall
 const MULTS = [1, 2, 10, 20, 100, 200, 1000] // each divides the next (same rule as the server)
+const NAKED_MAX = 5 // only the most recent untested POCs: older ones turned the chart into a wall of lines
 
 interface BarCalc {
   levels: Level[] // at the display step, ascending
@@ -240,7 +241,8 @@ export class Footprint implements ISeriesPrimitive<Time> {
   }
 
   /** Naked POC: a closed bar's POC that no later candle's [low, high] has traded through yet —
-   *  drawn as a dashed line from that bar to the right edge. The forming (last) bar is skipped. */
+   *  drawn as a dashed line from that bar to the right edge. The forming (last) bar is skipped;
+   *  only the NAKED_MAX most recent are drawn. */
   private drawNakedPOCs(ctx: CanvasRenderingContext2D, ts: ReturnType<IChartApi['timeScale']>, series: ISeriesApi<SeriesType>, hr: number, vr: number, widthPx: number) {
     const cs = this.candles
     if (!cs.length) return
@@ -249,7 +251,9 @@ export class Footprint implements ISeriesPrimitive<Time> {
     ctx.setLineDash([4 * hr, 3 * hr])
     ctx.strokeStyle = 'rgba(245,197,66,.85)'
     const lastTime = cs[cs.length - 1].time
-    for (const { time, fb } of this.bars) {
+    let drawn = 0
+    for (let k = this.bars.length - 1; k >= 0 && drawn < NAKED_MAX; k--) {
+      const { time, fb } = this.bars[k]
       if (time >= lastTime) continue
       const c = this.calc(time, fb)
       const p = c.poc + c.step / 2
@@ -265,6 +269,7 @@ export class Footprint implements ISeriesPrimitive<Time> {
       ctx.moveTo(x0 == null ? 0 : Math.round(x0 * hr), yy)
       ctx.lineTo(widthPx, yy)
       ctx.stroke()
+      drawn++
     }
     ctx.setLineDash([])
   }

@@ -71,7 +71,7 @@ const tipLeft = computed(() => (hover.value ? Math.min(Math.max(hover.value.px +
       <path :d="askPath.area" class="area ask" /><path :d="askPath.line" class="line ask" />
       <line :x1="x(0)" :x2="x(0)" :y1="pad.t" :y2="H - pad.b" class="midline" />
       <g class="axis">
-        <text v-for="t in xTicks" :key="'x' + t" :x="x(t)" :y="H - 6" :text-anchor="t === -range ? 'start' : t === range ? 'end' : 'middle'">{{ t > 0 ? '+' : '' }}{{ t }}%</text>
+        <text v-for="t in xTicks" :key="'x' + t" :x="x(t)" :y="H - 6" :text-anchor="t === -range ? 'start' : t === range ? 'end' : 'middle'">{{ t > 0 ? '+' : '' }}{{ +t.toFixed(2) }}%</text>
         <text v-for="t in yTicks" :key="'yl' + t" :x="W - pad.r + 6" :y="y(t) + 4">{{ usd(t) }}</text>
       </g>
       <g v-if="hover" class="cross">

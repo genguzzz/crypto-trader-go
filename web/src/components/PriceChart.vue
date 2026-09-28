@@ -302,7 +302,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <b>十字光标</b>：左上角显示所指 K 线的开高低收、涨跌幅（对上一根收盘）、振幅与成交额；右侧价格标签显示光标价位<b>距现价</b>的百分比。手机上长按后拖动。<br />
         <b>订单流</b>：主动买入（taker buy）与主动卖出的 USDT 成交额。<b>Delta</b> = 买 − 卖（下方柱），<b>CVD</b> = 区间内 Delta 累计（黄线）。本机逐笔录制的 K 线颜色较深；更早的由 OKX 统计的 5m/1H 主动买卖量补充（颜色较浅，1m 周期没有）。<br />
         <b>足迹</b>：每根 K 线内每个价位的主动卖（左，红）/ 主动买（右，绿），颜色深浅按<b>当前可见范围</b>内最大的单价位成交额换算（跨 K 线可比）。价位档会随纵向缩放自动合并（×2、×10…），左上角显示当前每档大小；拖动右侧价格轴可纵向放大看更细的档位，横向放大到够宽时显示数字。有足迹的 K 线来自逐笔成交：活跃池、自选、正在查看的合约实时录制；打开详情页时自动回补保留期内（查看/活跃 3 天、自选 7 天）缺失的分钟——整天的用 OKX 官方每日逐笔成交文件（按北京时间分天，次日发布），当天尚未发布的部分用 OKX 历史成交接口补最近一段。只有一整根 K 线的每分钟都齐全才画足迹。<br />
-        <b>POC / 价值区</b>：黄框为该根 K 线成交最多的价位（Point of Control）；每根 K 线左侧的细金线是价值区（从 POC 向两侧扩展、覆盖 70% 成交额的价格区间），数值见左上角。<b>未回补 POC</b>：已收盘 K 线的 POC 之后没有任何 K 线的最高–最低价穿过它，就用金色虚线画到最右侧，被穿过后不再显示——常用来观察价格是否会回来“回补”。<br />
+        <b>POC / 价值区</b>：黄框为该根 K 线成交最多的价位（Point of Control）；每根 K 线左侧的细金线是价值区（从 POC 向两侧扩展、覆盖 70% 成交额的价格区间），数值见左上角。<b>未回补 POC</b>：已收盘 K 线的 POC 之后没有任何 K 线的最高–最低价穿过它，就用金色虚线画到最右侧（只画最近 5 条），被穿过后不再显示——常用来观察价格是否会回来“回补”。<br />
+        <b>怎么读</b>：① 先看 POC 在 K 线的上部还是下部：收阳且 POC 在上部 = 高位有人接、偏强；收阳但 POC 在下部、上影线处成交稀薄 = 上涨没人跟。② 在区间高点出现大量主动买却涨不上去（吸收）、或新高处成交突然变少（衰竭），是常见的反转线索。③ 堆叠失衡所在价位常成为之后的支撑/阻力。④ 这些都是“发生了什么”的描述，不是预测，要结合更大周期和成本判断。<br />
         <b>失衡</b>（对角比较）：某价位的主动买 ≥ 低一档主动卖的 3 倍，在右侧标绿色竖条、数字变绿；主动卖 ≥ 高一档主动买的 3 倍，在左侧标红色竖条。量太小（低于该 K 线各价位单边成交额中位数）的不算。连续 3 档及以上同方向失衡为<b>堆叠失衡</b>，该侧加描边，常被当作主动方强势的信号，不是必然。<br />
         <b>成交额柱</b>：底部柱为该根 K 线的 USDT 成交额，绿涨红跌。缺失分钟显示为空档；最后一根为未收盘 K 线。<br />
         <b>现货 / OI</b>：现货为 OKX 同名 USDT 现货收盘价（黄线），和合约 K 线共用右侧价格轴，缩放、拖动都跟随 K 线，两者的间距就是基差；<b>OI Δ</b>（默认开）为持仓量变化柱：每根 K 线相对上一根的增减，蓝增橙减，和成交额柱一样画在 K 线下方的独立区域；<b>OI</b> 为持仓量走势（面积图），在变化柱上方再占一条。左上角显示持仓量与变化（近期逐分钟采样；更早只有 1 小时采样，小周期在那段没有变化柱）。没有对应数据时按钮置灰。<br />
@@ -344,6 +345,13 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
           </template>
           <span v-else class="muted">这根 K 线没有订单流数据{{ bar === '1m' ? '（1m 只有本机逐笔录制）' : '' }}</span>
           <span v-if="!recording" class="muted">· 未在录制逐笔</span>
+          <template v-if="layer === 'foot'">
+            <br />
+            <span class="key"><i class="k-cell"><em class="s"></em><em class="b"></em></i>左卖右买</span>
+            <span class="key"><i class="k-poc"></i>POC 成交最多价位</span>
+            <span class="key"><i class="k-va"></i>价值区 70%</span>
+            <span class="key"><i class="k-naked"></i>未回补 POC</span>
+          </template>
         </template>
       </div>
       <div v-if="axisLabel" class="axis-lbl tnum" :style="{ top: axisLabel.top - 16 + 'px', width: axisWidth + 'px' }">
@@ -372,6 +380,12 @@ h3 { display: flex; justify-content: space-between; align-items: center; flex-wr
 .legend span { margin-right: 8px; white-space: nowrap; }
 .legend b { color: var(--text-1); font-weight: 500; }
 .legend b.up { color: var(--up); } .legend b.down { color: var(--down); } .legend b.poc { color: #f5c542; } .legend b.oi { color: #7aa7ff; } .legend small.up { color: var(--up); } .legend small.down { color: var(--down); } .legend b.spot { color: #f5c542; }
+.legend .key { display: inline-flex; align-items: center; gap: 4px; }
+.key i { display: inline-block; flex: none; }
+.k-cell { display: inline-flex !important; width: 14px; height: 9px; } .k-cell em { flex: 1; } .k-cell .s { background: rgba(246,70,93,.7); } .k-cell .b { background: rgba(14,203,129,.7); }
+.k-poc { width: 12px; height: 8px; border: 1px solid #f5c542; }
+.k-va { width: 2px; height: 10px; background: rgba(245,197,66,.7); }
+.k-naked { width: 14px; border-top: 1px dashed #f5c542; }
 .axis-lbl { position: absolute; right: 0; z-index: 3; pointer-events: none; display: grid; justify-items: center; padding: 1px 0; background: #2b3242; border-radius: 2px; font-size: 10px; line-height: 15px; color: var(--text-1); }
 .axis-lbl b { font-weight: 500; }
 .axis-lbl .up { color: var(--up); } .axis-lbl .down { color: var(--down); }
