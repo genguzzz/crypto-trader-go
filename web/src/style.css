@@ -6,17 +6,18 @@
  *         numbers always tabular so columns don't jitter while prices update.
  */
 :root {
-  /* surfaces */
+  /* surfaces (values measured on OKX's web terminal) */
   --bg-0: #000000;       /* app background */
   --bg-1: #0e0e0e;       /* panel */
-  --bg-2: #171717;       /* raised / hover */
-  --bg-3: #222222;       /* input / selected */
+  --bg-2: #1a1a1a;       /* raised / hover */
+  --bg-3: #262626;       /* input / selected */
   --line: #1d1d1d;       /* hairline */
-  --line-2: #2e2e2e;     /* stronger border */
+  --line-2: #383838;     /* stronger border (inputs, chips) */
   /* text */
-  --text-1: #f5f5f5;     /* primary: values, symbols */
-  --text-2: #a8a8a8;     /* secondary: supporting values */
-  --text-3: #707070;     /* tertiary: labels, captions */
+  --text-1: #fafafa;     /* primary: values, symbols */
+  --text-2: #b3b3b3;     /* secondary: supporting values */
+  --text-3: #909090;     /* tertiary: labels, captions */
+  --text-4: #5b5b5b;     /* placeholder, disabled */
   /* semantic */
   --up: #25a750;   --up-bg: rgba(37, 167, 80, 0.14);
   --down: #ca3f64; --down-bg: rgba(202, 63, 100, 0.14);
@@ -41,11 +42,12 @@ html { -webkit-tap-highlight-color: transparent; touch-action: pan-x pan-y; } /*
 }
 html, body {
   margin: 0; background: var(--bg-0); color: var(--text-1);
-  font: 400 var(--fs-md)/1.5 Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font: 400 var(--fs-md)/1.5 -apple-system, system-ui, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", Arial, sans-serif; /* OKX-like system stack */
   -webkit-font-smoothing: antialiased;
 }
 a { color: var(--accent); text-decoration: none; }
-@media (hover: hover) { a:hover { text-decoration: underline; } }
+::placeholder { color: var(--text-4); }
+@media (hover: hover) { a:hover { opacity: .8; } } /* no underline (OKX style) */
 button, select, input {
   font: inherit; color: var(--text-1); background: var(--bg-3); border: 1px solid var(--line-2);
   border-radius: var(--radius-sm); padding: 4px 10px; outline: none;
@@ -106,3 +108,9 @@ th { color: var(--text-3); font-weight: 500; text-align: left; font-size: var(--
 @media (max-width: 900px) {
   .hide-sm { display: none !important; }
 }
+
+/* funding rate levels (fmt.fundingClass): colour by sign, emphasis by 8h-equivalent size */
+.fr1.pos, .fr2.pos { color: var(--up); } .fr1.neg, .fr2.neg { color: var(--down); }
+.fr2, .fr3 { padding: 0 4px; border-radius: 3px; font-weight: 600; }
+.fr2.pos { background: var(--up-bg); } .fr2.neg { background: var(--down-bg); }
+.fr3 { color: var(--warn); background: var(--warn-bg); }
