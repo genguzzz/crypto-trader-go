@@ -57,6 +57,21 @@ export interface InstrumentInfo {
   watch: boolean; eligible: boolean; tier: string; syncing: boolean; syncMsg?: string; coin?: Coin
 }
 
+/** Monitoring (alerts). params depend on type: price_move {window,pct,dir}, score {ruleId,side,min}, funding {source,pctPerHour,dir}. */
+export type AlertType = 'price_move' | 'score' | 'funding'
+export interface AlertRule {
+  id: number; name: string; enabled: boolean; type: AlertType; params: Record<string, any>
+  scope: 'active' | 'watch' | 'inst'; instId?: string; cooldownMin: number; channels: { telegram: boolean; webhook: boolean }
+  createdAt: number; updatedAt: number; summary: string; lastFired?: number; error?: string
+}
+/** Delivery channels as served by the API: secrets are masked (••••abcd); sending a masked/empty value back keeps it. */
+export interface AlertChannels {
+  telegram: { configured: boolean; botToken: string; chatId: string }
+  webhook: { configured: boolean; url: string; secret: string }
+}
+/** delivery: channel → "ok" | "pending" | "失败：…" */
+export interface AlertEvent { id: number; ts: number; ruleId: number; ruleName: string; instId: string; type: AlertType; value: number; message: string; delivery: Record<string, string> | null }
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, init)
   const body = await r.json().catch(() => ({}))
@@ -88,4 +103,13 @@ export const api = {
   settings: () => req<Settings>('/api/v1/settings'),
   turnovers: () => req<{ asOfMinute: number; rows: [string, string, number, number][] }>('/api/v1/turnovers'),
   saveSettings: (x: Settings) => req<Settings>('/api/v1/settings', { method: 'PUT', body: JSON.stringify(x), headers: { 'Content-Type': 'application/json' } }),
+  alertRules: () => req<{ rules: AlertRule[]; types: { key: AlertType; label: string }[] }>('/api/v1/alerts/rules'),
+  saveAlertRule: (r: Partial<AlertRule>) =>
+    req<AlertRule>(r.id ? `/api/v1/alerts/rules/${r.id}` : '/api/v1/alerts/rules', { method: r.id ? 'PUT' : 'POST', body: JSON.stringify(r), headers: { 'Content-Type': 'application/json' } }),
+  deleteAlertRule: (id: number) => req<{ ok: boolean }>(`/api/v1/alerts/rules/${id}`, { method: 'DELETE' }),
+  alertChannels: () => req<AlertChannels>('/api/v1/alerts/channels'),
+  saveAlertChannels: (c: AlertChannels) => req<AlertChannels>('/api/v1/alerts/channels', { method: 'PUT', body: JSON.stringify(c), headers: { 'Content-Type': 'application/json' } }),
+  clearAlertChannel: (ch: 'telegram' | 'webhook') => req<AlertChannels>(`/api/v1/alerts/channels/${ch}`, { method: 'DELETE' }),
+  testAlertChannel: (ch: 'telegram' | 'webhook') => req<{ ok: boolean; error?: string }>(`/api/v1/alerts/channels/${ch}/test`, { method: 'POST' }),
+  alertHistory: (limit = 100) => req<AlertEvent[]>(`/api/v1/alerts/history?limit=${limit}`),
 }

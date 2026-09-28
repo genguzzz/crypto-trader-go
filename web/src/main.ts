@@ -5,6 +5,7 @@ import Scanner from './views/Scanner.vue'
 import InstrumentPage from './views/InstrumentPage.vue'
 import Rules from './views/Rules.vue'
 import Status from './views/Status.vue'
+import Alerts from './views/Alerts.vue'
 import Positions from './views/Positions.vue'
 import SettingsView from './views/Settings.vue'
 import { startStream } from './store'
@@ -20,6 +21,7 @@ const router = createRouter({
     { path: '/', component: Scanner },
     { path: '/instrument/:id', component: InstrumentPage, props: true },
     { path: '/rules/:id?', component: Rules, props: true },
+    { path: '/alerts', component: Alerts },
     { path: '/status', component: Status },
     { path: '/positions', component: Positions },
     { path: '/settings', component: SettingsView },
