@@ -45,9 +45,7 @@ type Inst struct {
 	fund fundingState
 
 	last, bid, ask float64
-	open24h        float64 // WS tickers (rolling 24h)
-	high24h        float64
-	low24h         float64
+	open24h        float64 // WS tickers: rolling 24h open (24h change)
 	tickTs         int64
 	spotLast       float64
 	spotTs         int64

@@ -590,7 +590,7 @@ func (e *Engine) onPublic(m okx.Message) {
 				ts := atoi(x["ts"])
 				if ts >= in.tickTs {
 					in.last, in.bid, in.ask, in.tickTs = atof(x["last"]), atof(x["bidPx"]), atof(x["askPx"]), ts
-					in.open24h, in.high24h, in.low24h = atof(x["open24h"]), atof(x["high24h"]), atof(x["low24h"])
+					in.open24h = atof(x["open24h"])
 				}
 			}
 		}

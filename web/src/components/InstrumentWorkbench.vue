@@ -28,6 +28,8 @@ const { info, err, row, base, live, chartPx, score, ruleName, spread, countdown,
 const detailKey = ref<string | null>(null)
 const openDetail = (k: string) => (detailKey.value = k)
 const detailCtx = computed(() => ({ id: props.id, info: info.value!, row: row.value }))
+// mark price vs index: premium (+) / discount (−) of the perpetual's mark
+const markDev = computed(() => (info.value?.markPx && info.value.indexPx ? info.value.markPx / info.value.indexPx - 1 : null))
 // 24h change like OKX: last vs the rolling 24h open from the WS ticker
 const chg24 = computed(() => {
   const o = info.value?.open24h, l = live.value
@@ -93,14 +95,14 @@ useLayoutEntry('ctg.wb', '工作台面板与比例', () => open.value.join() !==
       </div>
       <!-- OKX-style ticker items: label on top (12px grey), value below (12px medium); scrolls sideways -->
       <div class="kvs tnum">
-        <div class="kv"><span class="k">标记价格</span><span class="v">{{ info.markPx ? price(info.markPx) : '—' }}</span></div>
-        <div class="kv"><span class="k">指数价格</span><span class="v">{{ info.indexPx ? price(info.indexPx) : '—' }}</span></div>
+        <div class="kv" :title="info.indexPx ? '指数价格 ' + price(info.indexPx) + '；百分比 = 标记价格相对指数的偏离' : undefined">
+          <span class="k">标记价格</span>
+          <span class="v">{{ info.markPx ? price(info.markPx) : '—' }} <em v-if="markDev != null" :class="chgClass(markDev)">{{ (markDev >= 0 ? '+' : '') + (markDev * 100).toFixed(3) }}%</em></span>
+        </div>
         <button type="button" class="kv" :title="'资金费水平：' + fundingLevelText[fundingLevel(info.fundingRate, info.fundingIntervalH)]" @click="openDetail('funding')">
           <span class="k">资金费率 ({{ info.fundingIntervalH || '?' }} 小时) / 倒计时</span>
           <span class="v"><b :class="fundingClass(info.fundingRate, info.fundingIntervalH)">{{ (info.fundingRate * 100).toFixed(4) }}%</b> / {{ countdown }}</span>
         </button>
-        <div class="kv"><span class="k">24 小时最低</span><span class="v">{{ info.low24h ? price(info.low24h) : '—' }}</span></div>
-        <div class="kv"><span class="k">24 小时最高</span><span class="v">{{ info.high24h ? price(info.high24h) : '—' }}</span></div>
         <button type="button" class="kv" @click="openDetail('oi')">
           <span class="k">持仓量 (USDT) · 4h</span>
           <span class="v">{{ usd(info.oiUsd) }} <em :class="chgClass(row?.values?.oi_chg_4h)">{{ logPct(row?.values?.oi_chg_4h) }}</em></span>
