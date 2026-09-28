@@ -66,3 +66,4 @@ Thumbs.db
 /tmp/
 .claude/settings.local.json
 .claude/*.local.*
+.claude/worktrees/
