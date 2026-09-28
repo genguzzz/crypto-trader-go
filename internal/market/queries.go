@@ -293,8 +293,6 @@ type InstrumentInfo struct {
 	TickTs      int64         `json:"tickTs"`
 	SpotLast    float64       `json:"spotLast,omitempty"`
 	Open24h     float64       `json:"open24h,omitempty"`
-	High24h     float64       `json:"high24h,omitempty"`
-	Low24h      float64       `json:"low24h,omitempty"`
 	Turnover24h float64       `json:"turnover24h,omitempty"` // USDT, sum of 1440 recorded 1m bars (0 if incomplete)
 	MarkPx      float64       `json:"markPx,omitempty"`
 	IndexPx     float64       `json:"indexPx,omitempty"`
@@ -325,7 +323,7 @@ func (e *Engine) Instrument(id string) (InstrumentInfo, bool) {
 		Bid: in.bid, Ask: in.ask, TickTs: max(in.tickTs, in.liveRecv), SpotLast: in.spotLast, FundingRate: in.fund.Rate,
 		FundingTime: in.fund.FundingTime, IntervalH: in.fund.IntervalH, OiCcy: in.oiNow.OiCcy, OiUsd: in.oiNow.OiUsd, OiTs: in.oiNow.Ts,
 		Watch: e.watch[id], Eligible: in.Eligible, Tier: tierNames[e.tierOf(id, time.Now().UnixMilli())], Syncing: in.syncing, SyncMsg: in.syncMsg,
-		Open24h: in.open24h, High24h: in.high24h, Low24h: in.low24h}
+		Open24h: in.open24h}
 	if in.lastBar > 0 {
 		if sum, have := in.window24h(in.lastBar); have == 1440 {
 			info.Turnover24h = sum
