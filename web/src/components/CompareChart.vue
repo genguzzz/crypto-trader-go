@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useBusy } from '../composables/busy'
+import Loading from './ui/Loading.vue'
+import { C } from '../theme'
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { LineSeries, type IChartApi } from 'lightweight-charts'
 import { api } from '../api'
@@ -10,9 +13,11 @@ const bar = ref('15m')
 const el = ref<HTMLElement>()
 const legend = ref<{ id: string; color: string; last: number }[]>([])
 let chart: IChartApi | undefined
-const colors = ['#5b8def', '#f5a623', '#9b7df0']
+const colors = [C.lime, C.amber, C.oi] // this coin, BTC, ETH
 
-async function load() {
+const { busy, track } = useBusy()
+const load = track(loadData)
+async function loadData() {
   const r = await api.compare(props.id, bar.value, 300)
   if (!chart) return
   chart.remove()
@@ -44,11 +49,12 @@ watch(bar, load)
     <div class="legend">
       <span v-for="l in legend" :key="l.id"><i :style="{ background: l.color }"></i>{{ l.id }} {{ l.last.toFixed(2) }}</span>
     </div>
-    <div ref="el" class="chart"></div>
+    <div class="lwrap"><div ref="el" class="chart"></div><Loading overlay :show="busy" /></div>
   </div>
 </template>
 
 <style scoped>
+.lwrap { position: relative; }
 .chart { height: 200px; }
 h3 { display: flex; justify-content: space-between; align-items: center; }
 .bars { display: flex; gap: 4px; }

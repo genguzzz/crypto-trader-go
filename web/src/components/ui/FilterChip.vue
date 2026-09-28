@@ -24,8 +24,8 @@ const model = defineModel<boolean>({ required: true })
 @media (hover: hover) { .fchip:hover { color: var(--text-1); border-color: var(--text-3); } }
 .fchip[data-disabled] { opacity: .35; cursor: not-allowed; border-style: dashed; background: none; }
 .fchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.fchip[data-state="on"] { border-style: solid; border-color: rgba(76, 141, 255, .55); background: var(--accent-bg); color: var(--text-1); }
+.fchip[data-state="on"] { border-style: solid; border-color: var(--accent); background: var(--accent-bg); color: var(--text-1); }
 .fchip .fc-ic { color: var(--text-3); } .fchip[data-state="on"] .fc-ic { color: var(--accent); }
 .fchip .fc-n { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text-3); background: var(--bg-3); border-radius: 999px; padding: 0 6px; line-height: 16px; }
-.fchip[data-state="on"] .fc-n { color: var(--text-1); background: rgba(76, 141, 255, .25); }
+.fchip[data-state="on"] .fc-n { color: var(--text-1); background: rgba(188, 255, 47, .2); }
 </style>

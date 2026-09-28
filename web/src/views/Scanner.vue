@@ -9,6 +9,7 @@ import FilterChip from '../components/ui/FilterChip.vue'
 import ChipGroup from '../components/ui/ChipGroup.vue'
 import { api, type Row, type CatalogItem } from '../api'
 import { usd, price, logPct, fundingH, catLabel, time, sign } from '../fmt'
+import Loading from '../components/ui/Loading.vue'
 import InstrumentWorkbench from '../components/InstrumentWorkbench.vue'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import ScoreChip from '../components/ScoreChip.vue'
@@ -257,7 +258,8 @@ const showTurnover = computed(() => listW.value >= 480)
             </tr>
           </tbody>
         </table>
-        <div class="note pad" v-if="!rows.length && !others.length">暂无数据：{{ store.snap?.phase === 'live' ? '当前筛选下没有合约' : '正在建池…' }}</div>
+        <Loading v-if="!store.snap" text="加载行情" />
+        <div class="note pad" v-else-if="!rows.length && !others.length">{{ store.snap.phase === 'live' ? '当前筛选下没有合约' : '正在建池…' }}</div>
         <template v-if="others.length">
           <div class="oh">OKX 其他合约 <span class="muted tnum">{{ others.length }}</span>
             <InfoTip>不在当前列表里的 OKX USDT 永续（全部类别，含盘前）。列表只保存合约信息和 30 秒一次的行情；<b>点开后</b>才按需下载近 7 天 1m、30 天 1H、持仓量与资金费历史，并在查看期间实时录制。加自选后长期保留（数据保留规则见“设置 → 数据存储”）。</InfoTip>
@@ -300,7 +302,8 @@ const showTurnover = computed(() => listW.value >= 480)
             <span class="muted">{{ usd(r.turnover12h) }}</span>
           </div>
         </div>
-        <div class="note pad" v-if="!rows.length && !others.length">暂无数据：{{ store.snap?.phase === 'live' ? '当前筛选下没有合约' : '正在建池…' }}</div>
+        <Loading v-if="!store.snap" text="加载行情" />
+        <div class="note pad" v-else-if="!rows.length && !others.length">{{ store.snap.phase === 'live' ? '当前筛选下没有合约' : '正在建池…' }}</div>
         <template v-if="others.length">
           <div class="oh">OKX 其他合约 <span class="muted tnum">{{ others.length }}</span>
             <InfoTip>不在当前列表里的 OKX USDT 永续。点开后才按需下载近 7 天历史；加自选后长期保留。</InfoTip>
@@ -357,13 +360,13 @@ const showTurnover = computed(() => listW.value >= 480)
 .clear { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border: none; background: transparent; color: var(--text-3); font-size: var(--fs-xs); }
 @media (hover: hover) { .clear:hover { color: var(--text-1); background: var(--bg-2); } }
 .tablewrap { overflow: auto; flex: 1; }
-thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+thead th { position: sticky; top: 0; background: var(--bg-1); z-index: 1; }
 .sortable { cursor: pointer; user-select: none; }
 tbody td, thead th { padding: 0 6px; }
 tbody td:last-child, thead th:last-child { padding-right: 12px; }
 thead th { height: 32px; border-bottom: 1px solid var(--line-2); }
 tbody tr { cursor: pointer; height: 36px; }
-tbody td { border-bottom-color: rgba(34, 40, 52, 0.6); }
+tbody td { border-bottom-color: var(--line); }
 @media (hover: hover) { tbody tr:hover { background: var(--bg-2); } }
 tbody tr.sel { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
 tbody tr.inactive { opacity: 0.6; }
@@ -372,9 +375,9 @@ td.px { color: var(--text-1); font-weight: 500; }
 td.sec { color: var(--text-2); }
 td.up { color: var(--up); } td.down { color: var(--down); }
 .ic { margin: 0 4px 0 2px; }
-.star { color: var(--muted); cursor: pointer; width: 18px; }
+.star { color: var(--text-3); cursor: pointer; width: 18px; }
 .card .star { padding: 6px 10px; margin: -6px -4px; font-size: 16px; } /* finger-sized target */
-.star.on { color: #f5c542; }
+.star.on { color: var(--gold); }
 .pad { padding: 16px; }
 
 .cards { display: grid; }

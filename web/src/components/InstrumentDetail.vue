@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Loading from './ui/Loading.vue'
 import { computed, ref } from 'vue'
 import { ChevronLeft, Star } from 'lucide-vue-next'
 import { price, usd, fieldValue, catLabel, ago, num, logPct } from '../fmt'
@@ -7,7 +8,6 @@ import PriceChart from './PriceChart.vue'
 import CompareChart from './CompareChart.vue'
 import SeriesChart from './SeriesChart.vue'
 import CoinIcon from './CoinIcon.vue'
-import DraggablePanels from './DraggablePanels.vue'
 import StatCard from './ui/StatCard.vue'
 import StatDetailDialog from './details/StatDetailDialog.vue'
 import OrderBookView from './market/OrderBookView.vue'
@@ -16,10 +16,8 @@ import InfoTip from './InfoTip.vue'
 
 /** Stacked detail page (phones and narrow windows); PC uses InstrumentWorkbench. */
 const props = defineProps<{ id: string }>()
-const panelIds = ['head', 'price', 'book', 'compare', 'series', 'events']
 const detailKey = ref<string | null>(null)
 const openDetail = (k: string) => (detailKey.value = k)
-const panelLabels: Record<string, string> = { head: '行情', book: '实时盘口', price: 'K 线', compare: '相对走势', series: 'OI/资金费', events: '新闻/解锁' }
 const { info, err, row, base, live, chartPx, score, ruleName, spread, countdown, toggleWatch } = useInstrument(() => props.id)
 const detailCtx = computed(() => ({ id: props.id, info: info.value!, row: row.value }))
 const ret24 = computed(() => row.value?.values?.ret_24h)
@@ -30,8 +28,7 @@ const scoreTone = (side: 'long' | 'short') => ((score.value?.[side].score ?? 0) 
 
 <template>
   <div class="detail" v-if="info">
-    <DraggablePanels storage-key="ctg.detailLayout.v2" :ids="panelIds" :labels="panelLabels" layout-label="详情面板顺序">
-      <template #head>
+    <div class="stack">
       <div class="head panel">
         <div class="h-top">
           <button class="icon-btn" aria-label="返回" title="返回" @click="$router.back()"><ChevronLeft :size="20" /></button>
@@ -102,38 +99,29 @@ const scoreTone = (side: 'long' | 'short') => ((score.value?.[side].score ?? 0) 
           </StatCard>
         </div>
       </div>
-      </template>
-      <template #book>
-        <div class="panel">
-          <h3>实时盘口 <InfoTip>OKX 永续盘口（books-full，每侧最多 5000 档——OKX 公开的最深盘口；BTC 约覆盖 ±1%，小币可达几十 %；每秒刷新；前 400 档逐档，更深的按价格合并），金额为 USDT。深度图上悬浮/拖动查看把价格推到某个偏离需要多少资金；点击上方“买一 / 卖一”可放大查看。</InfoTip></h3>
-          <OrderBookView :id="id" compact />
-        </div>
-      </template>
-      <template #price>
       <PriceChart :id="id" :has-spot="!!info.spotId" :has-oi="info.oiUsd > 0" @live="p => (chartPx = p)" />
-      </template>
-      <template #compare>
+      <div class="panel">
+        <h3>实时盘口 <InfoTip>OKX 永续盘口（books-full，每侧最多 5000 档——OKX 公开的最深盘口；BTC 约覆盖 ±1%，小币可达几十 %；每秒刷新；前 400 档逐档，更深的按价格合并），金额为 USDT。深度图上悬浮/拖动查看把价格推到某个偏离需要多少资金；点击上方“买一 / 卖一”可放大查看。</InfoTip></h3>
+        <OrderBookView :id="id" compact />
+      </div>
       <CompareChart :id="id" />
-      </template>
-      <template #series>
       <SeriesChart :id="id" />
-      </template>
-      <template #events>
       <div class="panel">
         <h3>新闻 / 解锁 / 链上持有人 <span class="tag">未接入</span> <InfoTip>
           计划在 I4 阶段接入可靠来源（项目公告、解锁日程、链上地址分布），并保留发布时间与修订。<br />
           现在显示“未接入”——<b>不代表没有事件或没有风险</b>。股票/商品永续本身没有链上数据。
         </InfoTip></h3>
       </div>
-      </template>
-    </DraggablePanels>
+    </div>
     <StatDetailDialog v-model:active="detailKey" :ctx="detailCtx" :title="`${base}/USDT 永续`" />
   </div>
-  <div v-else class="note pad">{{ err || '加载中…' }}</div>
+  <div v-else-if="err" class="note pad">{{ err }}</div>
+  <Loading v-else text="加载合约" />
 </template>
 
 <style scoped>
-.detail { padding: 12px 12px 12px 16px; }
+.detail { padding: 12px; }
+.stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .head { padding: 12px 16px; }
 .h-top { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .icon-btn { all: unset; box-sizing: border-box; display: inline-grid; place-items: center; width: 32px; height: 32px; margin-left: -8px; border-radius: 8px; color: var(--text-2); cursor: pointer; flex: none; }
@@ -145,7 +133,7 @@ const scoreTone = (side: 'long' | 'short') => ((score.value?.[side].score ?? 0) 
 .h-tags { display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; }
 .h-tags .tag { flex: none; }
 .star { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex: none; padding: 5px 12px; color: var(--text-2); }
-.star.on { color: #f5c542; border-color: rgba(245, 197, 66, .45); }
+.star.on { color: var(--gold); border-color: rgba(245, 197, 66, .45); }
 .h-price { display: flex; align-items: center; gap: 16px; margin: 10px 0 8px; }
 .hp-main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .hp-chg { display: inline-flex; gap: 6px; }
