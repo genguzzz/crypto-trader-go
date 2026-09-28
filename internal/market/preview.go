@@ -89,7 +89,7 @@ func (e *Engine) computePreview() {
 			continue
 		}
 		var bs features.Series
-		if btc != nil {
+		if btc != nil && in.ID != BTC { // BTC vs itself carries no information
 			bs = previewSeries{liveSeries{btc}, T, now}
 		}
 		v := features.Compute(previewSeries{liveSeries{in}, T, now}, bs, T)

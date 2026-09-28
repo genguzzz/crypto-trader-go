@@ -247,7 +247,7 @@ func (e *Engine) runReplay(ctx context.Context) {
 				continue
 			}
 			var bs features.Series
-			if btc != nil {
+			if btc != nil && c.id != BTC { // BTC vs itself carries no information
 				bs = hourlySeries{btc}
 			}
 			cr.rows = append(cr.rows, replayRow{id: c.id, vals: features.Compute(hs, bs, T), close: cl})

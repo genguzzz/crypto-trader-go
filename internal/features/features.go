@@ -71,7 +71,8 @@ func Lookup(key string) (Field, bool) { f, ok := fieldIndex[key]; return f, ok }
 
 type Values map[string]float64
 
-// Compute returns the replayable fields at decision time t. btc may be nil.
+// Compute returns the replayable fields at decision time t. btc may be nil; callers pass nil for
+// BTC itself (β = 1 and a zero residual against itself carry no information).
 func Compute(s Series, btc Series, t int64) Values {
 	v := Values{}
 	c0, ok := s.Close(t)
