@@ -105,26 +105,33 @@ func TestCooldown(t *testing.T) {
 func TestUnknownKeepsStateAndScope(t *testing.T) {
 	s, _ := newSvc(t)
 	mustSave(t, s, priceRule(0))
-	if n := len(s.evaluate(snap(0, ret1h("A-USDT-SWAP", 5)))); n != 1 {
-		t.Fatal("first crossing should fire")
+	if n := len(s.evaluate(snap(0, ret1h("A-USDT-SWAP", 5)))); n != 0 {
+		t.Fatal("a new rule's first minute only records state")
+	}
+	s.evaluate(snap(1, ret1h("A-USDT-SWAP", 0)))
+	if n := len(s.evaluate(snap(2, ret1h("A-USDT-SWAP", 5)))); n != 1 {
+		t.Fatal("crossing should fire")
 	}
 	missing := market.Row{InstID: "A-USDT-SWAP", Active: true} // no values: unknown
-	s.evaluate(snap(1, missing))
-	if n := len(s.evaluate(snap(2, ret1h("A-USDT-SWAP", 5)))); n != 0 {
+	s.evaluate(snap(3, missing))
+	if n := len(s.evaluate(snap(4, ret1h("A-USDT-SWAP", 5)))); n != 0 {
 		t.Fatal("unknown value must not reset the edge state")
 	}
 	inactive := ret1h("A-USDT-SWAP", 5)
 	inactive.Active = false
-	s.evaluate(snap(3, inactive)) // leaves the pool
-	if n := len(s.evaluate(snap(4, ret1h("A-USDT-SWAP", 5)))); n != 1 {
+	s.evaluate(snap(5, inactive)) // leaves the pool
+	if n := len(s.evaluate(snap(6, ret1h("A-USDT-SWAP", 5)))); n != 1 {
 		t.Fatal("re-entering the scope counts as a new crossing")
 	}
 	// watch / single-instrument scopes
 	w := mustSave(t, s, Rule{Name: "w", Enabled: true, Type: "price_move", Params: json.RawMessage(`{"window":"1h","pct":1}`), Scope: "watch"})
 	one := mustSave(t, s, Rule{Name: "one", Enabled: true, Type: "price_move", Params: json.RawMessage(`{"window":"1h","pct":1}`), Scope: "inst", InstID: "b-usdt-swap"})
-	b := ret1h("B-USDT-SWAP", 2)
+	b := ret1h("B-USDT-SWAP", 0)
 	b.Active, b.Watch = false, true
-	got := s.evaluate(snap(5, b))
+	s.evaluate(snap(7, b)) // prime
+	b = ret1h("B-USDT-SWAP", 2)
+	b.Active, b.Watch = false, true
+	got := s.evaluate(snap(8, b))
 	if len(got) != 2 || got[0].RuleID != w.ID || got[1].RuleID != one.ID {
 		t.Fatalf("scopes: %+v", got)
 	}
@@ -152,6 +159,9 @@ func TestLoadedRulesArePrimedFirst(t *testing.T) {
 	s, st := newSvc(t)
 	mustSave(t, s, Rule{Name: "费率", Enabled: true, Type: "funding", Params: json.RawMessage(`{"pctPerHour":0.01}`), Scope: "active", CooldownMin: 60})
 	fund := market.Row{InstID: "A-USDT-SWAP", Active: true, Values: map[string]float64{"funding_hourly": -0.0002}}
+	if n := len(s.evaluate(snap(0, fund))); n != 0 {
+		t.Fatal("a new rule must not fire on conditions that already hold")
+	}
 	s2, err := New(st, env, http.DefaultClient) // restart
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +295,8 @@ func TestDeliveryAndScrub(t *testing.T) {
 	}
 	mustSave(t, s, Rule{Name: "r", Enabled: true, Type: "price_move", Params: json.RawMessage(`{"window":"1h","pct":3}`), Scope: "active",
 		Channels: Channels{Telegram: true, Webhook: true}})
-	s.OnSnapshot(snap(0, ret1h("A-USDT-SWAP", 5)))
+	s.OnSnapshot(snap(0, ret1h("A-USDT-SWAP", 0))) // prime
+	s.OnSnapshot(snap(1, ret1h("A-USDT-SWAP", 5)))
 	s.deliver(context.Background(), <-s.queue)
 	evs, _ := st.AlertEvents(10)
 	if len(evs) != 1 || evs[0].Delivery["telegram"] != "ok" || evs[0].Delivery["webhook"] != "ok" {
