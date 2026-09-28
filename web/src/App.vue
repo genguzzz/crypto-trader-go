@@ -34,13 +34,9 @@ const pulse = computed(() =>
 
 <template>
   <header class="topbar">
-    <RouterLink to="/" class="brand" aria-label="OKX 研究台 首页">
-      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="3" y="9" width="4" height="9" rx="1" class="c-down" /><line x1="5" y1="6" x2="5" y2="21" class="w-down" />
-        <rect x="10" y="5" width="4" height="10" rx="1" class="c-up" /><line x1="12" y1="2" x2="12" y2="18" class="w-up" />
-        <rect x="17" y="8" width="4" height="7" rx="1" class="c-up" /><line x1="19" y1="5" x2="19" y2="18" class="w-up" />
-      </svg>
-      <span class="word">研究台<small>OKX · 永续</small></span>
+    <RouterLink to="/" class="brand" aria-label="OKX Helper 首页">
+      <img class="mark" src="/icon.svg" alt="" />
+      <span class="word">OKX Helper<small>永续研究</small></span>
     </RouterLink>
 
     <nav class="nav" aria-label="主导航">
@@ -93,13 +89,10 @@ const pulse = computed(() =>
 <style>
 .topbar {
   position: sticky; top: 0; z-index: 10; flex: none; display: flex; align-items: center; gap: 16px; height: 52px; padding: 0 14px;
-  background: linear-gradient(180deg, #121722 0%, #0e121a 100%); border-bottom: 1px solid var(--line);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, .02) inset;
+  background: var(--bg-0); border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 8px; text-decoration: none !important; color: var(--text-1); padding-right: 6px; }
-.mark { width: 22px; height: 22px; }
-.mark .c-up { fill: var(--up); } .mark .c-down { fill: var(--down); }
-.mark .w-up { stroke: var(--up); stroke-width: 1.5; } .mark .w-down { stroke: var(--down); stroke-width: 1.5; }
+.mark { width: 26px; height: 26px; }
 .word { display: grid; line-height: 1.05; font-weight: 700; font-size: var(--fs-lg); letter-spacing: .5px; }
 .word small { font-size: 10px; font-weight: 500; color: var(--text-3); letter-spacing: .3px; }
 
@@ -143,7 +136,7 @@ const pulse = computed(() =>
   .word small { display: none; }
   .tabbar {
     display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-    padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); background: rgba(14, 18, 26, .96); backdrop-filter: blur(10px);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); background: rgba(0, 0, 0, .94); backdrop-filter: blur(10px);
     border-top: 1px solid var(--line);
   }
   .tab { display: grid; justify-items: center; gap: 2px; color: var(--text-3); font-size: 10px; text-decoration: none !important; padding: 2px 0; }

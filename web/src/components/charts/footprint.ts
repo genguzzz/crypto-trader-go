@@ -1,5 +1,6 @@
 import type { IChartApi, ISeriesApi, ISeriesPrimitive, IPrimitivePaneView, IPrimitivePaneRenderer, SeriesAttachedParameter, Time, SeriesType } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
+import { C, alpha as rgba } from '../../theme'
 
 /** [level low price, taker buy USDT, taker sell USDT] */
 export type Level = [number, number, number]
@@ -199,40 +200,40 @@ export class Footprint implements ISeriesPrimitive<Time> {
           const top = Math.round(Math.min(yTop, yBot) * vr), bot = Math.round(Math.max(yTop, yBot) * vr)
           if (bot < 0 || top > bitmapSize.height) continue
           const h = Math.max(1, bot - top - (bot - top > 3 ? 1 : 0)) // 1px gap between rows when there is room
-          ctx.fillStyle = `rgba(246,70,93,${alpha(sell)})`
+          ctx.fillStyle = rgba('down', alpha(sell))
           ctx.fillRect(left, top, mid - left - 1, h)
-          ctx.fillStyle = `rgba(14,203,129,${alpha(buy)})`
+          ctx.fillStyle = rgba('up', alpha(buy))
           ctx.fillRect(mid, top, right - mid, h)
 
           const i = idx(px, c.step)
           const sb = c.stackBuy.has(i), ss = c.stackSell.has(i)
           if (sb || ss) { // stacked imbalance: outline the dominant half
-            ctx.strokeStyle = sb ? '#0ecb81' : '#f6465d'
+            ctx.strokeStyle = sb ? C.up : C.down
             ctx.lineWidth = Math.max(1, Math.round(1.5 * hr))
             if (sb) ctx.strokeRect(mid + 0.5, top + 0.5, right - mid - 1, h - 1)
             if (ss) ctx.strokeRect(left + 0.5, top + 0.5, mid - left - 2, h - 1)
           }
           const tick = Math.max(2, Math.round(2 * hr))
-          if (c.imbBuy.has(i)) { ctx.fillStyle = '#0ecb81'; ctx.fillRect(right - tick, top, tick, h) }
-          if (c.imbSell.has(i)) { ctx.fillStyle = '#f6465d'; ctx.fillRect(left, top, tick, h) }
+          if (c.imbBuy.has(i)) { ctx.fillStyle = C.up; ctx.fillRect(right - tick, top, tick, h) }
+          if (c.imbSell.has(i)) { ctx.fillStyle = C.down; ctx.fillRect(left, top, tick, h) }
           if (px === c.poc) {
-            ctx.strokeStyle = '#f5c542'
+            ctx.strokeStyle = C.gold
             ctx.lineWidth = Math.max(1, Math.round(hr))
             ctx.strokeRect(left + 0.5, top + 0.5, right - left - 1, h - 1)
           }
           if (showText && h >= 11 * vr) {
             ctx.textAlign = 'right'
-            ctx.fillStyle = c.imbSell.has(i) ? '#ffb4bf' : 'rgba(234,236,239,.85)'
+            ctx.fillStyle = c.imbSell.has(i) ? '#ff9db6' : C.ink
             ctx.fillText(short(sell), mid - 4 * hr, top + h / 2)
             ctx.textAlign = 'left'
-            ctx.fillStyle = c.imbBuy.has(i) ? '#9ff0cf' : 'rgba(234,236,239,.85)'
+            ctx.fillStyle = c.imbBuy.has(i) ? '#8fe0a8' : C.ink
             ctx.fillText(short(buy), mid + 4 * hr, top + h / 2)
           }
         }
         // value area: a thin bar just left of the cells
         const ya = series.priceToCoordinate(c.vah), yb = series.priceToCoordinate(c.val)
         if (ya != null && yb != null) {
-          ctx.fillStyle = 'rgba(245,197,66,.55)'
+          ctx.fillStyle = rgba('gold', 0.55)
           ctx.fillRect(left - Math.round(3 * hr), Math.round(ya * vr), Math.max(1, Math.round(1.5 * hr)), Math.round((yb - ya) * vr))
         }
       }
@@ -249,7 +250,7 @@ export class Footprint implements ISeriesPrimitive<Time> {
     const pos = new Map(cs.map((c, i) => [c.time, i]))
     ctx.lineWidth = Math.max(1, Math.round(hr))
     ctx.setLineDash([4 * hr, 3 * hr])
-    ctx.strokeStyle = 'rgba(245,197,66,.85)'
+    ctx.strokeStyle = rgba('gold', 0.85)
     const lastTime = cs[cs.length - 1].time
     let drawn = 0
     for (let k = this.bars.length - 1; k >= 0 && drawn < NAKED_MAX; k--) {

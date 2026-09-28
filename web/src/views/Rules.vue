@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { C } from '../theme'
 import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { LineSeries, type IChartApi } from 'lightweight-charts'
@@ -44,8 +45,8 @@ function drawCum() {
     const s = chart!.addSeries(LineSeries, { color, lineWidth: 2, title, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } })
     s.setData(st.cumLongIC.map(p => ({ time: chartTime(p.ts), value: p.v })))
   }
-  add(tr.value?.replay?.[0], '#8a93a3', '回放 1h')
-  add(tr.value?.live?.[0], '#5b8def', '上线后 1h')
+  add(tr.value?.replay?.[0], C.text, '回放 1h')
+  add(tr.value?.live?.[0], C.lime, '上线后 1h')
   chart.timeScale().fitContent()
 }
 
@@ -182,9 +183,9 @@ const H = (h: number) => `${h}h`
 <style scoped>
 .rules { grid-template-columns: 240px 1fr; align-items: start; }
 .list { display: grid; gap: 4px; position: sticky; top: 56px; }
-.item { display: block; padding: 6px 8px; border-radius: 6px; color: var(--text); }
-.item.on { background: var(--panel2); }
-@media (hover: hover) { .item:hover { background: var(--panel2); } }
+.item { display: block; padding: 6px 8px; border-radius: 6px; color: var(--text-1); }
+.item.on { background: var(--bg-2); }
+@media (hover: hover) { .item:hover { background: var(--bg-2); } }
 .small { font-size: 11px; }
 .main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .desc { margin: 0; }
@@ -193,9 +194,9 @@ const H = (h: number) => `${h}h`
 .kh { font-weight: 600; margin: 6px 0 2px; }
 .cum { height: 180px; margin-top: 8px; }
 tr.empty td:not(:first-child):not(:last-child) { color: transparent; }
-tr.empty td:nth-child(2) { color: var(--muted); }
+tr.empty td:nth-child(2) { color: var(--text-3); }
 .form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
-.form label { display: grid; gap: 2px; color: var(--muted); font-size: 12px; }
+.form label { display: grid; gap: 2px; color: var(--text-3); font-size: 12px; }
 .form .full { grid-column: 1 / -1; }
 .weights input { width: 80px; text-align: right; }
 .wrap { white-space: normal; }

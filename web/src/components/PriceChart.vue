@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { CandlestickSeries, LineSeries, HistogramSeries, AreaSeries, type IChartApi, type ISeriesApi, type MouseEventParams, type Time } from 'lightweight-charts'
-import { api, type Candle, type FlowBar } from '../api'
+import { api, type Candle, type FlowBar, type OrderFlow, type SeriesPoint } from '../api'
 import { chartTime, price as fmtPrice, usd, time as fmtTime } from '../fmt'
 import { baseChart, precisionFor } from './charts'
 import { Footprint, type FootBar } from './charts/footprint'
+import { C, alpha } from '../theme'
 import { LocateFixed, Maximize2, Minimize2 } from 'lucide-vue-next'
 import FilterChip from './ui/FilterChip.vue'
+import Loading from './ui/Loading.vue'
 
 /** fill: take the parent's full height (workbench); otherwise fixed chart heights (stacked page). */
 const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean }>()
@@ -18,6 +20,7 @@ const withSpot = ref(localStorage.getItem('ctg.chartSpot') === '1')
 const withOIL = ref(localStorage.getItem('ctg.chartOIL') === '1') // OI level area: off by default
 const withOID = ref(localStorage.getItem('ctg.chartOID') !== '0') // OI change bars: on by default
 const err = ref('')
+const loading = ref(false)
 const el = ref<HTMLElement>()
 let chart: IChartApi | undefined
 let candles: ISeriesApi<'Candlestick'> | undefined
@@ -31,9 +34,9 @@ let foot: Footprint | undefined
 let timer: number | undefined
 let hotTimer: number | undefined
 
-const UP = '#26a69a', DOWN = '#ef5350'
 const depth: Record<string, number> = { '1m': 1440, '5m': 2016, '15m': 672, '1H': 720, '4H': 180 }
 const barMs: Record<string, number> = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '1H': 3600e3, '4H': 14400e3 }
+const volColor = (c: Candle) => (c.c >= c.o ? alpha('up', 0.35) : alpha('down', 0.35))
 
 // ---- data kept for the legend ----
 const bars = ref<Candle[]>([])
@@ -45,6 +48,7 @@ const hover = ref<number | null>(null) // index into bars
 const axisLabel = ref<{ top: number; px: number; pct: number } | null>(null)
 const axisWidth = ref(60)
 const footVer = ref(0) // bumped when footprint data or its level size changes (legend reads it)
+const spacing = ref(6) // current bar spacing (px): the footprint needs room to draw
 
 const shown = computed(() => {
   const xs = bars.value
@@ -57,36 +61,100 @@ const shown = computed(() => {
 const pct = (v: number, d = 2) => (v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%'
 const tone = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : '')
 
-async function load(fit = false) {
+// ---- loading: every source in parallel, newest request wins, results cached per view ----
+interface Loaded { cs: Candle[]; of?: OrderFlow; ss?: Candle[]; oi?: SeriesPoint[] }
+const cache = new Map<string, Loaded>() // switching back to a period/layer paints at once, then refreshes
+const cacheKey = () => [bar.value, layer.value, withSpot.value && props.hasSpot, withOIL.value || withOID.value].join('|')
+let seq = 0
+
+async function fetchAll(): Promise<Loaded> {
+  const b = bar.value, n = depth[b] || 400, lay = layer.value
+  const hours = Math.min(24 * 30, Math.ceil((n * barMs[b]) / 3600e3) + 1)
+  const [cs, of, ss, oi] = await Promise.all([
+    api.candles(props.id, b, n),
+    lay !== 'k' ? api.orderflow(props.id, b, n, lay === 'foot') : undefined,
+    withSpot.value && props.hasSpot ? api.candles(props.id, b, Math.min(n, 1000), 'spot') : undefined,
+    (withOIL.value || withOID.value) && props.hasOi ? api.series(props.id, 'oi', hours) : undefined,
+  ])
+  return { cs, of, ss, oi: oi || undefined }
+}
+
+/**
+ * mode: 'fit' = reset to the latest bars (first open); 'anchor' = user changed period/layer/overlay:
+ * keep what is on screen (right-edge time, bars in view, manual price range); 'keep' = periodic refresh.
+ */
+async function load(mode: 'fit' | 'anchor' | 'keep' = 'keep') {
+  const my = ++seq, key = cacheKey()
+  const view = mode === 'anchor' ? captureView() : null
+  const hit = mode !== 'keep' ? cache.get(key) : undefined
+  if (hit) apply(hit, mode, view)
+  else if (mode !== 'keep') loading.value = true
   try {
-    const cs = await api.candles(props.id, bar.value, depth[bar.value] || 400)
-    if (!chart || !cs.length) return
-    bars.value = cs
-    candles!.applyOptions({ priceFormat: precisionFor(cs[cs.length - 1].c) })
-    candles!.setData(cs.map(c => ({ time: chartTime(c.t), open: c.o, high: c.h, low: c.l, close: c.c })))
-    vol!.setData(cs.map(c => ({ time: chartTime(c.t), value: c.q, color: c.c >= c.o ? 'rgba(38,166,154,0.35)' : 'rgba(239,83,80,0.35)' })))
-    await loadFlow(cs)
-    if (withSpot.value && props.hasSpot) {
-      const ss = await api.candles(props.id, bar.value, Math.min(depth[bar.value] || 400, 1000), 'spot')
-      if (!spot) {
-        // same price axis as the contract: follows zoom/drag of the chart; basis is visible as the gap
-        spot = chart.addSeries(LineSeries, { color: '#f5c542', lineWidth: 1, priceScaleId: 'right', title: '现货', lastValueVisible: false, crosshairMarkerVisible: false })
-      }
-      spot.applyOptions({ priceFormat: precisionFor(ss[ss.length - 1]?.c || 1) })
-      spot.setData(ss.map(c => ({ time: chartTime(c.t), value: c.c })))
-      spotByT.value = new Map(ss.map(c => [c.t, c.c]))
-    } else if (spot) {
-      chart.removeSeries(spot)
-      spot = undefined
-      spotByT.value = new Map()
-    }
-    await loadOI(cs)
-    if (fit) resetView()
-    requestAnimationFrame(() => { if (chart) axisWidth.value = chart.priceScale('right').width() })
+    const d = await fetchAll()
+    if (my !== seq || !chart) return // a newer request superseded this one
+    cache.set(key, d)
+    apply(d, hit ? 'keep' : mode, view)
     err.value = ''
   } catch (e: any) {
-    err.value = e.message
+    if (my === seq) err.value = e.message
+  } finally {
+    if (my === seq) loading.value = false
   }
+}
+
+function apply(d: Loaded, mode: 'fit' | 'anchor' | 'keep', view: View | null) {
+  const cs = d.cs
+  if (!chart || !cs.length) return
+  bars.value = cs
+  candles!.applyOptions({ priceFormat: precisionFor(cs[cs.length - 1].c) })
+  candles!.setData(cs.map(c => ({ time: chartTime(c.t), open: c.o, high: c.h, low: c.l, close: c.c })))
+  vol!.setData(cs.map(c => ({ time: chartTime(c.t), value: c.q, color: volColor(c) })))
+  applyFlow(cs, d.of)
+  applySpot(d.ss)
+  applyOI(cs, d.oi)
+  if (mode === 'fit') resetView()
+  else if (mode === 'anchor' && view) restoreView(view)
+  requestAnimationFrame(() => { if (chart) axisWidth.value = chart.priceScale('right').width() })
+}
+
+// ---- view anchor: what the user is looking at, independent of the bar period ----
+interface View { rightT: number; frac: number; width: number; live: boolean; rightOffset: number; price: { from: number; to: number } | null }
+function captureView(): View | null {
+  const xs = bars.value
+  const lr = chart?.timeScale().getVisibleLogicalRange()
+  if (!chart || !lr || !xs.length) return null
+  const n = xs.length, i = Math.max(0, Math.min(n - 1, Math.floor(lr.to)))
+  const ps = candles!.priceScale()
+  return {
+    rightT: xs[i].t, frac: lr.to - i, width: lr.to - lr.from, live: lr.to >= n - 1, rightOffset: lr.to - (n - 1),
+    price: ps.options().autoScale ? null : ps.getVisibleRange(),
+  }
+}
+function restoreView(v: View) {
+  const xs = bars.value, ts = chart!.timeScale(), n = xs.length
+  let to: number
+  if (v.live) to = n - 1 + v.rightOffset // following the latest bar: stay on it
+  else {
+    let lo = 0, hi = n - 1, j = 0 // last bar opening at/before the old right edge
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (xs[m].t <= v.rightT) { j = m; lo = m + 1 } else hi = m - 1 }
+    to = j + v.frac
+  }
+  ts.setVisibleLogicalRange({ from: to - v.width, to }) // same number of bars in view → same spacing
+  if (v.price) candles!.priceScale().setVisibleRange(v.price)
+}
+
+// ---- spot: same price axis as the contract; the gap is the basis ----
+function applySpot(ss?: Candle[]) {
+  if (!chart) return
+  if (!ss) {
+    if (spot) { chart.removeSeries(spot); spot = undefined }
+    spotByT.value = new Map()
+    return
+  }
+  spot ??= chart.addSeries(LineSeries, { color: C.gold, lineWidth: 1, priceScaleId: 'right', title: '现货', lastValueVisible: false, crosshairMarkerVisible: false })
+  spot.applyOptions({ priceFormat: precisionFor(ss[ss.length - 1]?.c || 1) })
+  spot.setData(ss.map(c => ({ time: chartTime(c.t), value: c.c })))
+  spotByT.value = new Map(ss.map(c => [c.t, c.c]))
 }
 
 // ---- OI: level (area) and per-bar change (bars, like volume), each in its own band above volume ----
@@ -98,19 +166,13 @@ function layoutBands() {
   if (oiL) { chart.priceScale('oil').applyOptions({ scaleMargins: { top: 1 - bottom - BAND, bottom } }); bottom += BAND }
   candles.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: bottom + (oiD || oiL ? 0.02 : 0) } })
 }
-async function loadOI(cs: Candle[]) {
+function applyOI(cs: Candle[], pts?: SeriesPoint[]) {
   if (!chart) return
-  const wantL = withOIL.value && props.hasOi, wantD = withOID.value && props.hasOi
+  const wantL = !!pts && withOIL.value, wantD = !!pts && withOID.value
   if (!wantL && oiL) { chart.removeSeries(oiL); oiL = undefined }
   if (!wantD && oiD) { chart.removeSeries(oiD); oiD = undefined }
-  if (!wantL && !wantD) {
-    oiByT.value = new Map()
-    layoutBands()
-    return
-  }
+  if (!pts) { oiByT.value = new Map(); layoutBands(); return }
   const step = barMs[bar.value], from = cs[0].t
-  const hours = Math.min(24 * 30, Math.ceil((Date.now() - from) / 3600e3) + 1)
-  const pts = (await api.series(props.id, 'oi', hours)) || []
   const last = new Map<number, number>()
   for (const p of pts) last.set(Math.floor(p.t / step) * step, p.u ?? p.v) // ascending: last sample in each bar wins
   const m = new Map<number, { v: number; d?: number }>()
@@ -122,11 +184,10 @@ async function loadOI(cs: Candle[]) {
     prev = v
     prevT = t
   }
-  if (!chart) return
-  if (wantL && !oiL) oiL = chart.addSeries(AreaSeries, { lineColor: '#7aa7ff', lineWidth: 1, topColor: 'rgba(122,167,255,.28)', bottomColor: 'rgba(122,167,255,.02)', priceScaleId: 'oil', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false })
-  if (wantD && !oiD) oiD = chart.addSeries(HistogramSeries, { priceScaleId: 'oid', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, base: 0 })
+  if (wantL) oiL ??= chart.addSeries(AreaSeries, { lineColor: C.oi, lineWidth: 1, topColor: alpha('oi', 0.28), bottomColor: alpha('oi', 0.02), priceScaleId: 'oil', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false })
+  if (wantD) oiD ??= chart.addSeries(HistogramSeries, { priceScaleId: 'oid', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, base: 0 })
   oiL?.setData([...m].map(([t, x]) => ({ time: chartTime(t), value: x.v })))
-  oiD?.setData([...m].filter(([, x]) => x.d !== undefined).map(([t, x]) => ({ time: chartTime(t), value: x.d!, color: x.d! >= 0 ? 'rgba(122,167,255,.75)' : 'rgba(245,158,66,.75)' })))
+  oiD?.setData([...m].filter(([, x]) => x.d !== undefined).map(([t, x]) => ({ time: chartTime(t), value: x.d!, color: x.d! >= 0 ? alpha('oi', 0.75) : alpha('oiDown', 0.75) })))
   oiByT.value = m
   layoutBands()
 }
@@ -148,7 +209,7 @@ async function hot() {
       else xs.push(c)
       last = c
       candles!.update({ time: chartTime(c.t), open: c.o, high: c.h, low: c.l, close: c.c })
-      vol!.update({ time: chartTime(c.t), value: c.q, color: c.c >= c.o ? 'rgba(38,166,154,0.35)' : 'rgba(239,83,80,0.35)' })
+      vol!.update({ time: chartTime(c.t), value: c.q, color: volColor(c) })
     }
     bars.value = xs
     emit('live', last.c)
@@ -177,28 +238,39 @@ function resetView() {
     for (const id of ['right', 'left']) chart!.priceScale(id, i).applyOptions({ autoScale: true })
   })
   chart.priceScale('vol').applyOptions({ autoScale: true })
-  if (layer.value === 'foot') {
-    // wide enough for numbers on PC; on a phone favour more bars (pinch to zoom in for numbers)
-    ts.applyOptions({ barSpacing: Math.max(40, Math.min(72, w / 10)) })
-    ts.scrollToRealTime()
-  } else if (n) {
-    const show = Math.min(n, Math.max(40, Math.round(w / 7))) // ~7px per candle: bodies stay visible
-    ts.setVisibleLogicalRange({ from: n - show, to: n + 2 })
-  }
+  if (!n) return
+  // footprint wants wide bars for its numbers; candles ~7px so bodies stay visible
+  const px = layer.value === 'foot' ? Math.max(40, Math.min(72, w / 10)) : 7
+  const show = Math.min(n, Math.max(layer.value === 'foot' ? 8 : 40, Math.round(w / px)))
+  ts.setVisibleLogicalRange({ from: n - show, to: n + 2 })
 }
 
 // ---- order flow layer: delta histogram + CVD in a second pane; footprint over the candles ----
-async function loadFlow(cs: Candle[]) {
-  if (layer.value === 'k' || !chart) return
-  const of = await api.orderflow(props.id, bar.value, depth[bar.value] || 400, layer.value === 'foot')
+function applyFlow(cs: Candle[], of?: OrderFlow) {
+  if (!chart) return
+  const wantFoot = layer.value === 'foot' && !!of
+  if (foot && !wantFoot) {
+    candles!.detachPrimitive(foot)
+    candles!.applyOptions({ upColor: C.up, downColor: C.down })
+    vol!.applyOptions({ visible: true })
+    foot = undefined
+  }
+  if (!of) {
+    if (delta) chart.removeSeries(delta)
+    if (cvd) chart.removeSeries(cvd)
+    delta = cvd = undefined
+    if (chart.panes().length > 1) chart.removePane(1)
+    flow.value = new Map()
+    return
+  }
   recording.value = of.recording
   const m = new Map<number, FlowBar>()
   for (const b of of.bars || []) m.set(b.t, b)
   flow.value = m
   if (!delta) {
     delta = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, title: 'Delta', lastValueVisible: false, priceLineVisible: false }, 1)
-    cvd = chart.addSeries(LineSeries, { color: '#f5c542', lineWidth: 1, priceScaleId: 'left', priceFormat: { type: 'volume' }, title: 'CVD', lastValueVisible: false, priceLineVisible: false }, 1)
-    chart.priceScale('left', 1).applyOptions({ visible: true, borderColor: '#2a2f3a' })
+    cvd = chart.addSeries(LineSeries, { color: C.gold, lineWidth: 1, priceScaleId: 'left', priceFormat: { type: 'volume' }, title: 'CVD', lastValueVisible: false, priceLineVisible: false }, 1)
+    chart.priceScale('left', 1).applyOptions({ visible: true, borderColor: C.border })
     chart.panes()[1]?.setHeight(110)
   }
   let cum = 0
@@ -208,41 +280,24 @@ async function loadFlow(cs: Candle[]) {
     if (!f) continue
     const d = f.buy - f.sell
     cum += d
-    const alpha = f.src === 'trades' ? 0.85 : 0.5 // rubik history drawn lighter
-    dd.push({ time: chartTime(c.t), value: d, color: d >= 0 ? `rgba(38,166,154,${alpha})` : `rgba(239,83,80,${alpha})` })
+    const a = f.src === 'trades' ? 0.85 : 0.5 // rubik history drawn lighter
+    dd.push({ time: chartTime(c.t), value: d, color: d >= 0 ? alpha('up', a) : alpha('down', a) })
     cc.push({ time: chartTime(c.t), value: cum })
   }
   delta!.setData(dd)
   cvd!.setData(cc)
-  if (layer.value === 'foot') {
+  if (wantFoot) {
     if (!foot) {
       foot = new Footprint()
       foot.onRegroup = () => footVer.value++
       candles!.attachPrimitive(foot)
-      candles!.applyOptions({ upColor: 'rgba(38,166,154,.18)', downColor: 'rgba(239,83,80,.18)' })
+      candles!.applyOptions({ upColor: alpha('up', 0.18), downColor: alpha('down', 0.18) })
     }
-    vol?.applyOptions({ visible: false }) // footprint already shows volume per level; the bars would cover it
+    vol!.applyOptions({ visible: false }) // footprint already shows volume per level; the bars would cover it
     const fm = new Map<number, FootBar>()
     for (const b of of.bars || []) if (b.levels?.length && b.step) fm.set(chartTime(b.t) as number, { levels: b.levels, step: b.step })
     foot.setData(fm, cs.map(c => ({ time: chartTime(c.t) as number, low: c.l, high: c.h })))
     footVer.value++
-  }
-}
-
-function clearFlow() {
-  if (!chart) return
-  if (foot) {
-    candles!.detachPrimitive(foot)
-    candles!.applyOptions({ upColor: UP, downColor: DOWN })
-    vol?.applyOptions({ visible: true })
-    foot = undefined
-  }
-  if (layer.value === 'k') {
-    if (delta) chart.removeSeries(delta)
-    if (cvd) chart.removeSeries(cvd)
-    delta = cvd = undefined
-    if (chart.panes().length > 1) chart.removePane(1)
-    flow.value = new Map()
   }
 }
 
@@ -273,25 +328,22 @@ function onCrosshair(p: MouseEventParams<Time>) {
 
 onMounted(() => {
   chart = baseChart(el.value!, { crosshair: { mode: 0, horzLine: { labelVisible: false } } })
-  candles = chart.addSeries(CandlestickSeries, { upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN })
+  candles = chart.addSeries(CandlestickSeries, { upColor: C.up, downColor: C.down, borderVisible: false, wickUpColor: C.up, wickDownColor: C.down })
   vol = chart.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false })
   chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
   layoutBands()
   chart.subscribeCrosshairMove(onCrosshair)
-  load(true)
+  chart.timeScale().subscribeVisibleLogicalRangeChange(() => { spacing.value = chart?.timeScale().options().barSpacing ?? 6 })
+  load('fit')
   timer = window.setInterval(() => load(), 10_000)
   hotTimer = window.setInterval(hot, 1000)
 })
 onUnmounted(() => { clearInterval(timer); clearInterval(hotTimer); chart?.remove() })
-watch(bar, v => { localStorage.setItem('bar', v); load(true) })
-watch(withSpot, v => { localStorage.setItem('ctg.chartSpot', v ? '1' : '0'); load() })
-watch(withOIL, v => { localStorage.setItem('ctg.chartOIL', v ? '1' : '0'); load() })
-watch(withOID, v => { localStorage.setItem('ctg.chartOID', v ? '1' : '0'); load() })
-watch(layer, (v, old) => {
-  localStorage.setItem('ctg.chartLayer', v)
-  if (old === 'foot' || v === 'k') clearFlow()
-  load(v === 'foot' || old === 'foot')
-})
+watch(bar, v => { localStorage.setItem('bar', v); load('anchor') })
+watch(layer, v => { localStorage.setItem('ctg.chartLayer', v); load('anchor') })
+watch(withSpot, v => { localStorage.setItem('ctg.chartSpot', v ? '1' : '0'); load('anchor') })
+watch(withOIL, v => { localStorage.setItem('ctg.chartOIL', v ? '1' : '0'); load('anchor') })
+watch(withOID, v => { localStorage.setItem('ctg.chartOID', v ? '1' : '0'); load('anchor') })
 // ---- full screen: native Fullscreen API where the element supports it; otherwise (iPhone Safari)
 // a fixed overlay covering the viewport. Esc / the button leaves either way.
 const root = ref<HTMLElement>()
@@ -349,6 +401,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
     </h3>
     <div class="wrap" :class="{ tall: layer !== 'k' }">
       <div ref="el" class="chart" @dblclick="resetView"></div>
+      <Loading overlay :show="loading" />
+      <div v-if="layer === 'foot' && spacing < 20 && bars.length" class="foot-hint">横向放大（滚轮 / 双指）到足够宽才显示足迹</div>
       <button type="button" class="reset" title="回到最新、自动缩放（PC 也可双击图表）" aria-label="重置视图" :style="{ right: axisWidth + 6 + 'px' }" @click="resetView"><LocateFixed :size="15" /></button>
       <div class="legend tnum" v-if="shown">
         <span class="muted">{{ fmtTime(shown.c.t, true) }}</span>
@@ -402,7 +456,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
 @media (hover: hover) { .fs-btn:hover { color: var(--text-1); border-color: var(--accent); } }
 .fs-btn:focus-visible { outline: 2px solid var(--accent); }
 .reset { all: unset; box-sizing: border-box; position: absolute; bottom: 34px; z-index: 4; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px;
-  background: rgba(17, 21, 28, .8); border: 1px solid var(--line-2); color: var(--text-2); cursor: pointer; }
+  background: rgba(14, 14, 14, .85); border: 1px solid var(--line-2); color: var(--text-2); cursor: pointer; }
 @media (hover: hover) { .reset:hover { color: var(--text-1); border-color: var(--accent); } }
 .reset:active { background: var(--bg-3); }
 .reset:focus-visible { outline: 2px solid var(--accent); }
@@ -412,17 +466,18 @@ h3 { display: flex; justify-content: space-between; align-items: center; flex-wr
 .bars { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .ovl { display: flex; gap: 6px; align-items: center; }
 .ovl :deep(.fchip) { height: 24px; padding: 0 10px; font-size: var(--fs-xs); font-weight: 500; }
-.legend { position: absolute; left: 6px; top: 4px; max-width: calc(100% - 76px); z-index: 3; pointer-events: none; padding: 0 4px; border-radius: 4px; background: rgba(17, 21, 28, .75); font-size: var(--fs-xs); color: var(--text-3); line-height: 1.6; }
+.legend { position: absolute; left: 6px; top: 4px; max-width: calc(100% - 76px); z-index: 3; pointer-events: none; padding: 0 4px; border-radius: 4px; background: rgba(14, 14, 14, .78); font-size: var(--fs-xs); color: var(--text-3); line-height: 1.6; }
 .legend span { margin-right: 8px; white-space: nowrap; }
 .legend b { color: var(--text-1); font-weight: 500; }
-.legend b.up { color: var(--up); } .legend b.down { color: var(--down); } .legend b.poc { color: #f5c542; } .legend b.oi { color: #7aa7ff; } .legend small.up { color: var(--up); } .legend small.down { color: var(--down); } .legend b.spot { color: #f5c542; }
+.legend b.up { color: var(--up); } .legend b.down { color: var(--down); } .legend b.poc { color: var(--gold); } .legend b.oi { color: var(--info); } .legend small.up { color: var(--up); } .legend small.down { color: var(--down); } .legend b.spot { color: var(--gold); }
 .legend .key { display: inline-flex; align-items: center; gap: 4px; }
 .key i { display: inline-block; flex: none; }
-.k-cell { display: inline-flex !important; width: 14px; height: 9px; } .k-cell em { flex: 1; } .k-cell .s { background: rgba(246,70,93,.7); } .k-cell .b { background: rgba(14,203,129,.7); }
-.k-poc { width: 12px; height: 8px; border: 1px solid #f5c542; }
-.k-va { width: 2px; height: 10px; background: rgba(245,197,66,.7); }
-.k-naked { width: 14px; border-top: 1px dashed #f5c542; }
-.axis-lbl { position: absolute; right: 0; z-index: 3; pointer-events: none; display: grid; justify-items: center; padding: 1px 0; background: #2b3242; border-radius: 2px; font-size: 10px; line-height: 15px; color: var(--text-1); }
+.k-cell { display: inline-flex !important; width: 14px; height: 9px; } .k-cell em { flex: 1; } .k-cell .s { background: var(--down); } .k-cell .b { background: var(--up); }
+.k-poc { width: 12px; height: 8px; border: 1px solid var(--gold); }
+.k-va { width: 2px; height: 10px; background: var(--gold); opacity: .7; }
+.k-naked { width: 14px; border-top: 1px dashed var(--gold); }
+.foot-hint { position: absolute; left: 50%; bottom: 48px; transform: translateX(-50%); z-index: 3; pointer-events: none; padding: 4px 10px; border-radius: 6px; background: rgba(14, 14, 14, .85); border: 1px solid var(--line-2); color: var(--text-2); font-size: var(--fs-xs); white-space: nowrap; }
+.axis-lbl { position: absolute; right: 0; z-index: 3; pointer-events: none; display: grid; justify-items: center; padding: 1px 0; background: var(--bg-3); border-radius: 2px; font-size: 10px; line-height: 15px; color: var(--text-1); }
 .axis-lbl b { font-weight: 500; }
 .axis-lbl .up { color: var(--up); } .axis-lbl .down { color: var(--down); }
 @media (max-width: 900px) {

@@ -14,7 +14,9 @@
 
 - 指标用“**小灰标签在上、数值在下、辅助说明再下**”（见详情头部 `.stat`），不要“标签：数值”挤在一行。
 - 单位（USDT、bps、币）用 `<small>` 弱化，数字一律 `tabular-nums`，避免刷新时抖动。
-- 颜色只表达语义：涨 `--up`、跌 `--down`、警示 `--warn`、交互/选中 `--accent`。中性数据不上色；多/空分 < 50 保持灰色。
+- 颜色只表达语义：涨 `--up`、跌 `--down`、警示 `--warn`、交互/选中 `--accent`（OKX 荧光绿，填充时文字用 `--on-accent` 黑色）。中性数据不上色；多/空分 < 50 保持灰色。
+- 整体配色参考 OKX 网页交易终端：纯黑底 `--bg-0`、中性灰面板（不偏蓝）、涨跌 OKX 绿/红。图表画布颜色统一取 `src/theme.ts`（与 `style.css` token 同值），组件里不写死色值。
+- 加载中用 `ui/Loading.vue`：图表区域用 `overlay` 盖在旧内容上（保留旧图，不闪白），整块内容未到时用行内形式；异步加载函数用 `composables/busy.ts` 的 `track` 包一层。
 
 ## 2. 说明文字：默认收起，按需展开
 
@@ -53,7 +55,7 @@
 | 单选切换（方向、周期、范围、预设值） | `<Segmented>`（全局组件，ToggleGroup single，禁止取消选中） | 并排 button + 负 margin（会裁掉高亮边框） |
 | 下拉选择（规则、排序、默认值） | `<USelect>`（全局组件，支持分组/说明/徽标/勾选） | 原生 `<select>` |
 | 多选筛选（类别） | `ui/ChipGroup.vue`（ToggleGroup multiple，可 `at-least-one`） | 手写 span.chip |
-| 开关筛选（自选、门槛） | `ui/FilterChip.vue`（Toggle；未启用虚线、启用蓝色实线 + 计数） | |
+| 开关筛选（自选、门槛） | `ui/FilterChip.vue`（Toggle；未启用虚线、启用强调色实线 + 计数） | |
 | 搜索 | `ui/SearchInput.vue`（图标、清空、`/` 聚焦、Esc 清空） | 裸 input |
 | 浮层菜单 / 列表 | Reka `Popover`（样式类 `.lm-pop`） | 页面内展开大块内容 |
 | 指标卡片 / 详情 | `ui/StatCard.vue` + `details/registry.ts` | |

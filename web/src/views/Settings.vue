@@ -175,7 +175,7 @@ async function save() {
 
 <style scoped>
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
-label { display: grid; gap: 6px; align-content: start; color: var(--muted); font-size: 12px; }
+label { display: grid; gap: 6px; align-content: start; color: var(--text-3); font-size: 12px; }
 label.row { max-width: 420px; margin-bottom: 10px; }
 input[type=number] { width: 160px; }
 .presets { display: flex; gap: 4px; flex-wrap: wrap; }

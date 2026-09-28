@@ -1,33 +1,33 @@
 /*
- * Design tokens — dark trading-terminal theme.
- * Colour: Radix-style 12-step neutral roles (bg layers / borders / 3 text levels) and
- *         exchange-standard semantics (up #0ECB81 / down #F6465D, warn amber, info blue).
+ * Design tokens — dark trading-terminal theme after OKX's web terminal: pure black canvas,
+ * neutral (not blue-tinted) greys for panels and hairlines, OKX lime as the accent and OKX's
+ * green/red for up/down. Chart canvases read the same values from theme.ts.
  * Type:   IBM Carbon-like productive scale 11/12/13/14/16/20/28 on a 4px spacing grid;
  *         numbers always tabular so columns don't jitter while prices update.
  */
 :root {
   /* surfaces */
-  --bg-0: #0b0e13;       /* app background */
-  --bg-1: #11151c;       /* panel */
-  --bg-2: #171c25;       /* raised / hover */
-  --bg-3: #1e2430;       /* input / selected */
-  --line: #222834;       /* hairline */
-  --line-2: #2d3544;     /* stronger border / focus-ish */
+  --bg-0: #000000;       /* app background */
+  --bg-1: #0e0e0e;       /* panel */
+  --bg-2: #171717;       /* raised / hover */
+  --bg-3: #222222;       /* input / selected */
+  --line: #1d1d1d;       /* hairline */
+  --line-2: #2e2e2e;     /* stronger border */
   /* text */
-  --text-1: #eaecef;     /* primary: values, symbols */
-  --text-2: #a4acb9;     /* secondary: supporting values */
-  --text-3: #6c7688;     /* tertiary: labels, captions */
+  --text-1: #f5f5f5;     /* primary: values, symbols */
+  --text-2: #a8a8a8;     /* secondary: supporting values */
+  --text-3: #707070;     /* tertiary: labels, captions */
   /* semantic */
-  --up: #0ecb81;   --up-bg: rgba(14, 203, 129, 0.12);
-  --down: #f6465d; --down-bg: rgba(246, 70, 93, 0.12);
-  --warn: #f0b90b; --warn-bg: rgba(240, 185, 11, 0.12);
-  --accent: #4c8dff; --accent-bg: rgba(76, 141, 255, 0.14);
+  --up: #25a750;   --up-bg: rgba(37, 167, 80, 0.14);
+  --down: #ca3f64; --down-bg: rgba(202, 63, 100, 0.14);
+  --warn: #f7a600; --warn-bg: rgba(247, 166, 0, 0.12);
+  --accent: #bcff2f; --accent-bg: rgba(188, 255, 47, 0.1); --on-accent: #000;
+  --info: #5b9bff; --info-bg: rgba(91, 155, 255, 0.14);
+  --gold: #f5c542;       /* chart marks: POC, spot line, CVD */
   --long: var(--up); --short: var(--down);
   /* type */
   --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-lg: 14px; --fs-xl: 16px; --fs-2xl: 20px; --fs-3xl: 28px;
   --radius: 10px; --radius-sm: 6px;
-  /* legacy aliases used across components */
-  --bg: var(--bg-0); --panel: var(--bg-1); --panel2: var(--bg-2); --text: var(--text-1); --muted: var(--text-3);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -52,7 +52,7 @@ button, select, input {
 input:focus, select:focus { border-color: var(--accent); }
 button { cursor: pointer; transition: border-color .12s, background .12s; }
 @media (hover: hover) { button:hover { border-color: var(--text-3); } }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 button.on, .chip.on { background: var(--accent-bg); border-color: var(--accent); color: var(--text-1); }
 .muted { color: var(--text-3); }
 .sub { color: var(--text-2); }
@@ -79,7 +79,7 @@ button.on, .chip.on { background: var(--accent-bg); border-color: var(--accent);
   #app > main { flex: 1; min-height: 0; overflow: auto; }
 }
 
-.banner { background: var(--down-bg); color: #ffb4b4; padding: 6px 16px; }
+.banner { background: var(--down-bg); color: var(--down); padding: 6px 16px; }
 
 /* panels */
 .panel { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }

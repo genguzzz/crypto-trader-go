@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import Loading from '../ui/Loading.vue'
+import { computed } from 'vue'
 import { Activity } from 'lucide-vue-next'
 import { api } from '../../api'
 import { usePolling } from '../../composables/polling'
@@ -87,7 +88,7 @@ const ladderMax = computed(() => Math.max(ladderAsks.value[0]?.cum || 0, ladderB
         </div>
       </div>
     </template>
-    <div v-else-if="!error" class="note">加载盘口…</div>
+    <Loading v-else-if="!error" text="加载盘口" />
   </div>
 </template>
 

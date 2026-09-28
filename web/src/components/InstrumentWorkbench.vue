@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Loading from './ui/Loading.vue'
 import { computed, markRaw, ref, watch, type Component } from 'vue'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import { BookOpenText, Gauge, GitCompareArrows, ChartColumn, LayoutGrid, PanelLeftClose, PanelLeftOpen, ChevronLeft, Star } from 'lucide-vue-next'
@@ -180,7 +181,8 @@ useLayoutEntry('ctg.wb', '工作台面板与比例', () => open.value.join() !==
     </div>
     <StatDetailDialog v-model:active="detailKey" :ctx="detailCtx" :title="`${base}/USDT 永续`" />
   </div>
-  <div v-else class="note pad">{{ err || '加载中…' }}</div>
+  <div v-else-if="err" class="note pad">{{ err }}</div>
+  <Loading v-else text="加载合约" />
 </template>
 
 <style scoped>
@@ -212,7 +214,7 @@ useLayoutEntry('ctg.wb', '工作台面板与比例', () => open.value.join() !==
 .kv .v small { color: var(--text-3); font-size: var(--fs-xs); }
 .kv .v em { font-style: normal; color: var(--text-3); font-size: var(--fs-xs); }
 .star { all: unset; box-sizing: border-box; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: var(--text-3); cursor: pointer; flex: none; }
-.star.on { color: #f5c542; }
+.star.on { color: var(--gold); }
 @media (hover: hover) { .star:hover { background: var(--bg-3); } }
 @media (max-width: 1400px) { .hide-md { display: none; } }
 

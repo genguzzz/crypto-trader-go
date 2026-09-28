@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useBusy } from '../../composables/busy'
+import Loading from '../ui/Loading.vue'
+import { C } from '../../theme'
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { LineSeries, type IChartApi, type ISeriesApi } from 'lightweight-charts'
 import { api } from '../../api'
@@ -12,7 +15,9 @@ const err = ref('')
 let chart: IChartApi | undefined
 let s: ISeriesApi<'Line'> | undefined
 
-async function load() {
+const { busy, track } = useBusy()
+const load = track(loadData)
+async function loadData() {
   try {
     const [perp, spot] = await Promise.all([api.candles(props.id, props.bar, props.limit), api.candles(props.id, props.bar, props.limit, 'spot')])
     const sp = new Map(spot.map(c => [c.t, c.c]))
@@ -24,8 +29,8 @@ async function load() {
 }
 onMounted(() => {
   chart = baseChart(el.value!)
-  s = chart.addSeries(LineSeries, { color: '#f0b90b', lineWidth: 2, priceFormat: { type: 'price', precision: 1, minMove: 0.1 } })
-  s.createPriceLine({ price: 0, color: '#6c7688', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '' })
+  s = chart.addSeries(LineSeries, { color: C.amber, lineWidth: 2, priceFormat: { type: 'price', precision: 1, minMove: 0.1 } })
+  s.createPriceLine({ price: 0, color: C.text, lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '' })
   load()
 })
 onUnmounted(() => chart?.remove())
@@ -34,7 +39,11 @@ watch(() => [props.id, props.bar], load)
 
 <template>
   <div>
-    <div ref="el" :style="{ height: height + 'px' }"></div>
+    <div class="lwrap"><div ref="el" :style="{ height: height + 'px' }"></div><Loading overlay :show="busy" /></div>
     <div v-if="err" class="note">{{ err }}</div>
   </div>
 </template>
+
+<style scoped>
+.lwrap { position: relative; }
+</style>

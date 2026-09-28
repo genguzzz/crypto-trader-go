@@ -98,7 +98,7 @@ const tipLeft = computed(() => (hover.value ? Math.min(Math.max(hover.value.px +
 .depth { position: relative; width: 100%; touch-action: pan-y; cursor: crosshair; user-select: none; }
 svg { display: block; }
 .grid line { stroke: var(--line); stroke-width: 1; }
-.area.bid { fill: rgba(14, 203, 129, .16); } .area.ask { fill: rgba(246, 70, 93, .16); }
+.area.bid { fill: var(--up-bg); } .area.ask { fill: var(--down-bg); }
 .line { fill: none; stroke-width: 1.5; } .line.bid { stroke: var(--up); } .line.ask { stroke: var(--down); }
 .midline { stroke: var(--text-3); stroke-dasharray: 3 3; }
 .axis text { fill: var(--text-3); font-size: 10px; font-variant-numeric: tabular-nums; }

@@ -31,6 +31,8 @@ export interface CatalogItem {
 }
 /** Per-bar taker buy/sell USDT; src trades = recorded here (footprint levels available), rubik = OKX history. */
 export interface FlowBar { t: number; buy: number; sell: number; n?: number; src: 'trades' | 'rubik'; levels?: [number, number, number][]; step?: number }
+/** Series sample: v = value (OI in coins), u = USD value where known. */
+export interface SeriesPoint { t: number; v: number; u?: number }
 export interface OrderFlow { bars: FlowBar[] | null; recording: boolean; since: number }
 export interface Coin { id: string; symbol: string; name: string; rank: number; marketCap: number; fdv: number; circulating: number; total: number; max: number; updatedAt: string; fetchedAt: number }
 export interface TableUsage { name: string; table: string; bytes: number; budget: number; ages: string[]; tight: boolean }
@@ -74,7 +76,7 @@ export const api = {
   compare: (id: string, bar: string, limit = 300) =>
     req<{ ids: string[]; points: { t: number; v: Record<string, number> }[] | null }>(`/api/v1/compare?instId=${encodeURIComponent(id)}&bar=${bar}&limit=${limit}`),
   series: (id: string, field: 'oi' | 'funding', hours = 24) =>
-    req<{ t: number; v: number; u?: number }[] | null>(`/api/v1/series?instId=${encodeURIComponent(id)}&field=${field}&hours=${hours}`),
+    req<SeriesPoint[] | null>(`/api/v1/series?instId=${encodeURIComponent(id)}&field=${field}&hours=${hours}`),
   rules: () => req<Rule[]>('/api/v1/rules'),
   saveRule: (r: Partial<Rule>) => req<Rule>('/api/v1/rules', { method: 'POST', body: JSON.stringify(r), headers: { 'Content-Type': 'application/json' } }),
   deleteRule: (id: string) => req<{ ok: boolean }>(`/api/v1/rules/${id}`, { method: 'DELETE' }),
