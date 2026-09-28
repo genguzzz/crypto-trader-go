@@ -2,13 +2,13 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { store, setRule, fieldLabel, ruleOptions } from '../store'
-import { Sigma, TrendingUp, TrendingDown, ArrowDownWideNarrow, Star, ShieldCheck, LogOut, LineChart, X } from 'lucide-vue-next'
+import { Sigma, TrendingUp, TrendingDown, ArrowDownWideNarrow, ArrowUpNarrowWide, Star, ShieldCheck, LogOut, LineChart, X } from 'lucide-vue-next'
 import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
 import SearchInput from '../components/ui/SearchInput.vue'
 import FilterChip from '../components/ui/FilterChip.vue'
 import ChipGroup from '../components/ui/ChipGroup.vue'
 import { api, type Row, type CatalogItem } from '../api'
-import { usd, price, logPct, fundingH, fundingClass, catLabel, time, sign } from '../fmt'
+import { usd, price, logPct, fundingH, fundingClass, catLabel, time, sign, oiFrac } from '../fmt'
 import Loading from '../components/ui/Loading.vue'
 import InstrumentWorkbench from '../components/InstrumentWorkbench.vue'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
@@ -68,7 +68,7 @@ const filtered = computed(() => !!q.value || onlyWatch.value || onlyPass.value |
 function clearFilters() { q.value = ''; onlyWatch.value = false; onlyPass.value = false; catSel.value = ['1', '3', '4'] }
 const ruleModel = computed({ get: () => store.ruleId, set: (v: string) => setRule(v) })
 const sortOptions = computed(() => [
-  { value: 'score', label: '按方向分' }, { value: 'long', label: '多头分' }, { value: 'short', label: '空头分' }, { value: 'mcap', label: '总市值' }, { value: 'turnover12h', label: '12h 成交额' },
+  { value: 'score', label: '按方向分' }, { value: 'long', label: '多头分' }, { value: 'short', label: '空头分' }, { value: 'mcap', label: '总市值' }, { value: 'oi', label: '持仓量' }, { value: 'turnover12h', label: '12h 成交额' },
   ...(store.meta?.fields.filter(f => f.key !== 'turnover12h').map(f => ({ value: f.key, label: f.label })) || []),
 ])
 const selected = computed(() => (route.query.sel as string) || '')
@@ -89,6 +89,7 @@ function sortVal(r: Row): number | null {
     case 'score': return dirScore(r)
     case 'turnover12h': return r.turnover12h || null
     case 'mcap': return r.mcap || null
+    case 'oi': return r.oiUsd || null
     case 'long': return scoreOf(r, 'long')
     case 'short': return scoreOf(r, 'short')
     default: return r.values?.[sortKey.value] ?? null
@@ -180,8 +181,23 @@ watch(() => store.snap, s => {
   if (!narrow.value && !selected.value && s?.rows?.length) router.replace({ query: { sel: s.rows[0].instId } })
 }, { immediate: true })
 const allCols: [string, string][] = [
-  ['ret_4h', '4h'], ['excess_btc_4h', '相对BTC'], ['oi_chg_4h', 'OIΔ4h'], ['vol_surprise_4h', '放量'], ['funding_hourly', '费/h'],
+  ['ret_4h', '4h'], ['excess_btc_4h', '相对BTC'], ['oi_chg_4h', 'OIΔ4h'], ['vol_surprise_4h', '放量'],
 ]
+// OI bar: drawn in the list's visible frame (not the wider scrolling table), so the pinned cells
+// and the scrolled cells line up — --vw = visible width, --sx = horizontal scroll offset.
+const wrapEl = ref<HTMLElement>()
+let wro: ResizeObserver | undefined
+watch(wrapEl, el => {
+  wro?.disconnect()
+  if (!el) return
+  wro = new ResizeObserver(() => el.style.setProperty('--vw', el.clientWidth + 'px'))
+  wro.observe(el)
+}, { immediate: true })
+onUnmounted(() => wro?.disconnect())
+function onWrapScroll(e: Event) {
+  const el = e.target as HTMLElement
+  el.style.setProperty('--sx', el.scrollLeft + 'px')
+}
 // every column is always there; a narrow list scrolls sideways with the symbol column pinned
 const cols = allCols
 </script>
@@ -205,7 +221,12 @@ const cols = allCols
           <span class="vsep"></span>
           <FilterChip v-model="onlyWatch" label="自选" :icon="Star" :count="watchCount" />
           <FilterChip v-model="onlyPass" label="门槛通过" :icon="ShieldCheck" title="只看当前规则点差门槛通过的合约" />
-          <USelect v-model="sortKey" size="sm" :options="sortOptions" :icon="ArrowDownWideNarrow" aria-label="排序" />
+          <span class="sortctl">
+            <USelect v-model="sortKey" size="sm" :options="sortOptions" aria-label="排序字段" />
+            <button class="sortdir" :title="sortDesc ? '从大到小（点击切换）' : '从小到大（点击切换）'" :aria-label="sortDesc ? '降序' : '升序'" @click="sortDesc = !sortDesc">
+              <component :is="sortDesc ? ArrowDownWideNarrow : ArrowUpNarrowWide" :size="14" />
+            </button>
+          </span>
           <span class="spacer"></span>
           <PopoverRoot v-if="store.snap?.removed?.length">
             <PopoverTrigger class="fchip removed-btn"><LogOut :size="13" class="fc-ic" /><span>最近移出</span><span class="fc-n">{{ store.snap.removed.length }}</span></PopoverTrigger>
@@ -224,7 +245,7 @@ const cols = allCols
       </div>
 
       <!-- desktop table -->
-      <div class="tablewrap" v-if="!narrow">
+      <div class="tablewrap" v-if="!narrow" ref="wrapEl" @scroll.passive="onWrapScroll">
         <table>
           <thead>
             <tr>
@@ -232,6 +253,7 @@ const cols = allCols
               <th class="pin p1">合约</th>
               <th class="num sortable" @click="sortBy('long')">多{{ sortKey === 'long' ? (sortDesc ? '↓' : '↑') : '' }}</th>
               <th class="num sortable" @click="sortBy('short')">空{{ sortKey === 'short' ? (sortDesc ? '↓' : '↑') : '' }}</th>
+              <th class="num sortable" :title="fieldLabel('funding_hourly')" @click="sortBy('funding_hourly')">费/h{{ sortKey === 'funding_hourly' ? (sortDesc ? '↓' : '↑') : '' }}</th>
               <th class="num">价格</th>
               <th v-for="[k, l] in cols" :key="k" class="num sortable" :title="fieldLabel(k)" @click="sortBy(k)">{{ l }}{{ sortKey === k ? (sortDesc ? '↓' : '↑') : '' }}</th>
               <th class="num sortable" @click="sortBy('mcap')">总市值{{ sortKey === 'mcap' ? (sortDesc ? '↓' : '↑') : '' }}</th>
@@ -239,9 +261,9 @@ const cols = allCols
             </tr>
           </thead>
           <tbody>
-            <tr v-for="r in rows" :key="r.instId" :class="{ sel: r.instId === selected, inactive: !r.active }" @click="open(r)">
+            <tr v-for="r in rows" :key="r.instId" :class="{ sel: r.instId === selected, inactive: !r.active }" :style="{ '--oi': oiFrac(r.oiUsd) }" @click="open(r)">
               <td @click.stop="toggleWatch(r)" class="star pin p0" :class="{ on: r.watch }">{{ r.watch ? '★' : '☆' }}</td>
-              <td class="pin p1">
+              <td class="pin p1" :title="r.oiUsd ? `持仓量 ${usd(r.oiUsd)} USDT` : undefined">
                 <span class="dot" :class="r.status === 'live' ? 'ok' : r.status === 'stale' ? 'bad' : 'warn'" :title="r.status"></span>
                 <CoinIcon :inst-id="r.instId" class="ic" />
                 <b class="symb">{{ sym(r.instId) }}</b>
@@ -251,10 +273,10 @@ const cols = allCols
               </td>
               <td class="num"><ScoreChip :v="scoreOf(r, 'long')" side="long" /></td>
               <td class="num"><ScoreChip :v="scoreOf(r, 'short')" side="short" /></td>
+              <td class="num fund"><span :class="fundingClass(r.values?.funding_hourly, 1)">{{ fundingH(r.values?.funding_hourly) }}</span></td>
               <td class="num px">{{ price(livePrice(r)) }}</td>
-              <td v-for="[k] in cols" :key="k" class="num" :class="k === 'funding_hourly' || k === 'vol_surprise_4h' ? 'sec' : sign(r.values?.[k] ?? 0)">
-                <span v-if="k === 'funding_hourly'" :class="fundingClass(r.values?.[k], 1)">{{ fundingH(r.values?.[k]) }}</span>
-                {{ k === 'funding_hourly' ? '' : k === 'vol_surprise_4h' ? (r.values?.[k] != null ? '×' + Math.exp(r.values[k]).toFixed(2) : '—') : logPct(r.values?.[k]) }}
+              <td v-for="[k] in cols" :key="k" class="num" :class="k === 'vol_surprise_4h' ? 'sec' : sign(r.values?.[k] ?? 0)">
+                {{ k === 'vol_surprise_4h' ? (r.values?.[k] != null ? '×' + Math.exp(r.values[k]).toFixed(2) : '—') : logPct(r.values?.[k]) }}
               </td>
               <td class="num sec">{{ r.mcap ? usd(r.mcap) : '—' }}</td>
               <td class="num sec">{{ usd(r.turnover12h) }}<span v-if="r.provisional" class="muted">*</span></td>
@@ -289,13 +311,14 @@ const cols = allCols
 
       <!-- mobile cards -->
       <div v-else class="cards">
-        <div v-for="r in rows" :key="r.instId" class="card pressable" @click="open(r)">
+        <div v-for="r in rows" :key="r.instId" class="card pressable oi-card" :style="{ '--oi': oiFrac(r.oiUsd) }" @click="open(r)">
           <div class="l1">
             <span class="dot" :class="r.status === 'live' ? 'ok' : r.status === 'stale' ? 'bad' : 'warn'"></span>
             <CoinIcon :inst-id="r.instId" :size="22" />
             <b>{{ sym(r.instId) }}</b>
             <span class="tag" v-if="r.category !== '1'">{{ catLabel[r.category] }}</span>
             <span class="star" :class="{ on: r.watch }" @click.stop="toggleWatch(r)">{{ r.watch ? '★' : '☆' }}</span>
+            <span class="fund num" title="资金费（已结算，折合每小时）"><small>费/h</small> <span :class="fundingClass(r.values?.funding_hourly, 1)">{{ fundingH(r.values?.funding_hourly) }}</span></span>
             <span class="px num">{{ price(livePrice(r)) }}</span>
           </div>
           <div class="l2">
@@ -360,6 +383,10 @@ const cols = allCols
 @media (hover: hover) { .icon-link:hover { background: var(--bg-2); color: var(--accent); text-decoration: none; } }
 .vsep { width: 1px; height: 18px; background: var(--line-2); margin: 0 2px; }
 .spacer { flex: 1; }
+.sortctl { display: inline-flex; align-items: center; }
+.sortctl :deep(.sel-trigger) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.sortdir { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; margin-left: -1px; border: 1px solid var(--line-2); border-radius: 0 8px 8px 0; background: var(--bg-2); color: var(--text-2); cursor: pointer; }
+@media (hover: hover) { .sortdir:hover { color: var(--accent); border-color: var(--text-3); } }
 .count { font-size: var(--fs-sm); color: var(--text-1); font-weight: 600; }
 .clear { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border: none; background: transparent; color: var(--text-3); font-size: var(--fs-xs); }
 @media (hover: hover) { .clear:hover { color: var(--text-1); background: var(--bg-2); } }
@@ -370,8 +397,17 @@ const cols = allCols
 thead .pin { z-index: 3; }
 .p0 { left: 0; width: 24px; min-width: 24px; }
 .p1 { left: 24px; box-shadow: 1px 0 0 var(--line); }
-@media (hover: hover) { tbody tr:hover .pin { background: var(--bg-2); } }
-tbody tr.sel .pin { background: var(--accent-bg-solid); }
+@media (hover: hover) { tbody tr:hover .pin { background-color: var(--bg-2); } }
+tbody tr.sel .pin { background-color: var(--accent-bg-solid); }
+/* OI bar (fmt.oiFrac): row background filled from the left, --oi = 0..1 of the visible width */
+.tablewrap > table:first-child tbody tr {
+  --oiw: calc(var(--vw, 400px) * var(--oi, 0));
+  background-image: linear-gradient(var(--oi-bar), var(--oi-bar)); background-repeat: no-repeat;
+  background-size: var(--oiw) 100%; background-position: var(--sx, 0px) 0;
+}
+tbody .pin { background-color: var(--bg-0); background-image: linear-gradient(var(--oi-bar), var(--oi-bar)); background-repeat: no-repeat; }
+tbody .p0 { background-size: min(var(--oiw, 0px), 100%) 100%; }
+tbody .p1 { background-size: clamp(0px, calc(var(--oiw, 0px) - 24px), 100%) 100%; }
 thead th { position: sticky; top: 0; background: var(--bg-1); z-index: 1; }
 .sortable { cursor: pointer; user-select: none; }
 tbody td, thead th { padding: 0 6px; }
@@ -379,12 +415,12 @@ tbody td:last-child, thead th:last-child { padding-right: 12px; }
 thead th { height: 32px; border-bottom: 1px solid var(--line-2); }
 tbody tr { cursor: pointer; height: 36px; }
 tbody td { border-bottom-color: var(--line); }
-@media (hover: hover) { tbody tr:hover { background: var(--bg-2); } }
-tbody tr.sel { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
+@media (hover: hover) { tbody tr:hover { background-color: var(--bg-2); } }
+tbody tr.sel { background-color: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
 tbody tr.inactive { opacity: 0.6; }
 .symb { font-weight: 600; font-size: var(--fs-md); color: var(--text-1); }
 td.px { color: var(--text-1); font-weight: 500; }
-td.sec { color: var(--text-2); }
+td.sec, td.fund { color: var(--text-2); }
 td.up { color: var(--up); } td.down { color: var(--down); }
 .ic { margin: 0 4px 0 2px; }
 .star { color: var(--text-3); cursor: pointer; width: 18px; }
@@ -395,7 +431,11 @@ td.up { color: var(--up); } td.down { color: var(--down); }
 .cards { display: grid; }
 .card { padding: 8px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 4px; }
 .card .l1 { display: flex; gap: 6px; align-items: center; }
+.card .fund { margin-left: auto; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.card .fund small { color: var(--text-3); font-size: var(--fs-xs); }
 .card .px { margin-left: auto; font-weight: 600; }
+.card .fund + .px { margin-left: 10px; }
+.oi-card { background-image: linear-gradient(var(--oi-bar), var(--oi-bar)); background-repeat: no-repeat; background-size: calc(var(--oi, 0) * 100%) 100%; }
 .card .l2 { display: flex; gap: 12px; align-items: center; font-size: 12px; }
 .oh { display: flex; align-items: center; gap: 6px; padding: 14px 12px 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); border-top: 1px solid var(--line-2); }
 table.others { width: 100%; }

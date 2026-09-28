@@ -289,6 +289,9 @@ func (e *Engine) buildRow(in *Inst, m, now int64) Row {
 			r.MarketCap = c.MarketCap
 		}
 	}
+	if in.oiNow.Ts > 0 && now-in.oiNow.Ts < 15*minuteMs {
+		r.OiUsd = in.oiNow.OiUsd
+	}
 	switch {
 	case in.ListTime > m-719*minuteMs:
 		r.Status = "new"
