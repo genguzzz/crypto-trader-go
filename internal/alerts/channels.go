@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -153,7 +155,8 @@ type Payload struct {
 }
 
 type sender struct {
-	client       *http.Client
+	client       *http.Client // Telegram (fixed host)
+	hook         *http.Client // webhooks: user-supplied URLs, public addresses only
 	telegramBase string
 	attempts     int
 	timeout      time.Duration
@@ -173,7 +176,7 @@ func (e *httpStatusErr) Error() string {
 	return fmt.Sprintf("HTTP %d", e.code)
 }
 
-func (s *sender) post(ctx context.Context, u string, body []byte, hdr map[string]string, secrets ...string) error {
+func (s *sender) post(ctx context.Context, client *http.Client, u string, body []byte, hdr map[string]string, secrets ...string) error {
 	var last error
 	for i := 0; i < s.attempts; i++ {
 		if i > 0 {
@@ -183,7 +186,7 @@ func (s *sender) post(ctx context.Context, u string, body []byte, hdr map[string
 			case <-time.After(s.backoff * time.Duration(i)):
 			}
 		}
-		last = s.once(ctx, u, body, hdr)
+		last = s.once(ctx, client, u, body, hdr)
 		if last == nil {
 			return nil
 		}
@@ -195,7 +198,7 @@ func (s *sender) post(ctx context.Context, u string, body []byte, hdr map[string
 	return scrub(last, secrets...)
 }
 
-func (s *sender) once(ctx context.Context, u string, body []byte, hdr map[string]string) error {
+func (s *sender) once(ctx context.Context, client *http.Client, u string, body []byte, hdr map[string]string) error {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
@@ -207,7 +210,7 @@ func (s *sender) once(ctx context.Context, u string, body []byte, hdr map[string
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		var ue *url.Error
 		if errors.As(err, &ue) { // *url.Error embeds the full URL (Telegram token): keep only the cause
@@ -254,7 +257,7 @@ func (s *sender) telegram(ctx context.Context, c TelegramConfig, text string) er
 	var firstErr error
 	for _, part := range splitText(text, telegramMaxLen) {
 		body, _ := json.Marshal(map[string]any{"chat_id": c.ChatID, "text": part, "disable_web_page_preview": true})
-		if err := s.post(ctx, s.telegramBase+"/bot"+c.BotToken+"/sendMessage", body, nil, c.BotToken); err != nil && firstErr == nil {
+		if err := s.post(ctx, s.client, s.telegramBase+"/bot"+c.BotToken+"/sendMessage", body, nil, c.BotToken); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -270,7 +273,7 @@ func (s *sender) webhook(ctx context.Context, c WebhookConfig, p Payload) error 
 	if c.Secret != "" {
 		hdr["X-CTG-Secret"] = c.Secret
 	}
-	return s.post(ctx, c.URL, body, hdr, c.URL, c.Secret)
+	return s.post(ctx, s.hook, c.URL, body, hdr, c.URL, c.Secret)
 }
 
 // splitText cuts on line boundaries into chunks of at most n runes.
@@ -296,4 +299,29 @@ func splitText(s string, n int) []string {
 		out = append(out, strings.TrimRight(cur.String(), "\n"))
 	}
 	return out
+}
+
+// PublicOnlyClient is the webhook HTTP client. Webhook URLs are user-supplied and the site has
+// no login yet, so it refuses loopback, private, link-local, CGNAT, multicast and unspecified
+// addresses — checked on the resolved IP at connect time (redirects included), so DNS rebinding
+// can't route around it — and ignores proxy settings.
+func PublicOnlyClient() *http.Client {
+	d := &net.Dialer{Timeout: 10 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return err
+		}
+		if ip := net.ParseIP(host); ip == nil || !publicIP(ip) {
+			return fmt.Errorf("拒绝连接本机/内网地址 %s", host)
+		}
+		return nil
+	}}
+	return &http.Client{Transport: &http.Transport{DialContext: d.DialContext, TLSHandshakeTimeout: 10 * time.Second, MaxIdleConns: 4, IdleConnTimeout: time.Minute}}
+}
+
+var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+func publicIP(ip net.IP) bool {
+	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || cgnat.Contains(ip))
 }

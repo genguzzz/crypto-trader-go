@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -283,6 +284,7 @@ func TestDeliveryAndScrub(t *testing.T) {
 
 	s, st := newSvc(t)
 	s.send.telegramBase, s.send.backoff = srv.URL, time.Millisecond
+	s.send.hook = srv.Client() // the test listener is on 127.0.0.1, which the real webhook client refuses
 	const token = "123456789:AAH-secret-token-value-xyz9"
 	if _, err := s.SaveChannels(ChannelView{}); err != nil {
 		t.Fatal(err)
@@ -342,5 +344,24 @@ func TestSplitText(t *testing.T) {
 	}
 	if total != 1000 || len(parts) < 3 {
 		t.Fatalf("parts %d total %d", len(parts), total)
+	}
+}
+
+func TestWebhookClientRefusesInternalAddresses(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	for _, u := range []string{srv.URL, "http://localhost:1/", "http://10.0.0.1:1/", "http://169.254.169.254/latest", "http://[::1]:1/", "http://100.64.0.1:1/"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, "POST", u, nil)
+		_, err := PublicOnlyClient().Do(req)
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), "拒绝连接") {
+			t.Fatalf("%s: want refusal, got %v", u, err)
+		}
+	}
+	for _, ip := range []string{"8.8.8.8", "1.1.1.1", "2606:4700::1111"} {
+		if !publicIP(net.ParseIP(ip)) {
+			t.Fatalf("%s should be public", ip)
+		}
 	}
 }
