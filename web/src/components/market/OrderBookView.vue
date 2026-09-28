@@ -117,4 +117,5 @@ const ladderMax = computed(() => Math.max(ladderAsks.value[0]?.cum || 0, ladderB
 @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
 .compact .grid2 { grid-template-columns: 1fr 1fr; }
 @media (max-width: 900px) { .compact .grid2 { grid-template-columns: 1fr; } }
+@container (max-width: 560px) { .grid2, .compact .grid2 { grid-template-columns: 1fr; } }
 </style>

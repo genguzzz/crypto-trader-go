@@ -9,11 +9,10 @@ import FilterChip from '../components/ui/FilterChip.vue'
 import ChipGroup from '../components/ui/ChipGroup.vue'
 import { api, type Row, type CatalogItem } from '../api'
 import { usd, price, logPct, fundingH, catLabel, time, sign } from '../fmt'
-import InstrumentDetail from '../components/InstrumentDetail.vue'
+import InstrumentWorkbench from '../components/InstrumentWorkbench.vue'
+import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import ScoreChip from '../components/ScoreChip.vue'
 import CoinIcon from '../components/CoinIcon.vue'
-import { useDesktop } from '../composables/device'
-import { useLayoutEntry } from '../composables/layout'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,29 +21,29 @@ const onResize = () => (narrow.value = window.innerWidth < 900)
 onMounted(() => window.addEventListener('resize', onResize))
 onUnmounted(() => window.removeEventListener('resize', onResize))
 
-// PC only: drag the divider between list and detail; width saved locally.
-const desktop = useDesktop()
-const listW = ref(Number(localStorage.getItem('ctg.listWidth')) || 0)
-const gridStyle = computed(() => (desktop.value && listW.value ? { gridTemplateColumns: `${listW.value}px 6px 1fr` } : {}))
-function startResize(e: MouseEvent) {
-  e.preventDefault()
-  const startX = e.clientX
-  const startW = (e.target as HTMLElement).previousElementSibling!.getBoundingClientRect().width
-  const onMove = (ev: MouseEvent) => {
-    listW.value = Math.max(520, Math.min(window.innerWidth - 480, startW + ev.clientX - startX))
-  }
-  const onUp = () => {
-    localStorage.setItem('ctg.listWidth', String(Math.round(listW.value)))
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-    document.body.style.cursor = ''
-  }
-  document.body.style.cursor = 'col-resize'
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
+// PC: list and workbench side by side (Reka Splitter; size saved, list collapsible from the
+// instrument bar). The list's columns follow its own width: narrow = market list, wide = screener.
+const listPanel = ref<InstanceType<typeof SplitterPanel> | null>(null)
+const listOpen = ref(true)
+function toggleList() {
+  const p = listPanel.value as any
+  if (!p) return
+  if (p.isCollapsed) p.expand()
+  else p.collapse()
 }
-function resetWidth() { listW.value = 0; localStorage.removeItem('ctg.listWidth') }
-useLayoutEntry('ctg.listWidth', '列表 / 详情宽度', () => listW.value > 0, resetWidth)
+const listEl = ref<HTMLElement>()
+const listW = ref(1000)
+let ro: ResizeObserver | undefined
+watch(listEl, el => {
+  ro?.disconnect()
+  if (el) { ro = new ResizeObserver(es => (listW.value = es[0].contentRect.width)); ro.observe(el) }
+}, { immediate: true })
+onUnmounted(() => ro?.disconnect())
+const splitProps = { direction: 'horizontal', autoSaveId: 'ctg.scanner.split' }
+const listProps = {
+  id: 'sc-list', order: 1, defaultSize: 23, minSize: 15, maxSize: 70, collapsible: true, collapsedSize: 0,
+  onCollapse: () => (listOpen.value = false), onExpand: () => (listOpen.value = true),
+}
 
 const dir = ref<'all' | 'long' | 'short'>((localStorage.getItem('dir') as any) || 'all')
 const catSel = ref<string[]>(JSON.parse(localStorage.getItem('ctg.cats') || '["1","3","4"]'))
@@ -178,14 +177,18 @@ const sym = (id: string) => id.replace('-USDT-SWAP', '')
 watch(() => store.snap, s => {
   if (!narrow.value && !selected.value && s?.rows?.length) router.replace({ query: { sel: s.rows[0].instId } })
 }, { immediate: true })
-const cols = [
+const allCols = [
   ['ret_4h', '4h'], ['excess_btc_4h', '相对BTC'], ['oi_chg_4h', 'OIΔ4h'], ['vol_surprise_4h', '放量'], ['funding_hourly', '费/h'],
 ]
+// columns by list width: market list (4h only) → + relative/OI → full screener
+const cols = computed(() => (listW.value < 420 ? [] : listW.value < 560 ? allCols.slice(0, 1) : listW.value < 760 ? allCols.slice(0, 3) : allCols))
+const showTurnover = computed(() => listW.value >= 480)
 </script>
 
 <template>
-  <div class="scanner" :class="{ narrow }" :style="gridStyle">
-    <section class="list" @pointerdown="hold()" @pointerup="release()" @pointercancel="release()">
+  <component :is="narrow ? 'div' : SplitterGroup" class="scanner" :class="{ narrow }" v-bind="narrow ? {} : splitProps">
+    <component :is="narrow ? 'div' : SplitterPanel" ref="listPanel" class="list-wrap" v-bind="narrow ? {} : listProps">
+    <section ref="listEl" class="list" :class="{ slim: listW < 560 }" @pointerdown="hold()" @pointerup="release()" @pointercancel="release()">
       <div class="controls">
         <div class="row r1">
           <SearchInput v-model="q" placeholder="搜索合约" class="grow" />
@@ -230,7 +233,7 @@ const cols = [
               <th class="num sortable" @click="sortBy('short')">空{{ sortKey === 'short' ? (sortDesc ? '↓' : '↑') : '' }}</th>
               <th class="num">价格</th>
               <th v-for="[k, l] in cols" :key="k" class="num sortable" :title="fieldLabel(k)" @click="sortBy(k)">{{ l }}{{ sortKey === k ? (sortDesc ? '↓' : '↑') : '' }}</th>
-              <th class="num sortable" @click="sortBy('turnover12h')">12h额{{ sortKey === 'turnover12h' ? (sortDesc ? '↓' : '↑') : '' }}</th>
+              <th v-if="showTurnover" class="num sortable" @click="sortBy('turnover12h')">12h额{{ sortKey === 'turnover12h' ? (sortDesc ? '↓' : '↑') : '' }}</th>
             </tr>
           </thead>
           <tbody>
@@ -250,7 +253,7 @@ const cols = [
               <td v-for="[k] in cols" :key="k" class="num" :class="k === 'funding_hourly' || k === 'vol_surprise_4h' ? 'sec' : sign(r.values?.[k] ?? 0)">
                 {{ k === 'funding_hourly' ? fundingH(r.values?.[k]) : k === 'vol_surprise_4h' ? (r.values?.[k] != null ? '×' + Math.exp(r.values[k]).toFixed(2) : '—') : logPct(r.values?.[k]) }}
               </td>
-              <td class="num sec">{{ usd(r.turnover12h) }}<span v-if="r.provisional" class="muted">*</span></td>
+              <td v-if="showTurnover" class="num sec">{{ usd(r.turnover12h) }}<span v-if="r.provisional" class="muted">*</span></td>
             </tr>
           </tbody>
         </table>
@@ -318,20 +321,30 @@ const cols = [
       </div>
     </section>
 
-    <div v-if="!narrow && desktop" class="divider" title="拖动调整列表宽度；双击恢复默认" @mousedown="startResize" @dblclick="resetWidth"></div>
-    <section class="detail" v-if="!narrow">
-      <InstrumentDetail v-if="selected" :id="selected" :key="selected" />
-      <div v-else class="note pad">选择左侧合约查看详情</div>
-    </section>
-  </div>
+    </component>
+    <template v-if="!narrow">
+      <SplitterResizeHandle class="rh" />
+      <SplitterPanel id="sc-work" :order="2" :min-size="30" class="work">
+        <InstrumentWorkbench v-if="selected" :id="selected" :key="selected" with-list :list-open="listOpen" @toggle-list="toggleList" />
+        <div v-else class="note pad">选择左侧合约查看详情</div>
+      </SplitterPanel>
+    </template>
+  </component>
 </template>
 
 <style scoped>
-.scanner { display: grid; grid-template-columns: minmax(760px, 50%) 6px 1fr; height: 100%; }
+.scanner { height: 100%; }
 .scanner.narrow { display: block; height: auto; }
-.divider { cursor: col-resize; background: var(--line); opacity: 0.5; transition: background 0.15s; }
-@media (hover: hover) { .divider:hover { background: var(--accent); opacity: 1; } }
-.list { display: flex; flex-direction: column; min-height: 0; }
+.list-wrap, .work { min-width: 0; min-height: 0; overflow: hidden; }
+.narrow .list-wrap { overflow: visible; }
+.rh { width: 1px; background: var(--line); position: relative; transition: background .12s; }
+.rh::after { content: ''; position: absolute; inset: 0 -3px; }
+.rh[data-state="hover"], .rh[data-state="drag"] { background: var(--accent); }
+.list { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.narrow .list { height: auto; }
+/* narrow list: controls stack, rule picker takes the full row */
+.slim .controls { padding: 10px; gap: 8px; }
+.slim .rule { width: 100%; } .slim .rule :deep(.sel-trigger) { flex: 1; width: auto !important; }
 .controls { padding: 12px 14px 10px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); background: var(--bg-1); }
 .controls .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .grow { flex: 1; }
@@ -362,7 +375,6 @@ td.up { color: var(--up); } td.down { color: var(--down); }
 .star { color: var(--muted); cursor: pointer; width: 18px; }
 .card .star { padding: 6px 10px; margin: -6px -4px; font-size: 16px; } /* finger-sized target */
 .star.on { color: #f5c542; }
-.detail { overflow: auto; min-height: 0; }
 .pad { padding: 16px; }
 
 .cards { display: grid; }

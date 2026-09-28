@@ -79,4 +79,5 @@ const score = computed(() => row.value?.scores?.[store.ruleId])
 h4 { display: flex; align-items: center; gap: 6px; margin: 20px 0 8px; font-size: var(--fs-md); color: var(--text-1); }
 .wrap { white-space: normal; }
 @media (max-width: 900px) { .sides { grid-template-columns: minmax(0, 1fr); } }
+@container (max-width: 560px) { .sides { grid-template-columns: minmax(0, 1fr); } }
 </style>
