@@ -5,10 +5,11 @@ import { api, type Candle, type FlowBar } from '../api'
 import { chartTime, price as fmtPrice, usd, time as fmtTime } from '../fmt'
 import { baseChart, precisionFor } from './charts'
 import { Footprint, type FootBar } from './charts/footprint'
-import { LocateFixed } from 'lucide-vue-next'
+import { LocateFixed, Maximize2, Minimize2 } from 'lucide-vue-next'
 import FilterChip from './ui/FilterChip.vue'
 
-const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean }>()
+/** fill: take the parent's full height (workbench); otherwise fixed chart heights (stacked page). */
+const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean }>()
 const emit = defineEmits<{ live: [price: number] }>()
 const bar = ref(localStorage.getItem('bar') || '15m')
 type Layer = 'k' | 'delta' | 'foot'
@@ -291,11 +292,34 @@ watch(layer, (v, old) => {
   if (old === 'foot' || v === 'k') clearFlow()
   load(v === 'foot' || old === 'foot')
 })
+// ---- full screen: native Fullscreen API where the element supports it; otherwise (iPhone Safari)
+// a fixed overlay covering the viewport. Esc / the button leaves either way.
+const root = ref<HTMLElement>()
+const full = ref(false)
+const pseudo = ref(false)
+async function toggleFull() {
+  if (full.value) {
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {})
+    pseudo.value = full.value = false
+    return
+  }
+  const el = root.value as any
+  if (el?.requestFullscreen) {
+    try { await el.requestFullscreen(); full.value = true; return } catch { /* fall through */ }
+  }
+  pseudo.value = full.value = true
+}
+const onFsChange = () => { if (!document.fullscreenElement && !pseudo.value) full.value = false }
+const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pseudo.value) pseudo.value = full.value = false }
+onMounted(() => { document.addEventListener('fullscreenchange', onFsChange); window.addEventListener('keydown', onKey) })
+onUnmounted(() => { document.removeEventListener('fullscreenchange', onFsChange); window.removeEventListener('keydown', onKey) })
+watch(full, () => requestAnimationFrame(() => { if (chart) axisWidth.value = chart.priceScale('right').width() }))
+
 const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.c || 1).precision)
 </script>
 
 <template>
-  <div class="panel">
+  <div ref="root" class="panel pc" :class="{ fill: fill || full, full, pseudo }">
     <h3>
       <span>合约 K 线 <InfoTip>
         <b>数据来源</b>：OKX 永续 1m K 线由本机录制（实时 WS + 启动回填）；进过监控池的币额外回补 7 天 1m；1H/4H 来自 1H K 线，保留 30 天。5m/15m/4H 由服务端按 UTC 对齐聚合。<br />
@@ -318,6 +342,9 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <FilterChip v-model="withSpot" label="现货" :disabled="!hasSpot" :title="hasSpot ? '叠加 OKX 同名 USDT 现货收盘价（黄线，与 K 线同一价格轴）' : '没有 OKX 同名 USDT 现货'" />
         <FilterChip v-model="withOID" label="OI Δ" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示每根 K 线的持仓量变化柱（蓝增橙减）' : '没有持仓量数据'" />
         <FilterChip v-model="withOIL" label="OI" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示持仓量走势（面积图）' : '没有持仓量数据'" />
+        <button type="button" class="fs-btn" :title="full ? '退出全屏（Esc）' : '全屏'" :aria-label="full ? '退出全屏' : '全屏'" @click="toggleFull">
+          <Minimize2 v-if="full" :size="15" /><Maximize2 v-else :size="15" />
+        </button>
       </span>
     </h3>
     <div class="wrap" :class="{ tall: layer !== 'k' }">
@@ -365,6 +392,15 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
 
 <style scoped>
 .wrap { position: relative; }
+/* fill mode: header on top, the chart takes the rest (workbench panel, full screen) */
+.pc.fill { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.pc.fill .wrap { flex: 1; min-height: 0; }
+.pc.fill .chart, .pc.fill .wrap.tall .chart { height: 100%; }
+.pc.full { background: var(--bg-1); padding: 10px 12px; border-radius: 0; }
+.pc.pseudo { position: fixed; inset: 0; z-index: 100; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+.fs-btn { all: unset; box-sizing: border-box; display: inline-grid; place-items: center; width: 28px; height: 24px; border-radius: 6px; color: var(--text-2); cursor: pointer; border: 1px solid var(--line-2); }
+@media (hover: hover) { .fs-btn:hover { color: var(--text-1); border-color: var(--accent); } }
+.fs-btn:focus-visible { outline: 2px solid var(--accent); }
 .reset { all: unset; box-sizing: border-box; position: absolute; bottom: 34px; z-index: 4; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px;
   background: rgba(17, 21, 28, .8); border: 1px solid var(--line-2); color: var(--text-2); cursor: pointer; }
 @media (hover: hover) { .reset:hover { color: var(--text-1); border-color: var(--accent); } }

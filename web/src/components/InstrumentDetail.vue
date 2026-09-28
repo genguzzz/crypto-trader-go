@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { api, type InstrumentInfo } from '../api'
-import { store } from '../store'
+import { computed, ref } from 'vue'
 import { ChevronLeft, Star } from 'lucide-vue-next'
 import { price, usd, fieldValue, catLabel, ago, num, logPct } from '../fmt'
+import { useInstrument, chgClass, statusText } from '../composables/instrument'
 import PriceChart from './PriceChart.vue'
 import CompareChart from './CompareChart.vue'
 import SeriesChart from './SeriesChart.vue'
-import ScoreChip from './ScoreChip.vue'
 import CoinIcon from './CoinIcon.vue'
 import DraggablePanels from './DraggablePanels.vue'
 import StatCard from './ui/StatCard.vue'
@@ -16,60 +14,18 @@ import OrderBookView from './market/OrderBookView.vue'
 import { detailIcon } from './details/registry'
 import InfoTip from './InfoTip.vue'
 
+/** Stacked detail page (phones and narrow windows); PC uses InstrumentWorkbench. */
 const props = defineProps<{ id: string }>()
 const panelIds = ['head', 'price', 'book', 'compare', 'series', 'events']
 const detailKey = ref<string | null>(null)
 const openDetail = (k: string) => (detailKey.value = k)
-const detailCtx = computed(() => ({ id: props.id, info: info.value!, row: row.value }))
 const panelLabels: Record<string, string> = { head: '行情', book: '实时盘口', price: 'K 线', compare: '相对走势', series: 'OI/资金费', events: '新闻/解锁' }
-const info = ref<InstrumentInfo | null>(null)
-const err = ref('')
-let timer: number | undefined
-const nowMs = ref(Date.now())
-let clock: number | undefined
-onMounted(() => { clock = window.setInterval(() => (nowMs.value = Date.now()), 1000) })
-onUnmounted(() => clearInterval(clock))
-const base = computed(() => props.id.split('-')[0])
+const { info, err, row, base, live, chartPx, score, ruleName, spread, countdown, toggleWatch } = useInstrument(() => props.id)
+const detailCtx = computed(() => ({ id: props.id, info: info.value!, row: row.value }))
 const ret24 = computed(() => row.value?.values?.ret_24h)
 const ret4 = computed(() => row.value?.values?.ret_4h)
-const chgClass = (v?: number | null) => (v == null || v === 0 ? '' : v > 0 ? 'up' : 'down')
-const countdown = computed(() => {
-  const ft = info.value?.fundingTime
-  if (!ft) return '—'
-  const s = Math.max(0, Math.floor((ft - nowMs.value) / 1000))
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`
-})
-
-async function load() {
-  try {
-    info.value = await api.instrument(props.id)
-    err.value = ''
-  } catch (e: any) {
-    err.value = e.message
-  }
-}
-onMounted(() => { load(); timer = window.setInterval(load, 5000) })
-onUnmounted(() => clearInterval(timer))
-
-const row = computed(() => info.value?.row)
-const score = computed(() => row.value?.scores?.[store.ruleId])
-const ruleName = computed(() => store.meta?.rules.find(r => r.id === store.ruleId)?.name || store.ruleId)
 const scoreText = (side: 'long' | 'short') => score.value?.[side].score?.toFixed(0) ?? '—'
 const scoreTone = (side: 'long' | 'short') => ((score.value?.[side].score ?? 0) >= 50 ? (side === 'long' ? 'up' : 'down') : 'sc-n')
-const chartPx = ref<number | null>(null) // forming bar close, refreshed every second by the chart
-const live = computed(() => chartPx.value ?? store.prices[props.id]?.[0] ?? info.value?.last)
-const spread = computed(() => {
-  const i = info.value
-  if (!i || !i.bid || !i.ask) return null
-  return ((i.ask - i.bid) / ((i.ask + i.bid) / 2)) * 1e4
-})
-const statusText: Record<string, string> = { live: '实时', stale: '数据缺口，补洞中', warming: '预热中', new: '上市不足 12h' }
-async function toggleWatch() {
-  if (!info.value) return
-  await api.watch(props.id, !info.value.watch)
-  load()
-}
 </script>
 
 <template>

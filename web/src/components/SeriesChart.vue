@@ -32,4 +32,5 @@ void props
 <style scoped>
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+@container (max-width: 640px) { .grid { grid-template-columns: 1fr; } } /* narrow workbench side panel */
 </style>
