@@ -3,7 +3,8 @@
 //
 // A rule type is a Condition parsed from JSON params; adding a type = one parse function in
 // Types. Every type is edge-triggered (fires when its condition turns true for an instrument)
-// and additionally rate-limited by the rule's cooldown per instrument.
+// and additionally rate-limited by the rule's cooldown per instrument. A rule's first evaluation
+// after startup or save only records state, so conditions that already hold never fire.
 package alerts
 
 import (

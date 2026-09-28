@@ -56,7 +56,7 @@ type Rule struct {
 type compiled struct {
 	Rule
 	cond   Condition
-	primed bool // false until the first evaluation after load: record state without firing
+	primed bool // false until the first evaluation after load/save: record state without firing
 }
 
 type job struct {
@@ -208,8 +208,9 @@ func (s *Service) validate(r *Rule) (Condition, error) {
 	return cond, nil
 }
 
-// SaveRule creates (ID 0) or updates a rule. A saved rule starts fresh: its edge state is reset,
-// so it fires on the next minute for every instrument already meeting the condition.
+// SaveRule creates (ID 0) or updates a rule. A saved rule starts fresh: its edge state is reset
+// and its first minute only records state, so instruments already meeting the condition do not
+// fire (a new score rule would otherwise alert on the whole top of the pool at once).
 func (s *Service) SaveRule(r Rule) (Rule, error) {
 	cond, err := s.validate(&r)
 	if err != nil {
@@ -239,7 +240,7 @@ func (s *Service) SaveRule(r Rule) (Rule, error) {
 		return Rule{}, err
 	}
 	r.ID, r.Summary, r.Error, r.LastFired = id, cond.Summary(), "", 0
-	s.rules[id] = &compiled{Rule: r, cond: cond, primed: true}
+	s.rules[id] = &compiled{Rule: r, cond: cond}
 	s.resetState(id)
 	return r, nil
 }
