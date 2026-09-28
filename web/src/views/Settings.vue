@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api, type Settings, type Storage } from '../api'
-import { store, refreshMeta, setRule, ruleOptions } from '../store'
+import { store, refreshMeta, followDefaultRule, ruleOptions } from '../store'
 import { usd, catLabel, time, tzOptions, tzSetting } from '../fmt'
 import ChipGroup from '../components/ui/ChipGroup.vue'
 
@@ -57,7 +57,7 @@ async function save() {
   saving.value = true
   try {
     s.value = await api.saveSettings(s.value)
-    setRule(s.value.defaultRule)
+    followDefaultRule() // saving a default applies it here too; refreshMeta picks it up
     await refreshMeta()
     msg.value = '已保存并生效：活跃池已按新条件重算，规则历史回放在后台重跑（见系统页）。'
   } catch (e: any) {

@@ -130,9 +130,16 @@ func (r *Rule) Apply(pct func(string) (float64, bool), vals features.Values) Sco
 	return out
 }
 
-// Presets are comparison baselines, all unvalidated. They are NOT recommendations.
+// Presets are comparison baselines, all unvalidated. They are NOT recommendations. The first is the
+// default rule when settings name none (2026-09-28: resid-reversal, best replay IC so far; see
+// docs/research-trend-signals.md, where the other research baselines are described).
 func Presets() []Rule {
 	return []Rule{
+		{ID: "resid-reversal", Name: "残差反转（β 中性）", Version: 1, Preset: true,
+			Description: "剔除 BTC 带动（按 48h β）后，自身 1h/4h 跌得多的看多、涨得多的看空。短期反转 + 残差化（Blitz 等 2011），用来检验山寨相对大盘的超涨超跌是否回归。",
+			Long:        map[string]float64{"resid_4h": -0.6, "resid_1h": -0.4},
+			Short:       map[string]float64{"resid_4h": 0.6, "resid_1h": 0.4},
+			Gates:       Gates{MaxSpreadBps: 15}},
 		{ID: "trend-oi-confirm", Name: "趋势+OI 确认（旧 v0 方向）", Version: 1, Preset: true,
 			Description: "旧蓝图 entry-core-v0 的方向：价涨+币本位 OI 扩张+放量看多，对称看空。2026-09-26 实测 1h/4h Rank IC 为负，保留作对照。",
 			Long:        map[string]float64{"trend_z_4h": 0.45, "oi_chg_4h": 0.30, "vol_surprise_4h": 0.25},
@@ -147,12 +154,6 @@ func Presets() []Rule {
 			Description: "已结算资金费（按小时换算）越高越看多。探索性研究中与未来收益正相关（4h IC +0.034），与“高费率=拥挤”直觉相反，未验证。",
 			Long:        map[string]float64{"funding_hourly": 1},
 			Short:       map[string]float64{"funding_hourly": -1},
-			Gates:       Gates{MaxSpreadBps: 15}},
-		// 2026-09-28 research baselines (docs/research-trend-signals.md), also unvalidated.
-		{ID: "resid-reversal", Name: "残差反转（β 中性）", Version: 1, Preset: true,
-			Description: "剔除 BTC 带动（按 48h β）后，自身 1h/4h 跌得多的看多、涨得多的看空。短期反转 + 残差化（Blitz 等 2011），用来检验山寨相对大盘的超涨超跌是否回归。",
-			Long:        map[string]float64{"resid_4h": -0.6, "resid_1h": -0.4},
-			Short:       map[string]float64{"resid_4h": 0.6, "resid_1h": 0.4},
 			Gates:       Gates{MaxSpreadBps: 15}},
 		{ID: "ema-trend", Name: "趋势跟随（EMA + 效率比）", Version: 1, Preset: true,
 			Description: "时间序列动量：波动率归一化的 EMA8−EMA24（Baz 等 2015 的 MACD 类信号），并偏好走得干脆（Kaufman 效率比高）的币。经典 CTA 做法，文献中在日/周级有效，小时级待检验。",
