@@ -1,110 +1,114 @@
 # crypto-trader-go · OKX Helper
 
-个人使用的 **OKX USDT 永续合约研究工具**：实时发现流动性足够的合约，客观呈现每个币的状态（事实面板），用你自己定义的规则打分，并自动用之后的真实行情检验规则是否有效（战绩）。
+A personal **research desk for OKX USDT-margined perpetual swaps**: it finds contracts with enough liquidity in real time, shows each coin's state objectively (the fact panel), scores them with rules you define, and automatically checks each rule against what the market did next (the track record).
 
-> 只用 OKX **公开**行情接口：不需要 API Key、不读账户、**不下单**。分数是规则排序，不是胜率或交易建议。
+> Uses OKX **public** market data only: no API key, no account access, **no orders**. A score is a rule-based ranking, not a win rate or trading advice.
 
-线上：**https://ctg.gugenzzz.top**（greencloud，Docker；暂未启用登录，见[待办](docs/roadmap.md)）。
+Live: **https://ctg.gugenzzz.top** (greencloud, Docker; no login yet, see the [roadmap](docs/roadmap.md)).
 
-![扫描页](docs/images/scanner.png)
+![Scanner](docs/images/scanner.png)
 
-## 功能
+## Features
 
-| 页面 | 能做什么 |
+| Page | What it does |
 |---|---|
-| 扫描 | 监控池列表（默认 12h 成交额 > 500 万 USDT，最多 200 个，含加密/股票/商品永续）；按多/空分或任意字段排序、过滤；自选；PC 左右分栏、手机独立详情页 |
-| 详情 | 行情头部指标卡片，点击可看详情：实时 400 档盘口、USDT 深度图（悬浮显示推动价格 x% 所需资金）、成交额、持仓量、资金费、基差；评分拆解；K 线（1m–4H，可叠加现货）；相对 BTC/ETH 走势；OI 与资金费历史；PC 端面板可拖拽排序 |
-| 规则与战绩 | 编辑多/空权重与点差门槛（保存即新版本）；每条规则的 1h/4h/24h Rank IC、t 值、前 20% 超额与扣费净收益；14 天历史回放加上线后不可改写的记录 |
-| 设置 | 阈值、上限 N、类别、默认规则，保存后立即生效 |
-| 系统 | 阶段、覆盖率、WS 连接、REST 用量、数据库行数、回放与历史回补进度 |
+| Scanner | Monitoring pool (default: 12h turnover > 5M USDT, up to 200 contracts across crypto / stock / commodity perps); sort by long/short score or any field, filter, watchlist; open-interest bar per row; split view on PC, separate detail page on phones |
+| Detail | Ticker cards that open into detail: live order book, USDT depth chart (hover shows the capital needed to move price x%), turnover, open interest, funding, basis; score breakdown; K-line (1m–4H, optional spot overlay, delta and footprint); relative performance vs BTC/ETH; OI and funding history |
+| Rules & track record | Edit long/short weights and the spread gate (each save is a new version); per rule 1h/4h/24h Rank IC, t-stat, top-quintile excess and net-of-cost return; 14-day replay plus an immutable live record |
+| Monitoring | Alert rules (price move, score, funding) evaluated every confirmed minute, delivered via Telegram / webhook |
+| Settings | Threshold, cap N, categories, default rule, storage cap, display options; applied on save |
+| System | Phase, coverage, WS connections, REST usage, storage, replay and backfill progress |
 
 <p>
-  <img src="docs/images/rules.png" width="68%" alt="规则与战绩" />
-  <img src="docs/images/mobile.png" width="26%" alt="手机端" />
+  <img src="docs/images/rules.png" width="68%" alt="Rules and track record" />
+  <img src="docs/images/mobile.png" width="26%" alt="Mobile" />
 </p>
 
-## 工作方式
+## How it works
 
-1. **录制**：启动时拉取合约列表，用 WebSocket 订阅全部候选合约的 1m K 线，REST 补缺口，写入 SQLite（WAL）。
-2. **监控池**：每分钟按最近 720 根已收盘 1m K 线的 USDT 成交额重算，超过阈值的取前 N 个。
-3. **事实面板**：收益、相对 BTC 强弱、OI 变化、放量、资金费、基差等指标，实时计算和历史回放用同一套公式。
-4. **打分**：每个指标在池内取分位并映射到 ±1，按规则权重加权，得到 `50 + 50·Σwx/Σ|w|`；每 10 秒按未收盘分钟预览，整点时生成不可改的快照。
-5. **战绩**：用快照之后的真实收益计算 Rank IC、t 值和分位收益，判断规则是否有效。
+1. **Record**: on start, load the instrument list, subscribe to 1m candles for every candidate over WebSocket, fill gaps over REST, write to SQLite (WAL).
+2. **Monitoring pool**: every minute, recompute USDT turnover over the last 720 closed 1m candles; take the top N above the threshold.
+3. **Fact panel**: returns, strength vs BTC, OI change, volume surprise, funding, basis, and more; live and replay use the same formulas.
+4. **Scoring**: each field is ranked within the pool and mapped to ±1, then weighted by the rule: `50 + 50·Σwx/Σ|w|`. A 10-second preview uses the open minute; an immutable snapshot is taken every hour.
+5. **Track record**: Rank IC, t-stat and quantile returns from the returns realized after each snapshot tell whether a rule works.
 
-更详细的内容见 [架构与目录](docs/architecture.md)。
+See [architecture](docs/architecture.md) for details.
 
-## 技术栈
+## Stack
 
-| 层 | 选型 |
+| Layer | Choice |
 |---|---|
-| 后端 | Go 1.25 单二进制；标准库 `net/http`（REST + SSE）；`go:embed` 内嵌前端 |
-| 存储 | SQLite WAL（`modernc.org/sqlite`，纯 Go、免 CGO） |
-| 数据 | OKX v5 公开 REST / WebSocket（自带限频、自愈重连、可选代理/DoH） |
-| 前端 | Vue 3 + TypeScript + Vite；Reka UI；lightweight-charts；lucide 图标 |
-| 部署 | distroless 运行时镜像 + 挂载二进制（升级不重建镜像）；nginx 反代 |
+| Backend | Go 1.25 single binary; stdlib `net/http` (REST + SSE); web UI embedded via `go:embed` |
+| Storage | SQLite WAL (`modernc.org/sqlite`, pure Go, no CGO) |
+| Data | OKX v5 public REST / WebSocket (own rate limiting, self-healing reconnects, optional proxy/DoH) |
+| Frontend | Vue 3 + TypeScript + Vite; Reka UI; lightweight-charts; lucide icons |
+| Deploy | distroless runtime image + bind-mounted binary (upgrades don't rebuild the image); nginx reverse proxy |
 
-## 快速开始
+## Quick start
 
-需要 Go 1.25+ 和 Node 22+。
+Requires Go 1.25+ and Node 22+.
 
 ```bash
 git clone https://github.com/genguzzz/crypto-trader-go.git && cd crypto-trader-go
 (cd web && npm ci)
-make build                     # 构建前端并打包进 bin/ctg
-./bin/ctg                      # http://127.0.0.1:8686 ，数据在 data/ctg.db
+make build                     # build the web UI and embed it into bin/ctg
+./bin/ctg                      # http://127.0.0.1:8686, data in data/ctg.db
 make test                      # go vet + go test -race + vue-tsc
 ```
 
-前后端分开调试：
+Backend and frontend separately:
 
 ```bash
-./bin/ctg -web=false           # 只跑 API（:8686）
-cd web && npm run dev          # Vite 开发服务器，/api 代理到 :8686
+./bin/ctg -web=false           # API only (:8686)
+cd web && npm run dev          # Vite dev server, proxies /api to :8686
 ```
 
-首次启动约 30 秒出临时名单，约 4 分钟完成全池回填进入实时；之后后台回放 14 天、回补 7 天 1m K 线。重启约 1 分钟追平。
+First start: a provisional list after ~30 s, the full pool is backfilled and live after ~4 min; then a 14-day replay and a 7-day 1m backfill run in the background. A restart catches up in ~1 min.
 
-## 部署
+## Deploy
 
-push 到 `main` 后 GitHub Actions 自动测试并部署（`.github/workflows/deploy.yml`，首次需运行 `deploy/setup-ci.sh` 配置密钥）。本机手动部署：
+Pushing to `main` runs tests and deploys through GitHub Actions (`.github/workflows/deploy.yml`; run `deploy/setup-ci.sh` once to configure secrets). Manual deploy from a workstation:
 
 ```bash
-deploy/deploy.sh               # 构建 → 上传二进制 → 替换 → 重启容器 → 健康检查（失败自动回滚），约 30 秒
-deploy/deploy.sh --rollback    # 回到上一版
-deploy/deploy.sh --status      # 容器状态与日志
+deploy/deploy.sh               # build → upload binary → swap → restart container → health check (auto-rollback), ~30 s
+deploy/deploy.sh --rollback    # back to the previous binary
+deploy/deploy.sh --status      # container state and logs
 ```
 
-数据和设置都存在服务器的 SQLite 里，升级不受影响。详见 [运行与部署](docs/operations.md)。
+Data and settings live in the server's SQLite and survive upgrades. See [operations](docs/operations.md).
 
-## 目录
+## Layout
 
 ```
-cmd/server/        入口与启动参数
-internal/okx/      OKX REST/WS 适配（限频、重连、代理）
-internal/market/   引擎：录制、监控池、预览、规则回放、盘口、查询
-internal/features/ 事实面板公式
-internal/rules/    规则定义与打分
-internal/track/    战绩统计
-internal/store/    SQLite 存储
-internal/api/      HTTP 路由、SSE、图标代理、gzip
-web/               Vue 前端（构建产物内嵌进二进制）
-deploy/            docker-compose 与一键部署脚本
-docs/              架构、运维、设计规范、里程碑、蓝图
-research/poc/      调研阶段可复跑的实测程序
-openspec/          需求与变更记录
+cmd/server/        entry point and flags
+internal/okx/      OKX REST/WS adapter (rate limits, reconnects, proxy)
+internal/market/   engine: recording, pool, preview, rule replay, order book, queries
+internal/features/ fact-panel formulas
+internal/rules/    rule definitions and scoring
+internal/track/    track-record statistics
+internal/alerts/   monitoring rules and delivery channels
+internal/store/    SQLite storage
+internal/api/      HTTP routes, SSE, icon proxy, gzip
+web/               Vue frontend (build output embedded into the binary)
+deploy/            docker-compose and deploy scripts
+docs/              architecture, decisions, operations, conventions, design guidelines, roadmap
+research/poc/      reproducible probes from the research phase
 ```
 
-## 文档
+## Documentation
 
-| 文档 | 内容 |
+| Doc | Contents |
 |---|---|
-| [架构与目录](docs/architecture.md) | 模块划分、数据流、关键算法、技术选型 |
-| [运行与部署](docs/operations.md) | 线上环境、一键部署/回滚、本机开发、参数、排查 |
-| [界面设计规范](docs/design-guidelines.md) | 信息层级、设计 token、说明文字交互化等前端规则 |
-| [里程碑与待办](docs/roadmap.md) | 已完成 / 待办 / 功能清单 |
-| [蓝图修订 2026-09-26](docs/blueprint/revision-2026-09-26.md) | 用实测数据纠正的方案与决策记录 |
-| [调研探针](research/poc/README.md) | 公共接口实测程序与结果 |
+| [Architecture](docs/architecture.md) | Modules, data flow, key algorithms, technology choices |
+| [Operations](docs/operations.md) | Production, deploy/rollback, local development, flags, troubleshooting |
+| [Contributing](docs/contributing.md) | Requirement, bug, commit and pull request conventions |
+| [Worktree workflow](docs/worktree-workflow.md) | Parallel development with git worktrees and self-reviewed pull requests |
+| [Design guidelines](docs/design-guidelines.md) | Information hierarchy, design tokens, UI rules |
+| [Roadmap](docs/roadmap.md) | Done / in progress / backlog |
+| [Product decisions](docs/decisions.md) | Principles, definitions and measured facts behind the design |
+| [Trend-signal research](docs/research-trend-signals.md) | Why scores are rules to validate, not preset directions |
+| [Research probes](research/poc/README.md) | Public-API measurement programs and results |
 
-## 免责声明
+## Disclaimer
 
-本项目仅用于个人研究，不构成任何投资建议。加密资产与衍生品风险极高，使用者自行承担风险。
+For personal research only; nothing here is investment advice. Crypto assets and derivatives are extremely risky; use at your own risk.

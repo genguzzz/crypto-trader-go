@@ -1,41 +1,56 @@
 ---
 name: ctg-dev
-description: crypto-trader-go（OKX 研究台）开发与验证流程：构建、测试、重启本地服务、浏览器截图核对、常见坑。改本仓库 Go 后端或 Vue 前端、加字段/规则/页面、排查数据问题时使用。
+description: Build, run and verify crypto-trader-go (OKX research desk) — Go backend + Vue frontend. Use for any code change in this repo (backend fields/rules/APIs, frontend pages/components, data issues), and to restart the local server or take verification screenshots.
 ---
 
 # ctg-dev
 
-## 目录速记
-- 后端入口 `cmd/server`；引擎 `internal/market`（engine 启动与录制、universe 每分钟池、preview 10 秒盘中、rules 回放与战绩、history 7 天 1m 回补、settings 运行时设置、queries 图表/详情/状态）。
-- 公式：`internal/features`（加字段在 `Fields` 登记 + `Compute` 计算；仅实时字段在 `market/universe.go: liveValues`）。
-- 规则：`internal/rules`（预置规则 `Presets()`）；战绩：`internal/track`。
-- 接口：`internal/api/api.go`；前端：`web/src/{views,components}`，类型在 `web/src/api.ts`。
+## Map
 
-## 前端规范速查
-- 读 `docs/design-guidelines.md`。说明/口径 → `<InfoTip>`（全局组件，放 h3 旁），公式 → `<ScoringExplainer />`，明细 → `<Modal>`；页面只放动态状态。
-- 控件用组件库：`<Segmented>`、`<USelect>`（全局）、`ui/ChipGroup`、`ui/FilterChip`、`ui/SearchInput`、Reka `Popover`；布局提示进顶部布局菜单（`useLayoutEntry`）。
-- 截图脚本同时检查手机 `document.documentElement.scrollWidth === 390`。
-- 颜色/字号只用 `style.css` token；指标“标签在上、数值在下”；PC 专属交互用 `composables/device.ts` 的 `useDesktop()`。
+| Where | What |
+|---|---|
+| `cmd/server` | entry point, flags |
+| `internal/market` | engine: `engine.go` startup/recording/WS, `universe.go` per-minute pool and `liveValues`, `preview.go` 10 s preview, `rules.go` replay and track record, `history.go` 1m backfill, `catalog.go` search catalog and scanner rows (`buildRow`), `retention.go`, `liquidations.go`, `queries.go` chart/detail/status |
+| `internal/features` | fact-panel formulas: register in `Fields`, compute in `Compute`; live-only fields in `market/universe.go: liveValues` |
+| `internal/rules` / `internal/track` / `internal/alerts` | rules and presets (`Presets()`), track-record stats, monitoring |
+| `internal/api/api.go` | HTTP routes |
+| `web/src` | `views/` pages, `components/` (ui library in `components/ui`), types in `api.ts`, formatting in `fmt.ts`, tokens in `style.css` |
 
-## 常用命令
+## Commands
+
 ```bash
-make test                                   # go vet + go test -race + vue-tsc
-cd web && npm run build && cd ..            # 前端产物 → web/dist（被 go:embed）
-go build -o bin/ctg ./cmd/server
-pkill -f 'bin/ctg -addr'; GOMEMLIMIT=160MiB nohup ./bin/ctg -addr 127.0.0.1:8686 -db data/ctg.db > data/server.log 2>&1 &
-until grep -q 'bootstrap complete' data/server.log; do sleep 2; done   # 重启约 1 分钟
-curl -s localhost:8686/api/v1/health                                 # phase=live、stale=0
+make test                     # go vet + go test -race + vue-tsc — must pass
+scripts/dev.sh restart        # build web + bin/ctg, restart this checkout's server on its port, wait until live
+scripts/dev.sh status         # port, pid, health
+scripts/dev.sh shots [path]   # desktop 1600×900 + phone 400×860 screenshots → data/shots/; fails on page errors or phone overflow
+scripts/dev.sh stop
 ```
-上线：`deploy/deploy.sh`（约 30 秒，失败自动回滚）；`--status` 看日志，`--rollback` 回退；改了 compose 文件再跑 `--init`。服务器数据库是唯一真源，不要用本机库覆盖。push 到 `main` 会触发 GitHub Actions 自动部署（`.github/workflows/deploy.yml`，只改文档不触发）；`gh run list -w deploy` / `gh run watch` 查看。
-前后端分开：`./bin/ctg -web=false` + `cd web && npm run dev`（Vite 代理 /api）。
 
-## 验证页面（必须做）
-用 playwright-core 驱动本机 Chrome（`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`），打开页面等 4–5 秒后截图并检查 `pageerror`；桌面 1600×900 与手机 400×860 各看一次。不要用 Chrome `--headless --virtual-time-budget`（SSE 长连接会卡住）。
+- Port: `data/port` in a worktree, else 8686. Frontend-only iteration: `./bin/ctg -web=false` + `cd web && npm run dev` (Vite proxies `/api`).
+- Look at the screenshots (Read the PNGs) — a passing script is not visual verification. For a specific state (a page, a scrolled table, a setting), write a small playwright-core script next to `web/scripts/shot.mjs`.
+- A restart catches up in ~1 min; a fresh database needs ~4 min to go live.
 
-## 坑
-- 本机 shell 有 Surge 代理环境变量，Go 默认 Transport 会走它；服务器 greencloud 直连 OKX 无需代理。无法直连的网络用 `CTG_PROXY`/`-doh`。
-- go.mod 要求 Go 1.25（modernc sqlite 依赖）。
-- 1m 内存是 1500 分钟环形缓冲，更早的只在 SQLite；图表查询走 DB + 内存合并。
-- OKX `/market/candles` 1m 只给最近 1440 根，更早用 `/market/history-candles`（每页 300，单独限频）。
-- rubik OI 历史：5m 约 5 天、1H 约 60 天，时间戳按“该小时开始”保守对齐。
-- 改设置会触发监控池重算与 14 天回放重跑（后台）；回放 OI 已拉过的币会跳过。
+## Workflow
+
+1. Work from an issue; parallel work goes through the `ctg-worktree` skill.
+2. Change code → `make test` → `scripts/dev.sh restart` → `scripts/dev.sh shots` → check the images → iterate.
+3. Update docs with the change: `docs/architecture.md` (data, algorithms, APIs), `docs/operations.md` (flags, deploy), `docs/roadmap.md` (Shipped row).
+4. Commit in Conventional Commits format (`docs/contributing.md#commits`).
+
+## Frontend rules (details: docs/design-guidelines.md)
+
+- Explanations go into `<InfoTip>` next to the `h3`; formulas → `<ScoringExplainer />`; large detail → `<Modal>`. Pages show only live state.
+- Controls come from the library: `<Segmented>`, `<USelect>` (global), `ui/ChipGroup`, `ui/FilterChip`, `ui/SearchInput`, `ui/Switch`, Reka `Popover`. Layout hints go into the top Layout menu (`useLayoutEntry`).
+- Colors and sizes only via `style.css` tokens; metric = label on top, value below; funding colored with `fundingClass()`.
+- PC-only interactions behind `useDesktop()`; phone width must equal the viewport.
+
+## Gotchas
+
+- Local shells carry Surge proxy variables that Go's default transport uses; the server connects to OKX directly. Networks that can't reach OKX: `CTG_PROXY` / `-doh`.
+- Go 1.25 is required (modernc sqlite).
+- `GOMEMLIMIT` must stay well above the ~180 MB resident heap (scripts use 384MiB); a limit near it makes the GC spin at 100%+ CPU.
+- 1m candles in memory are a 1500-minute ring; older ones only in SQLite — chart queries merge DB + memory.
+- OKX `/market/candles` gives only the latest 1440 1m bars; older via `/market/history-candles` (300 per page, separate rate limit).
+- rubik OI history: 5m ≈ 5 days, 1H ≈ 60 days; timestamps aligned conservatively to the bucket start.
+- Saving settings triggers a pool recompute and a background 14-day replay; instruments whose OI was already fetched are skipped.
+- `web/dist` is embedded via `go:embed`: rebuild the web before `go build` (the script does).

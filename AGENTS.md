@@ -1,30 +1,24 @@
-# crypto-trader-go 协作指引
+# Agent rules — crypto-trader-go
 
-适用于 Claude/Codex 与本仓库全部目录。
+Rules for every AI agent (Claude Code, Codex, …) working in this repository. Read [README](README.md) → [architecture](docs/architecture.md) → [decisions](docs/decisions.md) → [roadmap](docs/roadmap.md) first.
 
-## 项目现状（2026-09-27）
+## Product constraints (don't change without the owner)
 
-- 独立新项目，**不是** `/Users/gugen/Code/cryptoBot` 的延续；旧仓库只读参考，不复制代码/配置/凭据。
-- 已实现 I0–I3 并上线 https://ctg.gugenzzz.top（greencloud Docker，`deploy/deploy.sh` 升级/回滚，见 `docs/operations.md`）；进度与待办只维护在 `docs/roadmap.md`。
-- 决策依据：`docs/blueprint/revision-2026-09-26.md`（实测修订，优先于旧蓝图各专题）；调研探针 `research/poc/`（独立 module，非生产代码）。
+- Public OKX market data only. **Never place orders**; never read the OKX account without explicit approval.
+- Pool definition: 12h turnover = `volCcyQuote` over 720 consecutive confirmed 1m candles, strictly above the threshold (default 5M USDT), top N. A missing minute is a gap, not zero. `volCcy24h` is not USDT turnover.
+- Scores come only from user rules over pool percentiles, are always labeled unvalidated, and only the track record (out-of-sample Rank IC, net-of-cost returns) can support them. Long/short are independent; missing input means unscored, never 0.
+- Live and replay share `features.Compute`; hourly snapshots are immutable; preview values never enter the track record.
+- Changing a definition, adding a data source or touching account permissions needs the owner's confirmation.
 
-## 产品约束（不可随意改变）
+## Working rules
 
-- 监控池口径：连续 720 根已确认 1m K 线 `volCcyQuote` 之和严格大于阈值（默认 500 万 USDT，设置页可改），降序取前 N；缺分钟是数据缺口，不是 0 成交；`volCcy24h` 不能当 USDT 成交额。
-- 分数只来自用户规则（事实面板池内分位加权），始终标“未验证”；只有战绩（样本外 Rank IC、扣费净收益）能说明规则有用；多/空独立；缺输入即未评分，不补 0。
-- 实时与回放共用 `features.Compute`；整点快照不可改写；预览（10 秒）值不进战绩。
-- 只用 OKX 公共接口；不下单；只读账户（I4）需用户另行批准。
-
-## 界面规范（必须遵守，详见 `docs/design-guidelines.md`）
-
-- 信息分“主/次/弱”三级（颜色 `--text-1/2/3` + 字号字重），颜色只表达涨跌/警示/交互语义；数字等宽。
-- **说明文字不直接铺在页面上**：口径、公式、数据来源放 `<InfoTip>`（PC 悬浮、触屏点击），大量明细用 `<Modal>`；页面上只留动态状态与一句话必要警示。
-- 使用 `web/src/style.css` 的 token，不写零散颜色/字号；PC 专属交互用 `useDesktop()` 判断并给触屏等价方案。
-- 交互控件只用组件库（Segmented / USelect / ChipGroup / FilterChip / SearchInput / Reka Popover / StatCard），不写原生 select 或手拼按钮组；PC 只有内容区滚动；手机页面不得横向溢出。
-
-## 工作方式
-
-- 跨模块或改变口径的改动走 OpenSpec（`openspec/changes/<name>` → 完成后归档到 `archive/`），并更新 `docs/roadmap.md`。
-- 每次改动：`make test`（go vet、`go test -race`、vue-tsc），真实启动服务并用浏览器截图核对；失败要修到通过。
-- 按交易所时间、接收时间记录数据；单位写清楚（USDT/币/张）；不可得就显示未知。
-- 不读取、输出或提交密钥、Cookie、代理密码、私有仓位；`data/` 已忽略。
+- **English** in all docs, comments, commits, issues and PRs. Talk to the owner in Chinese.
+- Work from an issue ([requirements](docs/contributing.md#requirements), [bugs](docs/contributing.md#bugs)); claim it before starting ([claiming work](docs/contributing.md#claiming-work)).
+- Parallel work uses one worktree per issue and a self-reviewed pull request: [worktree workflow](docs/worktree-workflow.md). Direct commits to `main` only when the owner asks.
+- Commits and PR titles follow [Conventional Commits](docs/contributing.md#commits). `git pull --rebase` before pushing; never force-push `main`.
+- After any code change: `make test`, `scripts/dev.sh restart`, `scripts/dev.sh shots` (desktop + phone). Fix until clean.
+- Frontend follows the [design guidelines](docs/design-guidelines.md): three-level hierarchy, semantic color only, explanations in InfoTip/Modal, component library only, no horizontal overflow on phones.
+- Record times as exchange time and receive time; state units (USDT / coins / contracts); unknown stays unknown.
+- Never read, print or commit credentials (OKX keys, proxy passwords, the server's `ctg.env`, alert channel secrets). Never write server hostnames or IPs into the repository; they live in GitHub Secrets and `~/.ssh/config`.
+- The production database is the single source of truth: never overwrite it or re-download it.
+- Low-priority "later" ideas become issues, not code.

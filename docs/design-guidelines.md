@@ -1,82 +1,83 @@
-# 界面设计规范
+# UI design guidelines
 
-> 所有页面改动都要遵守；新组件先查这里有没有现成的写法。token 定义在 `web/src/style.css`。
+> Every page change follows these rules; check here for an existing pattern before adding a component. Tokens are defined in `web/src/style.css`.
 
-## 1. 信息层级（最重要）
+## 1. Information hierarchy (most important)
 
-每个面板只有一个视觉焦点，按“主 → 次 → 弱”三级呈现：
+Each panel has exactly one visual focus, presented in three levels: primary → secondary → tertiary.
 
-| 层级 | 用途 | 样式 |
+| Level | Used for | Style |
 |---|---|---|
-| 主 | 价格、分数、关键数值、合约名 | `--text-1`，600–700 字重，`--fs-lg` ~ `--fs-3xl` |
-| 次 | 辅助数值、次要列 | `--text-2`，400–500 字重 |
-| 弱 | 标签、单位、时间、说明 | `--text-3`，`--fs-xs`/`--fs-sm` |
+| Primary | price, score, key numbers, contract name | `--text-1`, weight 600–700, `--fs-lg` – `--fs-3xl` |
+| Secondary | supporting numbers, secondary columns | `--text-2`, weight 400–500 |
+| Tertiary | labels, units, times, notes | `--text-3`, `--fs-xs`/`--fs-sm` |
 
-- 指标用“**小灰标签在上、数值在下、辅助说明再下**”（见详情头部 `.stat`），不要“标签：数值”挤在一行。
-- 单位（USDT、bps、币）用 `<small>` 弱化，数字一律 `tabular-nums`，避免刷新时抖动。
-- 颜色只表达语义：涨 `--up`、跌 `--down`、警示 `--warn`、交互/选中 `--accent`（OKX 荧光绿，填充时文字用 `--on-accent` 黑色）。中性数据不上色；多/空分 < 50 保持灰色。
-- 整体配色参考 OKX 网页交易终端：纯黑底 `--bg-0`、中性灰面板（不偏蓝）、涨跌 OKX 绿/红。图表画布颜色统一取 `src/theme.ts`（与 `style.css` token 同值），组件里不写死色值。
-- 加载中用 `ui/Loading.vue`：图表区域用 `overlay` 盖在旧内容上（保留旧图，不闪白），整块内容未到时用行内形式；异步加载函数用 `composables/busy.ts` 的 `track` 包一层。
+- Metrics use **small grey label on top, value below, supporting note below that** (see `.stat` in the detail header); never cram "label: value" onto one line.
+- Units (USDT, bps, coins) are de-emphasized with `<small>`; numbers always use `tabular-nums` so they don't jitter on refresh.
+- Color carries meaning only: up `--up`, down `--down`, warning `--warn`, interactive/selected `--accent` (OKX lime; text on an accent fill uses `--on-accent`, black). Neutral data stays uncolored; long/short scores below 50 stay grey.
+- The palette follows OKX's web trading terminal: pure black `--bg-0`, neutral (not blue-tinted) grey panels, OKX green/red for up/down. Chart canvas colors come from `src/theme.ts` (same values as the `style.css` tokens); components never hard-code colors.
+- Loading uses `ui/Loading.vue`: over charts as an `overlay` on top of the old content (keep the old chart, no white flash); inline when a whole block hasn't arrived yet. Wrap async loaders with `track` from `composables/busy.ts`.
 
-## 2. 说明文字：默认收起，按需展开
+## 2. Explanatory text: collapsed by default, shown on demand
 
-**页面上不直接堆说明文字。** 口径、公式、数据来源、注意事项等一律放进交互组件：
+**Don't pile explanatory text onto pages.** Definitions, formulas, data sources and caveats always go into an interactive component:
 
-| 场景 | 组件 | 规则 |
+| Situation | Component | Rule |
 |---|---|---|
-| 面板/字段的口径、原理、数据来源 | `<InfoTip>`（ⓘ） | 放在面板标题 `h3` 旁；PC 悬浮显示，触屏点击弹出底部面板。内容可以写详细（分段、加粗关键词、举例）。 |
-| 评分公式与原理 | `<ScoringExplainer />` | 放进 InfoTip 使用，不复制公式文本到各页。 |
-| 大量明细（如事实面板全部字段） | `<Modal>` | 由按钮打开；ESC/点遮罩关闭；手机为底部弹出。 |
+| Definition, method or data source of a panel/field | `<InfoTip>` (ⓘ) | Next to the panel's `h3`; hover on PC, tap opens a bottom sheet on touch. The content may be detailed (paragraphs, bold keywords, examples). |
+| Scoring formula and rationale | `<ScoringExplainer />` | Used inside an InfoTip; never copy the formula text onto pages. |
+| Large detail (e.g. every fact-panel field) | `<Modal>` | Opened by a button; closes on ESC or backdrop click; bottom sheet on phones. |
 
-允许直接显示在页面上的文字只有：**动态状态**（错误、空状态、加载中、保存结果、缺失字段、实时计数）和**一句话必要警示**（如“未连接 ≠ 空仓”）。
+Text allowed directly on a page: **dynamic state** (errors, empty states, loading, save results, missing fields, live counts) and **one-line essential warnings** (e.g. "not connected ≠ no positions").
 
-## 2.1 可点击指标卡片与详情
+## 2.1 Clickable metric cards and detail views
 
-- 指标卡片统一用 `ui/StatCard.vue`（标签+图标 / 数值 / 辅助行；hover 显示箭头与浅底）。可点击就打开详情，不再跳页。
-- 详情统一由 `details/StatDetailDialog.vue` 承载：PC 居中大弹窗，手机底部弹出；顶部标签页可在各详情间切换。
-- 新增一种详情 = 在 `details/registry.ts` 登记 `{key, label, icon, component}`；详情组件只接收 `ctx: DetailCtx`。
-- 详情里的图表必须是 `components/charts/*` 下的可复用组件，并与页面面板共用（例如 `OIChart` 同时用于面板和持仓量详情，`OrderBookView` 同时用于盘口面板和盘口详情）。
-- 数值行用 `ui/KpiRow.vue`；图标统一用 lucide-vue-next。
-- grid 容器一律 `grid-template-columns: minmax(0, 1fr)`（或 `repeat(n, minmax(0, 1fr))`），防止不换行内容把手机页面撑宽。
+- Metric cards use `ui/StatCard.vue` (label + icon / value / supporting line; hover shows an arrow and a light background). Clickable cards open a detail view instead of navigating away.
+- Detail views are hosted by `details/StatDetailDialog.vue`: a large centered dialog on PC, a bottom sheet on phones; tabs at the top switch between details.
+- Adding a detail = register `{key, label, icon, component}` in `details/registry.ts`; a detail component receives only `ctx: DetailCtx`.
+- Charts inside details must be reusable components under `components/charts/*` shared with page panels (e.g. `OIChart` serves both the panel and the OI detail; `OrderBookView` serves the order-book panel and its detail).
+- Numeric rows use `ui/KpiRow.vue`; icons come from lucide-vue-next.
+- Grid containers always use `grid-template-columns: minmax(0, 1fr)` (or `repeat(n, minmax(0, 1fr))`) so unbreakable content can't widen the phone layout.
 
-## 3. Token 与间距
+## 3. Tokens and spacing
 
-- 背景三层：`--bg-0` 页面 / `--bg-1` 面板 / `--bg-2` 悬浮与 hover / `--bg-3` 输入与选中。边框 `--line`（细）/ `--line-2`（强）。
-- 字号阶梯：11 / 12 / 13 / 14 / 16 / 20 / 28（`--fs-xs` … `--fs-3xl`），不要写零散 px。
-- 间距按 4px 网格；面板内边距 14–16px，圆角 `--radius`（10px），小控件 `--radius-sm`。
-- 标签 `.tag`（good/warn/bad/info 四种语义），状态点 `.dot`（ok/warn/bad）。
+- Backgrounds: `--bg-0` page / `--bg-1` panel / `--bg-2` raised and hover / `--bg-3` input and selected. Borders `--line` (hairline) / `--line-2` (strong). `--oi-bar` is the scanner's open-interest row bar.
+- Type scale: 11 / 12 / 13 / 14 / 16 / 20 / 28 (`--fs-xs` … `--fs-3xl`); no ad-hoc px sizes.
+- Spacing on a 4 px grid; panel padding 14–16 px, radius `--radius` (10 px), small controls `--radius-sm`.
+- Tags `.tag` (good/warn/bad/info semantics), status dots `.dot` (ok/warn/bad).
+- Funding rates are colored by level with `fundingClass()` from `fmt.ts` (`.fr1`–`.fr3` × `.pos`/`.neg`), the same everywhere they appear.
 
-## 3.1 组件库（统一入口，禁止手写同类控件）
+## 3.1 Component library (single entry point; don't hand-roll equivalents)
 
-基础交互组件基于 **Reka UI**（无样式、可访问性完整：键盘、焦点、ARIA、Portal），样式由本项目 token 统一：
+Base interactive components are built on **Reka UI** (unstyled, fully accessible: keyboard, focus, ARIA, portals) and styled with this project's tokens:
 
-| 需求 | 用 | 不要 |
+| Need | Use | Don't |
 |---|---|---|
-| 单选切换（方向、周期、范围、预设值） | `<Segmented>`（全局组件，ToggleGroup single，禁止取消选中） | 并排 button + 负 margin（会裁掉高亮边框） |
-| 下拉选择（规则、排序、默认值） | `<USelect>`（全局组件，支持分组/说明/徽标/勾选） | 原生 `<select>` |
-| 多选筛选（类别） | `ui/ChipGroup.vue`（ToggleGroup multiple，可 `at-least-one`） | 手写 span.chip |
-| 开关筛选（自选、门槛） | `ui/FilterChip.vue`（Toggle；未启用虚线、启用强调色实线 + 计数） | |
-| 启用/停用（列表项开关，如监控规则） | `ui/Switch.vue`（Reka Switch；开 = 强调色轨道） | 复选框 |
-| 搜索 | `ui/SearchInput.vue`（图标、清空、`/` 聚焦、Esc 清空） | 裸 input |
-| 浮层菜单 / 列表 | Reka `Popover`（样式类 `.lm-pop`） | 页面内展开大块内容 |
-| 指标卡片 / 详情 | `ui/StatCard.vue` + `details/registry.ts` | |
-| 设置项 | `settings/SettingsSection.vue`（分组卡片）+ `settings/SettingRow.vue`（标签+一句说明在左、控件在右，未保存点、行内错误） | 裸 label 堆叠 |
-| 用量 / 进度条 | `ui/Meter.vue`（≥90% 自动转警示色） | 手写 div 进度条 |
-| 长页面分区跳转 | `status/SectionNav.vue`（PC 左侧 sticky + scroll-spy，手机横向胶囊） | |
+| Single choice (direction, period, range, presets) | `<Segmented>` (global; ToggleGroup single, can't deselect) | side-by-side buttons with negative margins (clips the highlight border) |
+| Dropdown (rule, sort, defaults) | `<USelect>` (global; groups/descriptions/badges/check marks) | native `<select>` |
+| Multi-select filter (categories) | `ui/ChipGroup.vue` (ToggleGroup multiple, optional `at-least-one`) | hand-written span.chip |
+| On/off filter (watchlist, gate) | `ui/FilterChip.vue` (Toggle; dashed when off, solid accent + count when on) | |
+| Enable/disable a list item (e.g. alert rules) | `ui/Switch.vue` (Reka Switch; on = accent track) | checkbox |
+| Search | `ui/SearchInput.vue` (icon, clear, `/` to focus, Esc to clear) | bare input |
+| Floating menu / list | Reka `Popover` (style class `.lm-pop`) | expanding large blocks inline |
+| Metric cards / details | `ui/StatCard.vue` + `details/registry.ts` | |
+| Settings | `settings/SettingsSection.vue` (grouped card) + `settings/SettingRow.vue` (label + one-line description left, control right, unsaved dot, inline error) | stacked bare labels |
+| Usage / progress bar | `ui/Meter.vue` (turns to warning at ≥ 90%) | hand-written div bars |
+| Section jumps on long pages | `status/SectionNav.vue` (sticky left on PC with scroll-spy, horizontal pills on phones) | |
 
-## 3.2 全局导航与布局
+## 3.2 Global navigation and layout
 
-- 顶部栏：品牌标志 + 图标导航（选中 = 浅底胶囊 + 强调色图标）+ 市场脉搏（BTC/ETH）+ 状态胶囊 + 布局按钮；高度 52px。手机端导航改为底部标签栏。
-- PC 为“应用外壳”：窗口本身不滚动，只有内容区滚动（避免双滚动条）；手机保持文档滚动。
-- 布局类设置（面板顺序、列表宽度）不在内容区放提示或按钮，统一登记到顶部“布局”菜单（`useLayoutEntry`）。
-- 宽表格包在 `.table-scroll` 中；任何 grid 列用 `minmax(0, 1fr)`，手机页面宽度必须等于视口（截图脚本检查 `scrollWidth`）。
+- Top bar: brand mark + icon navigation (selected = light pill + accent icon) + market pulse (BTC/ETH) + status pill + layout button; 52 px tall. On phones navigation moves to a bottom tab bar.
+- PC is an app shell: the window never scrolls, only the content area does (no double scrollbars); phones keep document scrolling.
+- Layout settings (panel order, list width) never add hints or buttons to the content area; register them in the top "Layout" menu (`useLayoutEntry`).
+- Wide tables go inside `.table-scroll`; any grid column uses `minmax(0, 1fr)`; on phones the page width must equal the viewport (the screenshot script checks `scrollWidth`).
 
-## 4. 交互
+## 4. Interaction
 
-- PC 专属交互（拖拽面板、拖动分隔线、悬浮提示）用 `useDesktop()` 判断；触屏设备提供等价的点击方式或保持固定布局。
-- 数据刷新不能让用户正在看的内容跳动：选中项保持、排序稳定、列表只更新变化的单元格。
-- 未知值显示“—”并在提示里说明含义，永远不要用 0 或空白代替未知。
+- PC-only interactions (dragging panels or dividers, hover tips) are gated by `useDesktop()`; touch devices get an equivalent tap interaction or a fixed layout.
+- Data refreshes must not move what the user is looking at: keep the selection, keep sort order stable, update only changed cells.
+- Unknown values show "—" with the meaning explained in a tip; never use 0 or blank for unknown.
 
-## 5. 参考
+## 5. References
 
-交易所交易终端（币安 / OKX / Bybit）的行情头部与列表密度；Radix Colors 的分级色阶（背景与文字角色）；IBM Carbon 的 productive 字号阶梯与 4px 网格；Linear / Vercel Geist 的导航与筛选栏（图标 + 胶囊、虚线未启用筛选、键盘快捷键）；Reka UI（MIT，Vue 版 Radix Primitives）提供交互原语。
+Exchange trading terminals (Binance / OKX / Bybit) for ticker headers and list density; Radix Colors' graded scales (background and text roles); IBM Carbon's productive type scale and 4 px grid; Linear / Vercel Geist navigation and filter bars (icon + pill, dashed inactive filters, keyboard shortcuts); Reka UI (MIT, the Vue port of Radix Primitives) for interaction primitives.

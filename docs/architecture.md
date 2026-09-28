@@ -1,117 +1,118 @@
-# 架构与目录
+# Architecture and layout
 
-## 1. 总体：前后端分离 + 单一数据库
+## 1. Overview: separate backend and frontend, one database
 
 ```
-            OKX v5 公共接口（无 Key）
-   REST（限频令牌桶）          WebSocket
-   合约/行情/K线/历史 OI/资金费   business: candle1m 全池
-                               public: OI、资金费全池；tickers 仅活跃池+自选
+            OKX v5 public API (no key)
+   REST (token-bucket limited)         WebSocket
+   instruments/tickers/candles/        business: candle1m for the whole universe
+   OI history/funding                  public: OI and funding for all; tickers only for active pool + watchlist
               │                        │
               ▼                        ▼
-   ┌──────────── 后端 Go（cmd/server）──────────────────────┐
-   │ internal/okx      适配层：限频、重试、重连、订阅差分、代理/DoH │
-   │ internal/market   引擎：录制 → 补洞 → 每分钟监控池 → 事实面板  │
-   │                   → 规则评分 → 每 10 秒盘中重算 → 整点快照   │
-   │                   → 14 天回放 → 7 天 1m 历史回补            │
-   │ internal/features 事实面板公式（实时/回放共用）              │
-   │ internal/rules    规则定义、校验、打分、预置对照规则         │
-   │ internal/track    战绩统计（Rank IC、t、分位收益、成本）     │
-   │ internal/alerts   监控规则：每分钟检查 → Telegram/Webhook 推送 │
-   │ internal/store    SQLite（WAL）+ database/sql 连接池         │
-   │ internal/api      REST JSON + SSE 推送 + 图标代理            │
-   └──────────────┬───────────────────────────┬──────────────┘
-                  │ /api/v1/*（JSON / SSE）     │
+   ┌──────────── Go backend (cmd/server) ───────────────────────────┐
+   │ internal/okx      adapter: rate limits, retries, reconnects, subscription diffs, proxy/DoH │
+   │ internal/market   engine: record → fill gaps → per-minute pool → fact panel            │
+   │                   → rule scoring → 10 s intraminute preview → hourly snapshot          │
+   │                   → 14-day replay → 7-day 1m backfill                                  │
+   │ internal/features fact-panel formulas (shared by live and replay)                      │
+   │ internal/rules    rule definitions, validation, scoring, preset reference rules        │
+   │ internal/track    track record (Rank IC, t, quantile returns, costs)                   │
+   │ internal/alerts   monitoring rules: checked every minute → Telegram/webhook delivery   │
+   │ internal/store    SQLite (WAL) + database/sql pool                                     │
+   │ internal/api      REST JSON + SSE push + icon proxy                                    │
+   └──────────────┬───────────────────────────┬─────────────────────┘
+                  │ /api/v1/* (JSON / SSE)    │
                   ▼                           ▼
-   前端 web/（Vue 3 + TS + Vite + Lightweight Charts）   SQLite 文件 data/ctg.db
-   开发：Vite dev server 代理 /api；生产：前端内嵌二进制，Docker 运行（见 §7）
+   Frontend web/ (Vue 3 + TS + Vite + Lightweight Charts)   SQLite file data/ctg.db
+   Dev: Vite dev server proxies /api; prod: UI embedded in the binary, run in Docker (§7)
 ```
 
-- **分离方式**：后端只暴露 `/api/v1/*`；前端是独立 Vite 工程。为了本地使用方便，构建产物可 `go:embed` 进二进制（`-web=true` 默认）；`-web=false` 时后端只提供 API，前端可由 Vite 开发服务器或（将来）nginx 容器单独提供。
-- **数据库与连接池**：SQLite WAL 单文件，`database/sql` 连接池（`SetMaxOpenConns(4)`，`busy_timeout` 10s）；写入由单个 writer goroutine 每 2 秒批量提交，读写不互相阻塞。热数据（最近 1500 分钟 1m K 线）放内存环形缓冲。若日后多实例/大数据量，`internal/store` 是唯一需要换成 PostgreSQL 的地方。
+- **Separation**: the backend exposes only `/api/v1/*`; the frontend is its own Vite project. For convenience the build output is embedded with `go:embed` (`-web=true`, default); with `-web=false` the backend serves only the API and the UI can come from the Vite dev server or (later) its own nginx container.
+- **Database and pool**: one SQLite WAL file, `database/sql` pool (`SetMaxOpenConns(4)`, `busy_timeout` 10 s); writes are batched by a single writer goroutine every 2 s so reads and writes don't block each other. Hot data (the last 1500 minutes of 1m candles) lives in in-memory ring buffers. If multiple instances or much larger data are ever needed, `internal/store` is the only place to swap for PostgreSQL.
 
-## 2. 数据流与时钟
+## 2. Data flow and clocks
 
-| 时钟 | 做什么 |
+| Clock | What happens |
 |---|---|
-| WS 推送（~0.1–7s） | 更新盘中 K 线、最新价、OI、资金费 |
-| 每个确认分钟（收齐或最迟 +65s） | 12h 窗口 → 监控池增删（带原因）→ 事实面板 → 规则评分 → SSE `universe` |
-| 每 10 秒 | 用未收盘分钟重算活跃池/自选的事实面板与分数（`preview`，会变动） |
-| 每 2 秒 | SSE `prices` 推送最新价 |
-| 每个确认分钟（之后） | 监控规则检查（`internal/alerts`，边沿触发 + 冷却），异步推送 Telegram/Webhook |
-| 每个整点 | 保存每条规则对活跃池的打分快照（不可改写，用于战绩） |
-| 15s / 30s / 5min | 现货行情、永续 ticker 兜底（同时是搜索目录的行情）、合约目录刷新 |
-| 30min | 数据淘汰：按分层保留期删除，超出容量配额时从低层收紧（`retention.go`） |
-| 启动 / 改设置 | 5m 快速建池 → 1m/1H 回填 → 14 天小时级回放 → 7 天 1m 历史回补 |
+| WS push (~0.1–7 s) | update the open candle, last price, OI, funding |
+| Every confirmed minute (all bars in, or +65 s at the latest) | 12h window → pool adds/removes (with reasons) → fact panel → rule scores → SSE `universe` |
+| Every 10 s | recompute fact panel and scores for the active pool / watchlist using the open minute (`preview`, not final) |
+| Every 2 s | SSE `prices` pushes last prices |
+| Every confirmed minute (after the above) | monitoring rules checked (`internal/alerts`, edge-triggered with cooldown), Telegram/webhook delivered asynchronously |
+| Every hour | persist each rule's scores for the active pool (immutable, used by the track record) |
+| 15 s / 30 s / 5 min | spot tickers, swap ticker fallback (also the search catalog's quotes), instrument catalog refresh |
+| 30 min | retention: delete by tiered retention; when over quota, tighten from the lowest tier (`retention.go`) |
+| Start / settings change | quick 5m pool → 1m/1H backfill → 14-day hourly replay → 7-day 1m history backfill |
 
-## 3. 关键算法（摘要）
+## 3. Key algorithms (summary)
 
-- **监控池**：连续 720 根已确认 1m K 线 `volCcyQuote` 之和 > 阈值（默认 500 万 USDT），按成交额降序取前 N（默认 200）。缺分钟≠0 成交（OKX 对无成交分钟也发 0 量 K 线），缺口标 `stale` 并按“最早缺失分钟”补洞。
-- **事实面板**：1h/4h/24h 收益、相对 BTC 4h、4h 趋势强度（按 48h 小时波动标准化）、币本位 OI 变化、放量倍数（对 7 天中位）、资金费/小时（4h/8h 换算）、基差、点差。缺失即未知。
-- **规则评分**：字段在活跃池内的分位 → 映射到 ±1 → 按权重加权平均 → `50 + 50 × Σwx / Σ|w|`。多/空独立；任一输入缺失则未评分；点差门槛独立。
-- **搜索目录**：OKX 全部 live 的 USDT 本位线性永续（含股票/商品、盘前），只在内存保存合约信息 + 30 秒 ticker（约 480 条）。不在列表里的合约点开详情才按需下载（最近 24h 1m、30 天 1H、OI、资金费、近 7 天 1m），查看期间 30 分钟内实时订阅；加自选后长期订阅。
-- **订单流**：公共 WS `trades`（每个吃单、每个成交价一条，side = 主动方）对活跃池 ∪ 自选 ∪ 30 分钟内查看过的合约逐分钟聚合：主动买/卖 USDT、笔数、按价位（约 1bp，不细于 tick）的足迹；只有整分钟都在订阅且 WS 连着的分钟才算数（`orderflow_1m`，价位打包为 int32+2×float32）。更早或未录制的 ≥5m K 线用 OKX rubik 主动买卖量（5m 约 5 天、1H 约 30 天，`taker_volume`）补 Delta，没有足迹。`GET /orderflow` 按 K 线对齐合并；同一次响应的足迹共用一个档位（基础档 ×1/2/10/20/100…，保证逐级整除），取 90% 分位 K 线不超过 40 档，个别超宽 K 线单独再合并。打开详情页时（`syncInst`，每币 30 分钟最多一次）按订单流保留期回补缺失分钟（`flowbackfill.go`）：整天用 OKX 官方每日逐笔文件（`/public/market-data-history` 列文件，按 UTC+8 分天、次日发布，逐行聚合），尚未发布的当天用 `/market/history-trades`（从实时录制起点往前，每次最多 600 页）；只写整分钟都覆盖到的分钟，不覆盖实时录制的分钟，全局同一时间只跑一个。前端 `charts/footprint.ts` 按纵向缩放再合并档位（每行 ≥12px），计算 POC、70% 价值区、对角失衡（3 倍 + 中位数地板）、堆叠失衡（≥3 档）与未回补 POC。
-- **市值/解锁**：CoinGecko 免费接口前 1500 名（约 2 小时刷新，符号匹配取市值最大者），只用于详情页展示，不进监控池/评分。
-- **数据分层与淘汰**：每个合约取最高层：自选 ＞ 活跃池（在池或离池 < 7 天）＞ 最近查看（3 天内）＞ 全池录制 ＞ 未跟踪。各周期表分别维护保留期与容量配额（上限默认 2 GB：1m 45%、OI 10%、1H 10%、资金费 5%、逐笔订单流 18%、主动买卖量 2%、其余 10%）：
+- **Monitoring pool**: sum of `volCcyQuote` over 720 consecutive confirmed 1m candles > threshold (default 5M USDT), top N by turnover (default 200). A missing minute ≠ zero volume (OKX sends zero-volume candles for idle minutes); gaps mark the instrument `stale` and are refilled from the earliest missing minute.
+- **Fact panel**: 1h/4h/24h returns, 4h return vs BTC, 4h trend strength (normalized by 48h hourly volatility), coin-denominated OI change, volume surprise (vs 7-day median), funding per hour (4h/8h intervals normalized), basis, spread. Missing means unknown.
+- **Rule scoring**: each field's percentile within the active pool → mapped to ±1 → weighted average → `50 + 50 × Σwx / Σ|w|`. Long and short are independent; any missing input means unscored; the spread gate is separate.
+- **Search catalog**: every live OKX USDT-margined linear perpetual (including stocks/commodities and pre-market), kept in memory only: instrument metadata + a 30 s ticker (~480 rows). Contracts outside the list download history on demand when opened (last 24h 1m, 30 days 1H, OI, funding, last 7 days 1m) and are streamed live for 30 minutes after viewing; watchlisted ones stay subscribed.
+- **Order flow**: the public WS `trades` channel (one message per taker order per price, side = aggressor) is aggregated per minute for active pool ∪ watchlist ∪ contracts viewed in the last 30 minutes: taker buy/sell USDT, trade count, and a per-price footprint (~1 bp, never finer than tick). Only minutes fully covered by a live subscription count (`orderflow_1m`, levels packed as int32 + 2×float32). Older or unrecorded ≥5m candles take delta from OKX rubik taker volume (5m ≈ 5 days, 1H ≈ 30 days, `taker_volume`) without a footprint. `GET /orderflow` merges by candle; all footprints in one response share a step (base step ×1/2/10/20/100…, each divides the next) chosen so the 90th-percentile candle has ≤ 40 levels, and unusually wide candles are merged again on their own. Opening a detail page (`syncInst`, at most once per coin per 30 min) backfills missing minutes within the order-flow retention (`flowbackfill.go`): full days from OKX's daily trade files (`/public/market-data-history`, UTC+8 days, published the next day, aggregated line by line), the current unpublished day from `/market/history-trades` (backwards from the start of live recording, at most 600 pages per run); only fully covered minutes are written, live-recorded minutes are never overwritten, and only one backfill runs globally at a time. The frontend (`charts/footprint.ts`) merges levels further by vertical zoom (≥ 12 px per row) and computes POC, the 70% value area, diagonal imbalances (3× with a median floor), stacked imbalances (≥ 3 levels) and naked POCs.
+- **Liquidations**: OKX public `liquidation-orders` REST (every fill, unthrottled, OKX keeps ~24h; the WS channel pushes only one per contract per second) is synced each minute for the order-flow set and stored for 30 days (`liquidations.go`). `GET /liquidations` serves per-bar long/short liquidation totals and recent fills; `GET /liqmap` serves an *estimated* liquidation map: hourly OI increments over the last 7 days spread across 5–100x leverage tiers at their approximate liquidation prices, shrunk as OI falls and removed once price trades through.
+- **Market cap / unlocks**: CoinGecko free API, top 1500 (refreshed ~2 h, symbol match takes the largest market cap); display only, never used by the pool or scores.
+- **Open interest bar**: scanner rows carry `oiUsd` (latest OI in USD, ≤ 15 min old). The UI fills each row by `r/(1+r)`, `r = √(OI / half point)`; the half point (default 5M USDT) is a per-browser display setting.
+- **Data tiers and retention**: each instrument takes its highest tier: watchlist > active pool (in the pool or left < 7 days ago) > recently viewed (3 days) > universe recording > untracked. Each table has its own retention and quota (default cap 2 GB: 1m 45%, OI 10%, 1H 10%, funding 5%, order flow 18%, taker volume 2%, other 10%):
 
-  | 表 | 自选 | 活跃池 | 最近查看 | 全池录制 | 未跟踪 | 容量压力保底 |
+  | Table | Watchlist | Active pool | Recently viewed | Universe | Untracked | Floor under quota pressure |
   |---|---|---|---|---|---|---|
-  | 1m K 线 / OI 样本 | 30 天 | 7 天 | 7 天 | 2 天 | 删除 | 26h（自选 3 天） |
-  | 1H K 线 | 180 天 | 60 天 | 60 天 | 30 天 | 30 天 | 21 天（自选 30 天，未跟踪 7 天） |
-  | 资金费已结算 / 盘中观测 | 365 / 7 天 | 90 / 3 天 | 90 / 3 天 | 90 / 3 天 | 30 / 1 天 | 14 天 / 1 天 |
-  | 逐笔订单流（1m+足迹） | 14 天 | 3 天 | 3 天 | 删除 | 删除 | 12h（自选 2 天） |
-  | 主动买卖量（rubik） | 90 天 | 30 天 | 30 天 | 7 天 | 3 天 | 1–7 天 |
+  | 1m candles / OI samples | 30 d | 7 d | 7 d | 2 d | deleted | 26 h (watchlist 3 d) |
+  | 1H candles | 180 d | 60 d | 60 d | 30 d | 30 d | 21 d (watchlist 30 d, untracked 7 d) |
+  | Funding settled / intraperiod observations | 365 / 7 d | 90 / 3 d | 90 / 3 d | 90 / 3 d | 30 / 1 d | 14 d / 1 d |
+  | Order flow (1m + footprint) | 14 d | 3 d | 3 d | deleted | deleted | 12 h (watchlist 2 d) |
+  | Taker volume (rubik) | 90 d | 30 d | 30 d | 7 d | 3 d | 1–7 d |
 
-  超配额时从“未跟踪”开始逐层把保留期 ×2/3，直到回到配额 90% 或到保底；按需/回补下载的深度跟随生效保留期，避免下载后又被删。评分快照、规则、设置永不淘汰；监控池快照保留 30 天。
-- **战绩**：同一时点池内“分数排名 vs 未来 h 小时收益排名”的 Spearman Rank IC，周期内不重叠抽样；t 值；前 20% 超额与扣双边 5bps taker + 点差后的净收益。
+  Over quota, retention is multiplied by 2/3 tier by tier starting from "untracked" until usage is back under 90% of the quota or the floor is reached; on-demand and backfill downloads follow the effective retention so nothing is downloaded only to be deleted. Score snapshots, rules and settings are never deleted; pool snapshots are kept 30 days.
+- **Track record**: Spearman Rank IC between score rank and forward h-hour return rank within the pool at the same time, sampled without overlap; t-stat; top-quintile excess and net return after 5 bps taker per side plus spread.
 
-详见 [蓝图修订](blueprint/revision-2026-09-26.md) §2。
+See [product decisions](decisions.md).
 
-## 4. 技术选型
+## 4. Technology choices
 
-| 选择 | 理由 |
+| Choice | Why |
 |---|---|
-| Go 1.25 | 长连接/并发、静态单二进制（无 CGO），交叉编译即可部署 |
-| 自研 OKX 窄适配（`net/http` + gorilla/websocket） | 只需约 8 个 REST + 5 个 WS 频道；精确控制单位/时间戳；实测单连接订阅全池无错误 |
-| SQLite（modernc，纯 Go）+ 连接池 | 实测每分钟全池写入 ~12ms、3 天 K 线查询 ~4ms；无需独立数据库服务 |
-| HTTP + SSE | 单向推送足够；客户端每次事件重新拉快照，天然自愈 |
-| Vue 3 + TypeScript + Vite | 类型安全、构建快；Lightweight Charts 画 K 线（Apache-2.0，保留署名） |
+| Go 1.25 | long-lived connections and concurrency, static single binary (no CGO), trivial cross-compilation |
+| Own narrow OKX adapter (`net/http` + gorilla/websocket) | only ~8 REST endpoints + 5 WS channels needed; precise control of units and timestamps; one connection subscribes the whole universe without errors in tests |
+| SQLite (modernc, pure Go) + pool | measured ~12 ms per full-universe minute write, ~4 ms for a 3-day candle query; no separate database service |
+| HTTP + SSE | one-way push is enough; the client refetches the snapshot on each event, so it self-heals |
+| Vue 3 + TypeScript + Vite | type safety, fast builds; Lightweight Charts for candles (Apache-2.0, attribution kept) |
 
-## 5. 目录结构
-
-```
-cmd/server/            入口：参数、网络（代理/DoH）、启动引擎与 HTTP
-internal/okx/          OKX REST/WS 适配、限频、拨号
-internal/store/        SQLite 表结构与读写
-internal/market/       引擎：engine.go（启动/录制/WS）、universe.go（每分钟池）、catalog.go（搜索目录/按需下载）、
-                       retention.go（分层淘汰）、
-                       preview.go（10 秒盘中）、rules.go（规则/回放/战绩）、
-                       history.go（7 天 1m 回补）、settings.go（运行时设置）、
-                       queries.go（图表/详情/状态查询）、state.go（内存结构与 Series）
-internal/features/     事实面板
-internal/rules/        规则与打分
-internal/track/        战绩统计
-internal/alerts/       监控规则（类型注册在 conditions.go）、推送渠道（掩码/发送/重试）、历史
-internal/api/          HTTP 路由、SSE、图标代理、gzip
-web/                   前端工程（src/views 页面，src/components 组件，embed.go 内嵌产物）
-deploy/                docker-compose.yml（服务器运行定义）、deploy.sh（构建/上传/替换/回滚）
-research/poc/          调研探针（独立 Go module，不是生产代码）
-docs/                  文档；docs/blueprint 为方案与修订
-openspec/              需求与变更记录
-```
-
-## 6. API（/api/v1）
-
-`GET health|status|meta|settings|catalog|storage|orderflow|universe?scope=active|all|watch|instruments/{id}|candles|compare|series|rules|rules/{id}/track|icons/{ccy}.png|stream(SSE)`；
-`PUT settings|watchlist/{id}`，`POST rules`，`DELETE rules/{id}|watchlist/{id}`；`GET positions` 固定返回未连接（I4 前）。
-监控：`GET|POST alerts/rules`，`PUT|DELETE alerts/rules/{id}`，`GET|PUT alerts/channels`（密钥只返回掩码，留空/掩码=不变），`DELETE alerts/channels/{telegram|webhook}`，`POST alerts/channels/{ch}/test`，`GET alerts/history?limit=`。
-
-## 7. 部署形态
+## 5. Directory layout
 
 ```
-本机 deploy/deploy.sh ──scp 静态二进制──▶ greencloud:/opt/ctg/bin/ctg ──(bind mount, ro)──▶ 容器 ctg
-                                                                  distroless/static:nonroot (2 MB)
-公网 443 ─▶ nginx stream（SNI 默认路由）─▶ 127.0.0.1:8444 gateway-ctg.conf（TLS *.gugenzzz.top）─▶ 127.0.0.1:8686
+cmd/server/            entry: flags, networking (proxy/DoH), start engine and HTTP
+internal/okx/          OKX REST/WS adapter, rate limits, dialing
+internal/store/        SQLite schema and access
+internal/market/       engine: engine.go (startup/recording/WS), universe.go (per-minute pool), catalog.go (search catalog / on-demand download),
+                       retention.go (tiered retention),
+                       preview.go (10 s intraminute), rules.go (rules/replay/track record),
+                       history.go (7-day 1m backfill), settings.go (runtime settings),
+                       queries.go (chart/detail/status queries), state.go (in-memory structures and series)
+internal/features/     fact panel
+internal/rules/        rules and scoring
+internal/track/        track-record statistics
+internal/alerts/       monitoring rules (types registered in conditions.go), delivery channels (masking/sending/retries), history
+internal/api/          HTTP routes, SSE, icon proxy, gzip
+web/                   frontend (src/views pages, src/components components, embed.go embeds the build)
+deploy/                docker-compose.yml (server runtime), deploy.sh (build/upload/swap/rollback)
+research/poc/          research probes (separate Go module, not production code)
+docs/                  documentation
 ```
 
-镜像不含业务代码，升级只替换二进制并重启容器；数据在 `/opt/ctg/data`（SQLite），与二进制版本解耦。细节见 [运行与部署](operations.md)。
+## 6. API (/api/v1)
+
+`GET health|status|meta|settings|catalog|storage|orderflow|liquidations|liqmap|universe?scope=active|all|watch|instruments/{id}|candles|compare|series|rules|rules/{id}/track|icons/{ccy}.png|stream(SSE)`;
+`PUT settings|watchlist/{id}`, `POST rules`, `DELETE rules/{id}|watchlist/{id}`; `GET positions` always returns "not connected" (until I4).
+Monitoring: `GET|POST alerts/rules`, `PUT|DELETE alerts/rules/{id}`, `GET|PUT alerts/channels` (secrets are returned masked; empty/masked = unchanged), `DELETE alerts/channels/{telegram|webhook}`, `POST alerts/channels/{ch}/test`, `GET alerts/history?limit=`.
+
+## 7. Deployment
+
+```
+workstation deploy/deploy.sh ──scp static binary──▶ greencloud:/opt/ctg/bin/ctg ──(bind mount, ro)──▶ container ctg
+                                                                               distroless/static:nonroot (2 MB)
+public 443 ─▶ nginx stream (SNI default route) ─▶ 127.0.0.1:8444 gateway-ctg.conf (TLS *.gugenzzz.top) ─▶ 127.0.0.1:8686
+```
+
+The image contains no application code; an upgrade swaps the binary and restarts the container. Data lives in `/opt/ctg/data` (SQLite), decoupled from binary versions. See [operations](operations.md).

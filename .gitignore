@@ -67,3 +67,6 @@ Thumbs.db
 .claude/settings.local.json
 .claude/*.local.*
 .claude/worktrees/
+
+# symlinked node_modules in worktrees
+node_modules
