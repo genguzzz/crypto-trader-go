@@ -59,6 +59,9 @@
 | 搜索 | `ui/SearchInput.vue`（图标、清空、`/` 聚焦、Esc 清空） | 裸 input |
 | 浮层菜单 / 列表 | Reka `Popover`（样式类 `.lm-pop`） | 页面内展开大块内容 |
 | 指标卡片 / 详情 | `ui/StatCard.vue` + `details/registry.ts` | |
+| 设置项 | `settings/SettingsSection.vue`（分组卡片）+ `settings/SettingRow.vue`（标签+一句说明在左、控件在右，未保存点、行内错误） | 裸 label 堆叠 |
+| 用量 / 进度条 | `ui/Meter.vue`（≥90% 自动转警示色） | 手写 div 进度条 |
+| 长页面分区跳转 | `status/SectionNav.vue`（PC 左侧 sticky + scroll-spy，手机横向胶囊） | |
 
 ## 3.2 全局导航与布局
 
