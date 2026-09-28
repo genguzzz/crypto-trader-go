@@ -19,6 +19,9 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
   private view: IPrimitivePaneView
   private cumLong: [number, number][] = [] // [price, cumulative USDT from the last price down to it], descending price
   private cumShort: [number, number][] = [] // ascending price
+  private rowStep = 0 // price size of the rows last drawn
+  private rowSums = new Map<number, { long: number; short: number }>()
+  private hoverPx: number | null = null
 
   constructor() {
     const renderer: IPrimitivePaneRenderer = { draw: t => this.draw(t) }
@@ -38,6 +41,20 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
     this.requestUpdate?.()
   }
 
+  /** Highlight the row under the crosshair (null = none). */
+  setHover(px: number | null) {
+    if (px === this.hoverPx) return
+    this.hoverPx = px
+    this.requestUpdate?.()
+  }
+
+  /** The drawn row containing `px`: its price range and estimated amounts. */
+  rowAt(px: number): { lo: number; hi: number; long: number; short: number } | null {
+    if (!this.rowStep) return null
+    const k = Math.floor(px / this.rowStep + 1e-9), r = this.rowSums.get(k)
+    return { lo: k * this.rowStep, hi: (k + 1) * this.rowStep, long: r?.long ?? 0, short: r?.short ?? 0 }
+  }
+
   /** Estimated USDT liquidated if price moved from the last price to `px` (longs below, shorts above). */
   cumAt(px: number): { long: boolean; usd: number } | null {
     if (!this.m) return null
@@ -55,15 +72,8 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
     const m = this.m, s = this.series
     if (!m || !s || !m.bins?.length) return
     target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
-      const W = mediaSize.width
-      // stay inside the candles' own area: the bands below (volume, OI, liquidations) share the pane
-      const H = mediaSize.height * (1 - (s.priceScale().options().scaleMargins?.bottom ?? 0))
-      ctx.save()
-      ctx.beginPath()
-      ctx.rect(0, 0, W, H)
-      ctx.clip()
-      this.paint(ctx, W, H, m, s)
-      ctx.restore()
+      // full pane height: the bands below (volume, OI, liquidations) draw over the map where they meet
+      this.paint(ctx, mediaSize.width, mediaSize.height, m, s)
     })
   }
 
@@ -82,6 +92,8 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
         r.long += b.long; r.short += b.short
         rows.set(k, r)
       }
+      this.rowStep = rowStep
+      this.rowSums = rows
       const drawn: { top: number; h: number; r: { long: number; short: number } }[] = []
       let max = 0
       for (const [k, r] of rows) {
@@ -94,6 +106,14 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
       }
       if (!max) return
       const maxW = Math.min(MAX_W_PX, W * MAX_W)
+      const hk = this.hoverPx != null ? Math.floor(this.hoverPx / rowStep + 1e-9) : null
+      if (hk != null) { // hovered row: faint band across the map's width so the row being read is clear
+        const ya = s.priceToCoordinate(hk * rowStep), yb = s.priceToCoordinate((hk + 1) * rowStep)
+        if (ya != null && yb != null) {
+          ctx.fillStyle = 'rgba(255,255,255,.08)'
+          ctx.fillRect(W - maxW, Math.min(ya, yb), maxW, Math.max(1, Math.abs(ya - yb)))
+        }
+      }
       for (const { top, h, r } of drawn) {
         const wl = (r.long / max) * maxW, ws = (r.short / max) * maxW
         if (wl > 0.3) { ctx.fillStyle = alpha('down', 0.5); ctx.fillRect(W - wl, top, wl, h) }

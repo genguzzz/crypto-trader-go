@@ -260,7 +260,12 @@ function applyMap(lm?: LiqMap) {
   lmap.setData(lm)
   mapInfo.value = lm
 }
-const mapAt = computed(() => (axisLabel.value && lmap && mapInfo.value ? lmap.cumAt(axisLabel.value.px) : null))
+const mapAt = computed(() => {
+  const a = axisLabel.value
+  if (!a || !lmap || !mapInfo.value) return null
+  const cum = lmap.cumAt(a.px), row = lmap.rowAt(a.px)
+  return cum && { ...cum, row }
+})
 
 // ---- hot data: while this chart is on screen, the forming bars refresh every second ----
 let hotBusy = false
@@ -373,18 +378,24 @@ function applyFlow(cs: Candle[], of?: OrderFlow) {
 
 // ---- crosshair: legend follows the hovered bar; price axis label shows distance from last price ----
 function onCrosshair(p: MouseEventParams<Time>) {
-  if (!p.time || !p.point) {
+  if (!p.point) {
     hover.value = null
     axisLabel.value = null
+    lmap?.setHover(null)
     return
   }
-  const t = p.time as number
+  // the price label (and liquidation-map readout) follows the cursor's height anywhere in the price
+  // pane, also right of the last bar where there is no time
   const xs = bars.value
-  let lo = 0, hi = xs.length - 1, found = -1
-  while (lo <= hi) { // bars are ascending by chart time
-    const mid = (lo + hi) >> 1, v = chartTime(xs[mid].t) as number
-    if (v === t) { found = mid; break }
-    if (v < t) lo = mid + 1; else hi = mid - 1
+  let found = -1
+  if (p.time) {
+    const t = p.time as number
+    let lo = 0, hi = xs.length - 1
+    while (lo <= hi) { // bars are ascending by chart time
+      const mid = (lo + hi) >> 1, v = chartTime(xs[mid].t) as number
+      if (v === t) { found = mid; break }
+      if (v < t) lo = mid + 1; else hi = mid - 1
+    }
   }
   hover.value = found >= 0 ? found : null
   const pane0 = chart!.panes()[0]?.getHeight() ?? 0
@@ -394,6 +405,7 @@ function onCrosshair(p: MouseEventParams<Time>) {
     axisWidth.value = chart!.priceScale('right').width()
     axisLabel.value = px != null && last ? { top: p.point.y, px, pct: px / last - 1 } : null
   } else axisLabel.value = null
+  lmap?.setHover(axisLabel.value?.px ?? null)
 }
 
 onMounted(() => {
@@ -489,7 +501,6 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <span v-if="withSpot && shown.spot != null">现货 <b class="spot">{{ fmtPrice(shown.spot) }}</b> <small class="muted">基差 {{ pct(shown.c.c / shown.spot - 1, 3) }}</small></span>
         <span v-if="(withOID || withOIL) && shown.oi">OI <b class="oi">{{ usd(shown.oi.v) }}</b> <small v-if="shown.oi.d !== undefined" :class="tone(shown.oi.d)">{{ (shown.oi.d >= 0 ? '+' : '−') + usd(Math.abs(shown.oi.d)) }}（{{ pct(shown.oi.d / (shown.oi.v - shown.oi.d)) }}）</small></span>
         <span v-if="withLiq && shown.liq">强平 <small class="muted">多</small> <b class="down">{{ usd(shown.liq.long) }}</b> <small class="muted">空</small> <b class="up">{{ usd(shown.liq.short) }}</b></span>
-        <span v-if="mapAt" class="muted">清算图 · {{ mapAt.long ? '跌到' : '涨到' }}光标价 ≈ <b :class="mapAt.long ? 'down' : 'up'">{{ usd(mapAt.usd) }}</b> {{ mapAt.long ? '多单' : '空单' }}（估算）</span>
         <template v-if="layer !== 'k'">
           <br />
           <template v-if="shown.f">
@@ -512,6 +523,11 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
             <span class="key"><i class="k-naked"></i>未回补 POC</span>
           </template>
         </template>
+      </div>
+      <div v-if="mapAt && axisLabel" class="map-tip tnum" :style="{ right: axisWidth + 6 + 'px', top: (axisLabel.top < 60 ? axisLabel.top + 12 : axisLabel.top - 50) + 'px' }">
+        <div class="mt-h">清算图（估算）</div>
+        <div>{{ mapAt.long ? '跌到' : '涨到' }}此价累计 <b :class="mapAt.long ? 'down' : 'up'">{{ usd(mapAt.usd) }}</b> {{ mapAt.long ? '多单' : '空单' }}</div>
+        <div v-if="mapAt.row && (mapAt.row.long || mapAt.row.short)" class="muted">本档 {{ fmtPrice(mapAt.row.lo) }}–{{ fmtPrice(mapAt.row.hi) }}：<template v-if="mapAt.row.long">多 <b class="down">{{ usd(mapAt.row.long) }}</b></template><template v-if="mapAt.row.long && mapAt.row.short"> · </template><template v-if="mapAt.row.short">空 <b class="up">{{ usd(mapAt.row.short) }}</b></template></div>
       </div>
       <div v-if="axisLabel" class="axis-lbl tnum" :style="{ top: axisLabel.top - 16 + 'px', width: axisWidth + 'px' }">
         <b>{{ axisLabel.px.toFixed(pxDigits) }}</b>
@@ -557,6 +573,9 @@ h3 { display: flex; justify-content: space-between; align-items: center; flex-wr
 .foot-hint { position: absolute; left: 50%; bottom: 48px; transform: translateX(-50%); z-index: 3; pointer-events: none; padding: 4px 10px; border-radius: 6px; background: rgba(14, 14, 14, .85); border: 1px solid var(--line-2); color: var(--text-2); font-size: var(--fs-xs); white-space: nowrap; }
 .axis-lbl { position: absolute; right: 0; z-index: 3; pointer-events: none; display: grid; justify-items: center; padding: 1px 0; background: var(--bg-3); border-radius: 2px; font-size: 10px; line-height: 15px; color: var(--text-1); }
 .axis-lbl b { font-weight: 500; }
+.map-tip { position: absolute; z-index: 4; pointer-events: none; padding: 4px 8px; border-radius: 6px; background: rgba(14, 14, 14, .9); border: 1px solid var(--line-2); font-size: var(--fs-xs); line-height: 1.5; color: var(--text-2); white-space: nowrap; }
+.map-tip .mt-h { color: var(--text-3); }
+.map-tip b { font-weight: 600; } .map-tip b.up { color: var(--up); } .map-tip b.down { color: var(--down); }
 .axis-lbl .up { color: var(--up); } .axis-lbl .down { color: var(--down); }
 @media (max-width: 900px) {
   .legend { max-width: calc(100% - 70px); font-size: 10px; }
