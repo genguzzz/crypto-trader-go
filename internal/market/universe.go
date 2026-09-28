@@ -195,6 +195,9 @@ func (e *Engine) computeUniverse(m int64) {
 	e.scoreRows(snap)
 	e.snap.Store(snap)
 	e.broadcast(Event{Type: "universe", Data: map[string]any{"seq": snap.Seq, "asOfMinute": m, "phase": phase, "active": cov.Active}})
+	if phase == "live" {
+		go e.notifyConfirmed(snap)
+	}
 
 	go func() {
 		if len(oiBatch) > 0 {
@@ -389,6 +392,22 @@ func (e *Engine) recordLiveScores(s *Snapshot) {
 	e.trackMu.Lock()
 	e.trackCache = map[string]trackEntry{}
 	e.trackMu.Unlock()
+}
+
+// OnConfirmed registers fn to run (off the universe loop, serially) with each confirmed live
+// snapshot. The snapshot is shared and must be treated as read-only.
+func (e *Engine) OnConfirmed(fn func(*Snapshot)) {
+	e.confirmedMu.Lock()
+	e.onConfirmed = append(e.onConfirmed, fn)
+	e.confirmedMu.Unlock()
+}
+
+func (e *Engine) notifyConfirmed(s *Snapshot) {
+	e.confirmedMu.Lock() // serialises listeners so minutes are seen in order
+	defer e.confirmedMu.Unlock()
+	for _, fn := range e.onConfirmed {
+		fn(s)
+	}
 }
 
 // ---------- SSE fan-out ----------

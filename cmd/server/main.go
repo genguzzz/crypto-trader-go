@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"crypto-trader-go/internal/alerts"
 	"crypto-trader-go/internal/api"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/okx"
@@ -76,13 +77,19 @@ func main() {
 	if err := eng.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
+	al, err := alerts.New(st, eng, okx.HTTPClient())
+	if err != nil {
+		log.Fatal(err)
+	}
+	eng.OnConfirmed(al.OnSnapshot)
+	go al.Run(ctx)
 	var dist fs.FS
 	if *serveWeb {
 		if dist, err = fs.Sub(web.Dist, "dist"); err != nil {
 			log.Fatal(err)
 		}
 	}
-	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist,
+	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al,
 		Icons: &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()}}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
