@@ -313,8 +313,9 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 		},
 		{
 			Name: "get_liquidation_map", Path: "liqmap", Summary: "Estimated liquidation price map",
-			Desc: "ESTIMATE, not exchange data: hourly open-interest increments over the look-back spread across 5-100x leverage tiers at approximate liquidation prices, " +
-				"shrunk as OI falls and removed once price trades through. bins = [{p: bin low price, long, short}] in USDT.",
+			Desc: "ESTIMATE, not exchange data: open-interest increments over the look-back (5m steps with per-minute OI from `fine` on, hourly before) spread across 5-100x leverage tiers " +
+				"(levers, assumed shares in weights) at approximate liquidation prices, shrunk as OI falls and removed once price trades through. " +
+				"bins = [{p: bin low price, long, short, longBy, shortBy}] in USDT; longBy / shortBy split the amount by tier in the order of levers.",
 			Params:  []Param{instParam("query"), {Name: "days", In: "query", Type: "integer", Default: 7, Min: 1, Max: 7, Desc: "look-back days"}},
 			CostTxt: "2", cost: func(Args) int { return 2 },
 			run: func(ctx context.Context, a Args) (any, error) {
@@ -326,7 +327,7 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 					Estimate bool   `json:"estimate"`
 					Basis    string `json:"basis"`
 					market.LiqMapResp
-				}{true, "model estimate from hourly open-interest increments and assumed leverage tiers (levers); not observed positions or exchange liquidation levels", m}, nil
+				}{true, "model estimate from open-interest increments and assumed leverage tiers (levers, weights); not observed positions or exchange liquidation levels", m}, nil
 			},
 		},
 		{

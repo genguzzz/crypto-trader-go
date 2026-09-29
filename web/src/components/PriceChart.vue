@@ -6,9 +6,10 @@ import { chartTime, price as fmtPrice, usd, time as fmtTime } from '../fmt'
 import { baseChart, precisionFor } from './charts'
 import { Footprint, type FootBar } from './charts/footprint'
 import { LiqMapOverlay } from './charts/liqmap'
-import { C, alpha } from '../theme'
+import { C, alpha, LIQ_TIERS, liqTierColor } from '../theme'
 import { LocateFixed, Maximize2, Minimize2 } from 'lucide-vue-next'
 import FilterChip from './ui/FilterChip.vue'
+import ChipGroup from './ui/ChipGroup.vue'
 import Loading from './ui/Loading.vue'
 
 /** fill: take the parent's full height (workbench); otherwise fixed chart heights (stacked page). */
@@ -22,6 +23,16 @@ const withOIL = ref(localStorage.getItem('ctg.chartOIL') === '1') // OI level ar
 const withOID = ref(localStorage.getItem('ctg.chartOID') !== '0') // OI change bars: on by default
 const withLiq = ref(localStorage.getItem('ctg.chartLiq') !== '0') // liquidation bars: on by default
 const withMap = ref(localStorage.getItem('ctg.chartLiqMap') === '1') // estimated liquidation map overlay
+const mapDays = ref(localStorage.getItem('ctg.liqMapDays') || '7') // map look-back
+const mapTiers = ref<number[]>(readTiers()) // leverage tiers drawn on the map
+function readTiers(): number[] {
+  try {
+    const v = JSON.parse(localStorage.getItem('ctg.liqMapTiers') || 'null')
+    const xs = Array.isArray(v) ? v.filter((x: unknown): x is number => LIQ_TIERS.includes(x as number)) : []
+    if (xs.length) return xs
+  } catch { /* default */ }
+  return [...LIQ_TIERS]
+}
 const err = ref('')
 const loading = ref(false)
 const el = ref<HTMLElement>()
@@ -72,25 +83,22 @@ const tone = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : '')
 // ---- loading: every source in parallel, newest request wins, results cached per view ----
 interface Loaded { cs: Candle[]; of?: OrderFlow; ss?: Candle[]; oi?: SeriesPoint[]; lq?: Liquidations; lm?: LiqMap }
 const cache = new Map<string, Loaded>() // switching back to a period/layer paints at once, then refreshes
-const cacheKey = () => [bar.value, layer.value, withSpot.value && props.hasSpot, withOIL.value || withOID.value, withLiq.value, withMap.value].join('|')
-let mapCache: { id: string; at: number; m: LiqMap } | undefined // the map is hourly: refetch at most once a minute
+const cacheKey = () => [bar.value, layer.value, withSpot.value && props.hasSpot, withOIL.value || withOID.value, withLiq.value, withMap.value, mapDays.value].join('|')
 let seq = 0
 
 async function fetchAll(): Promise<Loaded> {
   const b = bar.value, n = depth[b] || 400, lay = layer.value
   const hours = Math.min(24 * 30, Math.ceil((n * barMs[b]) / 3600e3) + 1)
   const wantMap = withMap.value && props.hasOi
-  const mapFresh = mapCache && mapCache.id === props.id && Date.now() - mapCache.at < 60e3
   const [cs, of, ss, oi, lq, lm] = await Promise.all([
     api.candles(props.id, b, n),
     lay !== 'k' ? api.orderflow(props.id, b, n, lay === 'foot') : undefined,
     withSpot.value && props.hasSpot ? api.candles(props.id, b, Math.min(n, 1000), 'spot') : undefined,
     (withOIL.value || withOID.value) && props.hasOi ? api.series(props.id, 'oi', hours) : undefined,
     withLiq.value ? api.liquidations(props.id, b, n).catch(() => undefined) : undefined,
-    wantMap && !mapFresh ? api.liqmap(props.id, 7).catch(() => undefined) : undefined,
+    wantMap ? api.liqmap(props.id, +mapDays.value).catch(() => undefined) : undefined,
   ])
-  if (lm) mapCache = { id: props.id, at: Date.now(), m: lm }
-  return { cs, of, ss, oi: oi || undefined, lq, lm: wantMap ? lm ?? mapCache?.m : undefined }
+  return { cs, of, ss, oi: oi || undefined, lq, lm }
 }
 
 /**
@@ -257,10 +265,14 @@ function applyMap(lm?: LiqMap) {
     mapInfo.value = null
     return
   }
-  if (!lmap) { lmap = new LiqMapOverlay(); candles!.attachPrimitive(lmap) }
+  if (!lmap) { lmap = new LiqMapOverlay(); lmap.setHidden(hiddenTiers()); candles!.attachPrimitive(lmap) }
   lmap.setData(lm)
   mapInfo.value = lm
 }
+const hiddenTiers = () => LIQ_TIERS.filter(l => !mapTiers.value.includes(l))
+/** Tiers the map uses (the contract's max leverage may drop some) with their assumed share. */
+const mapLegend = computed(() => (mapInfo.value?.levers || []).map((l, i) => ({ l, w: mapInfo.value!.weights?.[i] ?? 0, on: !hiddenTiers().includes(l) })))
+const mapTierOptions = LIQ_TIERS.map(l => ({ value: l, label: l + 'x' }))
 const mapAt = computed(() => {
   const a = axisLabel.value
   if (!a || !lmap || !mapInfo.value) return null
@@ -429,6 +441,8 @@ watch(withOIL, v => { localStorage.setItem('ctg.chartOIL', v ? '1' : '0'); load(
 watch(withOID, v => { localStorage.setItem('ctg.chartOID', v ? '1' : '0'); load('anchor') })
 watch(withLiq, v => { localStorage.setItem('ctg.chartLiq', v ? '1' : '0'); load('anchor') })
 watch(withMap, v => { localStorage.setItem('ctg.chartLiqMap', v ? '1' : '0'); load('anchor') })
+watch(mapDays, v => { localStorage.setItem('ctg.liqMapDays', v); load('anchor') })
+watch(mapTiers, v => { localStorage.setItem('ctg.liqMapTiers', JSON.stringify(v)); lmap?.setHidden(hiddenTiers()) })
 // ---- full screen: native Fullscreen API where the element supports it; otherwise (iPhone Safari)
 // a fixed overlay covering the viewport. Esc / the button leaves either way.
 const root = ref<HTMLElement>()
@@ -469,8 +483,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <b>成交额柱</b>：底部柱为该根 K 线的 USDT 成交额，绿涨红跌。缺失分钟显示为空档；最后一根为未收盘 K 线。<br />
         <b>现货 / OI</b>：现货为 OKX 同名 USDT 现货收盘价（黄线），和合约 K 线共用右侧价格轴，缩放、拖动都跟随 K 线，两者的间距就是基差；<b>OI Δ</b>（默认开）为持仓量变化柱：每根 K 线相对上一根的增减，蓝增橙减，和成交额柱一样画在 K 线下方的独立区域；<b>OI</b> 为持仓量走势（面积图），在变化柱上方再占一条。左上角显示持仓量与变化（近期逐分钟采样；更早只有 1 小时采样，小周期在那段没有变化柱）。没有对应数据时按钮置灰。<br />
         <b>强平</b>（默认开）：OKX 公共接口的逐笔强平单（不需要账户），按 K 线汇总的 USDT 金额。绿柱向上 = 空单被强平（强制买入），红柱向下 = 多单被强平（强制卖出）。活跃池、自选、最近查看的合约每分钟同步一次；OKX 只提供最近约 24 小时，更早的只有本机开始同步之后的记录（保留 30 天），没有记录的时段不画柱。<br />
-        <b>清算图</b>（估算，非交易所数据）：用近 7 天每小时持仓量变化推算“新开仓位”，按 5/10/25/50/100 倍杠杆（超过该合约最大杠杆的档去掉）分配，放在各自的大致强平价（维持保证金率按 0.5%）；持仓减少时按比例缩小，之后被 K 线价格穿过的价位视为已清算并移除。右侧横条为每个价位剩余的估算强平金额（红 = 多单，在现价下方；绿 = 空单，在现价上方），细线为从现价向外的累计金额。十字光标移到某价位时，左上角显示价格走到那里预计触发的累计强平额。只能看作“仓位可能扎堆的位置”，不代表真实仓位。<br />
-        <b>刷新</b>：打开详情页时最新几根 K 线每秒刷新（服务端 OKX WebSocket 推送的未收盘 K 线），整段数据和订单流每 10 秒刷新；页面切到后台时暂停。<br />
+        <b>清算图</b>（估算，非交易所数据，和 CoinGlass 清算地图同类模型）：用持仓量增加推算“新开仓位”（近期按 5 分钟 K 线 + 逐分钟持仓量，数据不连续的更早部分按小时），在该段 K 线的典型价开仓，按 5/10/25/50/100 倍杠杆分配（假设占比 10/25/30/20/15%，超过该合约最大杠杆的档去掉），放在各自的大致强平价（维持保证金率按 0.5%）；持仓减少时按比例缩小，之后被 K 线价格穿过的价位视为已清算并移除。右侧横条为每个价位剩余的估算强平金额，按杠杆分段着色（红 = 多单，在现价下方；绿 = 空单，在现价上方；颜色越亮杠杆越高），细线为从现价向外的累计金额。上方可切换回看 1 / 7 天、只看部分杠杆档（CoinGlass 的模型 1 只算 10/25/50/100x）。十字光标移到某价位时显示价格走到那里预计触发的累计强平额和本档各杠杆的金额。<b>和 CoinGlass 数值不同是正常的</b>：它默认汇总多家交易所、杠杆占比和输入（含成交量）是自己的假设，柱高是相对强度而不是 USDT；本图只用 OKX 这一个合约的持仓量，金额是 USDT 估算。两者应当看“扎堆的位置”是否一致，不要比绝对数。只能看作“仓位可能扎堆的位置”，不代表真实仓位。<br />
+        <b>刷新</b>：打开详情页时最新几根 K 线每秒刷新（服务端 OKX WebSocket 推送的未收盘 K 线），整段数据、订单流、强平柱（每次都向 OKX 拉取新强平单）和清算图（含最新持仓量与未收盘 K 线）每 10 秒刷新；页面切到后台时暂停。<br />
         <b>时间</b>：按设置页选择的时区显示（默认 UTC+8）。右下角 ◎ 或双击图表回到最新并自动缩放。
       </InfoTip></span>
       <span class="bars">
@@ -488,6 +502,17 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         </button>
       </span>
     </h3>
+    <div v-if="withMap && hasOi" class="mapbar">
+      <span class="mb-k">清算图</span>
+      <Segmented v-model="mapDays" size="sm" aria-label="清算图回看" :options="[{ value: '1', label: '1 天' }, { value: '7', label: '7 天' }]" />
+      <span class="mb-k">杠杆</span>
+      <ChipGroup v-model="mapTiers" at-least-one aria-label="清算图杠杆档" :options="mapTierOptions" />
+      <span class="mb-keys" v-if="mapLegend.length">
+        <span v-for="t in mapLegend" :key="t.l" class="mb-key" :class="{ off: !t.on }" :title="`假设 ${Math.round(t.w * 100)}% 的新开仓用 ${t.l}x`">
+          <i><em :style="{ background: liqTierColor(t.l, true) }"></em><em :style="{ background: liqTierColor(t.l, false) }"></em></i>{{ t.l }}x
+        </span>
+      </span>
+    </div>
     <div class="wrap" :class="{ tall: layer !== 'k' }">
       <div ref="el" class="chart" @dblclick="resetView"></div>
       <Loading overlay :show="loading" />
@@ -529,6 +554,9 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <div class="mt-h">清算图（估算）</div>
         <div>{{ mapAt.long ? '跌到' : '涨到' }}此价累计 <b :class="mapAt.long ? 'down' : 'up'">{{ usd(mapAt.usd) }}</b> {{ mapAt.long ? '多单' : '空单' }}</div>
         <div v-if="mapAt.row && (mapAt.row.long || mapAt.row.short)" class="muted">本档 {{ fmtPrice(mapAt.row.lo) }}–{{ fmtPrice(mapAt.row.hi) }}：<template v-if="mapAt.row.long">多 <b class="down">{{ usd(mapAt.row.long) }}</b></template><template v-if="mapAt.row.long && mapAt.row.short"> · </template><template v-if="mapAt.row.short">空 <b class="up">{{ usd(mapAt.row.short) }}</b></template></div>
+        <div v-for="t in mapAt.row?.tiers || []" :key="t.lever" class="mt-tier">
+          <i :style="{ background: liqTierColor(t.lever, t.long > 0) }"></i>{{ t.lever }}x <b>{{ usd(t.long + t.short) }}</b>
+        </div>
       </div>
       <div v-if="axisLabel" class="axis-lbl tnum" :style="{ top: axisLabel.top - 16 + 'px', width: axisWidth + 'px' }">
         <b>{{ axisLabel.px.toFixed(pxDigits) }}</b>
@@ -576,10 +604,20 @@ h3 { display: flex; justify-content: space-between; align-items: center; flex-wr
 .axis-lbl b { font-weight: 500; }
 .map-tip { position: absolute; z-index: 4; pointer-events: none; padding: 4px 8px; border-radius: 6px; background: rgba(14, 14, 14, .9); border: 1px solid var(--line-2); font-size: var(--fs-xs); line-height: 1.5; color: var(--text-2); white-space: nowrap; }
 .map-tip .mt-h { color: var(--text-3); }
+.map-tip .mt-tier { display: flex; align-items: center; gap: 4px; color: var(--text-3); }
+.map-tip .mt-tier i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.map-tip .mt-tier b { color: var(--text-1); font-weight: 500; }
+.mapbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; font-size: var(--fs-xs); }
+.mapbar .mb-k { color: var(--text-3); }
+.mapbar :deep(.fchip) { height: 22px; padding: 0 8px; font-size: var(--fs-xs); }
+.mb-keys { display: inline-flex; gap: 8px; flex-wrap: wrap; color: var(--text-2); }
+.mb-key { display: inline-flex; align-items: center; gap: 3px; } .mb-key.off { opacity: .35; }
+.mb-key i { display: inline-flex; width: 12px; height: 8px; border-radius: 2px; overflow: hidden; } .mb-key em { flex: 1; }
 .map-tip b { font-weight: 600; } .map-tip b.up { color: var(--up); } .map-tip b.down { color: var(--down); }
 .axis-lbl .up { color: var(--up); } .axis-lbl .down { color: var(--down); }
 @media (max-width: 900px) {
   .legend { max-width: calc(100% - 70px); font-size: 10px; }
+  .mb-keys { display: none; } /* phone: the crosshair readout names each tier's colour */
   .chart { height: 320px; } .wrap.tall .chart { height: 420px; }
   /* two rows: title + spot toggle, then the layer/period switches */
   h3 { row-gap: 8px; } h3 > span:first-child { flex: 1; } .bars { order: 3; width: 100%; flex-wrap: nowrap; }
