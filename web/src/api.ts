@@ -49,9 +49,10 @@ export interface Storage {
 export interface Meta { fields: Field[]; rules: Rule[]; settings: Settings; categories: Record<string, string> }
 export interface Candle { t: number; o: number; h: number; l: number; c: number; q: number; x: boolean }
 export interface Stats {
-  horizonH: number; crossSections: number; medianNames: number
-  longIC: number; longT: number; longHit: number; shortIC: number; shortT: number; shortHit: number
-  longTopExcessBps: number; longTopNetBps: number; shortTopExcessBps: number; shortTopNetBps: number
+  /** Metrics are null when not measured (no cross-sections for that side), never a fake 0. */
+  horizonH: number; crossSections: number; medianNames: number; longN: number; shortN: number
+  longIC: number | null; longT: number | null; longHit: number | null; shortIC: number | null; shortT: number | null; shortHit: number | null
+  longTopExcessBps: number | null; longTopNetBps: number | null; shortTopExcessBps: number | null; shortTopNetBps: number | null
   firstTs: number; lastTs: number; cumLongIC: { ts: number; v: number }[] | null; verdict: string
 }
 export interface Track { ruleId: string; version: number; replayable: boolean; replayState: string; live: Stats[]; replay: Stats[]; liveSince: number }

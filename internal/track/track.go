@@ -15,23 +15,25 @@ const hourMs = int64(3_600_000)
 const TakerFeeBps = 5.0
 
 type Stats struct {
-	HorizonH    int     `json:"horizonH"`
-	CrossSects  int     `json:"crossSections"`
-	MedianNames int     `json:"medianNames"`
-	LongIC      float64 `json:"longIC"`
-	LongT       float64 `json:"longT"`
-	LongHit     float64 `json:"longHit"`
-	ShortIC     float64 `json:"shortIC"`
-	ShortT      float64 `json:"shortT"`
-	ShortHit    float64 `json:"shortHit"`
-	LongTopBps  float64 `json:"longTopExcessBps"`  // top-quintile long mean return minus pool mean (gross)
-	LongTopNet  float64 `json:"longTopNetBps"`     // top-quintile long absolute return minus fees+spread
-	ShortTopBps float64 `json:"shortTopExcessBps"` // top-quintile short: mean(−ret) minus pool mean(−ret)
-	ShortTopNet float64 `json:"shortTopNetBps"`
-	FirstTs     int64   `json:"firstTs"`
-	LastTs      int64   `json:"lastTs"`
-	CumLongIC   []Point `json:"cumLongIC"`
-	Verdict     string  `json:"verdict"`
+	HorizonH    int      `json:"horizonH"`
+	CrossSects  int      `json:"crossSections"`
+	MedianNames int      `json:"medianNames"`
+	LongN       int      `json:"longN"`  // cross-sections where the long side had ≥ 5 scored names
+	ShortN      int      `json:"shortN"` // same for the short side
+	LongIC      *float64 `json:"longIC"` // nil = no observations (never a measured 0)
+	LongT       *float64 `json:"longT"`  // nil when fewer than 2 observations
+	LongHit     *float64 `json:"longHit"`
+	ShortIC     *float64 `json:"shortIC"`
+	ShortT      *float64 `json:"shortT"`
+	ShortHit    *float64 `json:"shortHit"`
+	LongTopBps  *float64 `json:"longTopExcessBps"`  // top-quintile long mean return minus pool mean (gross)
+	LongTopNet  *float64 `json:"longTopNetBps"`     // top-quintile long absolute return minus fees+spread (includes pool drift)
+	ShortTopBps *float64 `json:"shortTopExcessBps"` // top-quintile short: mean(−ret) minus pool mean(−ret)
+	ShortTopNet *float64 `json:"shortTopNetBps"`
+	FirstTs     int64    `json:"firstTs"`
+	LastTs      int64    `json:"lastTs"`
+	CumLongIC   []Point  `json:"cumLongIC"`
+	Verdict     string   `json:"verdict"`
 }
 
 type Point struct {
@@ -130,18 +132,25 @@ func Evaluate(rows []store.ScoreRow, h int, price func(string, int64) (float64, 
 		sort.Ints(names)
 		st.MedianNames = names[len(names)/2]
 	}
+	st.LongN, st.ShortN = len(lic), len(sic)
 	st.LongIC, st.LongT, st.LongHit = meanT(lic)
 	st.ShortIC, st.ShortT, st.ShortHit = meanT(sic)
 	st.LongTopBps, _, _ = meanT(ltop)
 	st.LongTopNet, _, _ = meanT(lnet)
 	st.ShortTopBps, _, _ = meanT(stop)
 	st.ShortTopNet, _, _ = meanT(snet)
+	v := func(p *float64) float64 { // decisions below treat "no observation" as not significant
+		if p == nil {
+			return 0
+		}
+		return *p
+	}
 	switch {
 	case st.CrossSects < 30:
 		st.Verdict = "样本不足"
-	case (st.LongT > 2 && st.LongTopNet > 0) || (st.ShortT > 2 && st.ShortTopNet > 0):
+	case (v(st.LongT) > 2 && v(st.LongTopNet) > 0) || (v(st.ShortT) > 2 && v(st.ShortTopNet) > 0):
 		st.Verdict = "有初步证据（仍需更长样本）"
-	case st.LongT < -2 || st.ShortT < -2:
+	case v(st.LongT) < -2 || v(st.ShortT) < -2:
 		st.Verdict = "方向相反（显著为负）"
 	default:
 		st.Verdict = "无显著证据"
@@ -149,28 +158,32 @@ func Evaluate(rows []store.ScoreRow, h int, price func(string, int64) (float64, 
 	return st
 }
 
-func meanT(x []float64) (m, t, hit float64) {
+// meanT returns the mean, t-stat and share of positive values; nil when there is nothing to
+// measure (t needs at least 2 observations and a non-zero spread).
+func meanT(x []float64) (m, t, hit *float64) {
 	if len(x) == 0 {
-		return 0, 0, 0
+		return nil, nil, nil
 	}
+	var mean, h float64
 	for _, v := range x {
-		m += v
+		mean += v
 		if v > 0 {
-			hit++
+			h++
 		}
 	}
-	m /= float64(len(x))
-	hit /= float64(len(x))
+	mean /= float64(len(x))
+	h /= float64(len(x))
+	m, hit = &mean, &h
 	if len(x) < 2 {
-		return m, 0, hit
+		return
 	}
 	s := 0.0
 	for _, v := range x {
-		s += (v - m) * (v - m)
+		s += (v - mean) * (v - mean)
 	}
-	sd := math.Sqrt(s / float64(len(x)-1))
-	if sd > 0 {
-		t = m / (sd / math.Sqrt(float64(len(x))))
+	if sd := math.Sqrt(s / float64(len(x)-1)); sd > 0 {
+		tv := mean / (sd / math.Sqrt(float64(len(x))))
+		t = &tv
 	}
 	return
 }

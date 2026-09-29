@@ -2,6 +2,7 @@ package devapi
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/store"
 )
 
@@ -290,5 +292,21 @@ func TestOpenAPI(t *testing.T) {
 	}
 	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Error("CORS header missing")
+	}
+}
+
+// Truncating a normalized series must renormalize to the first returned bar.
+func TestRebaseAfterTail(t *testing.T) {
+	pts := []market.ComparePoint{
+		{T: 1, V: map[string]float64{"A": 100, "B": 100}},
+		{T: 2, V: map[string]float64{"A": 110, "B": 95}},
+		{T: 3, V: map[string]float64{"A": 121, "B": 90.25}},
+	}
+	got := rebase(tail(pts, 2))
+	if len(got) != 2 || got[0].T != 2 || got[0].V["A"] != 100 || got[0].V["B"] != 100 || math.Abs(got[1].V["A"]-110) > 1e-9 || math.Abs(got[1].V["B"]-95) > 1e-9 {
+		t.Fatalf("rebase: %+v", got)
+	}
+	if pts[1].V["A"] != 110 {
+		t.Fatal("input mutated")
 	}
 }
