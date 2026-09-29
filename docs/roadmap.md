@@ -9,7 +9,7 @@ Planned work lives in GitHub issues, tracked by the pinned **[Roadmap issue #6](
 | P1 | [#1 Authentication and access control](https://github.com/genguzzz/crypto-trader-go/issues/1) | needs design |
 | P1 | [#2 Monitoring: complete alert conditions, delivery and noise control](https://github.com/genguzzz/crypto-trader-go/issues/2) | needs design |
 | P2 | [#3 Strategy system with backtesting and paper trading](https://github.com/genguzzz/crypto-trader-go/issues/3) | needs design |
-| P2 | [#4 Agent access: documented API and MCP server](https://github.com/genguzzz/crypto-trader-go/issues/4) | blocked by #1 |
+| P2 | [#4 Agent access: documented API and MCP server](https://github.com/genguzzz/crypto-trader-go/issues/4) | shipped (key-authenticated); owner UI login still depends on #1 |
 | P3 | [#5 Internationalization: English and Chinese UI](https://github.com/genguzzz/crypto-trader-go/issues/5) | ready |
 
 The backlog of smaller, not yet filed items is listed in the Roadmap issue. Issue labels are the source of truth for status.
@@ -37,6 +37,7 @@ The backlog of smaller, not yet filed items is listed in the Roadmap issue. Issu
 | 2026-09-28 | Liquidations: OKX public liquidation orders recorded per minute for the order-flow set (30 days); K-line liquidation band, liquidation panel, estimated liquidation map overlay (hourly OI increments over 5–100x leverage tiers). Paid heatmap APIs and the throttled WS channel were rejected |
 | 2026-09-29 | Scanner list: sort-direction toggle; funding column moved forward on PC and shown on phone cards (graded colors); open-interest bar as the row background (log-logistic scale, configurable half point) |
 | 2026-09-29 | English documentation, contribution conventions, worktree + pull request workflow, issue-based roadmap |
+| 2026-09-29 | Agent access: API keys and short-lived tokens (hashed, shown once), per-key token-bucket limits with endpoint costs and a server-wide ceiling, read-only REST API (`/api/open/v1`, OpenAPI document) and MCP server (`/mcp`) from one endpoint registry; Dev tab (keys, docs, tester, request log) and Settings → Developer switches |
 
 ## Rules
 

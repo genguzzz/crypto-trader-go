@@ -78,6 +78,19 @@ export interface AlertChannels {
 /** delivery: channel → "ok" | "pending" | "失败：…" */
 export interface AlertEvent { id: number; ts: number; ruleId: number; ruleName: string; instId: string; type: AlertType; value: number; message: string; delivery: Record<string, string> | null }
 
+/** External access (Dev tab): keys are listed without secrets; the secret is returned once by createKey. */
+export type KeyKind = 'key' | 'token'
+export interface ApiKey {
+  id: number; kind: KeyKind; name: string; prefix: string; ratePerMin: number; burst: number
+  createdAt: number; expiresAt: number; revokedAt: number; lastUsedAt: number; requests: number; limited: number
+  status: 'active' | 'expired' | 'revoked'; remaining: number
+}
+export interface DevConfig { enabled: boolean; globalPerMin: number }
+export interface DevParam { name: string; in: 'query' | 'path'; type: 'string' | 'integer' | 'boolean'; desc: string; required?: boolean; enum?: string[]; default?: any; min?: number; max?: number }
+export interface DevEndpoint { name: string; path: string; summary: string; desc: string; params: DevParam[] | null; cost: string }
+export interface DevEndpoints { restBase: string; mcpPath: string; endpoints: DevEndpoint[]; limits: { defaultRatePerMin: number; maxRatePerMin: number; maxBurst: number } }
+export interface DevLog { ts: number; keyId: number; keyName: string; prefix: string; via: 'rest' | 'mcp'; endpoint: string; status: number; ms: number; cost: number; error?: string }
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, init)
   const body = await r.json().catch(() => ({}))
@@ -120,5 +133,15 @@ export const api = {
   saveAlertChannels: (c: AlertChannels) => req<AlertChannels>('/api/v1/alerts/channels', { method: 'PUT', body: JSON.stringify(c), headers: { 'Content-Type': 'application/json' } }),
   clearAlertChannel: (ch: 'telegram' | 'webhook') => req<AlertChannels>(`/api/v1/alerts/channels/${ch}`, { method: 'DELETE' }),
   testAlertChannel: (ch: 'telegram' | 'webhook') => req<{ ok: boolean; error?: string }>(`/api/v1/alerts/channels/${ch}/test`, { method: 'POST' }),
+  devConfig: () => req<DevConfig>('/api/v1/dev/config'),
+  saveDevConfig: (c: DevConfig) => req<DevConfig>('/api/v1/dev/config', { method: 'PUT', body: JSON.stringify(c), headers: { 'Content-Type': 'application/json' } }),
+  devKeys: () => req<ApiKey[]>('/api/v1/dev/keys'),
+  createKey: (x: { kind: KeyKind; name: string; ratePerMin: number; burst: number; ttlHours: number }) =>
+    req<ApiKey & { secret: string }>('/api/v1/dev/keys', { method: 'POST', body: JSON.stringify(x), headers: { 'Content-Type': 'application/json' } }),
+  updateKey: (id: number, x: { name?: string; ratePerMin?: number; burst?: number; revoke?: boolean }) =>
+    req<ApiKey>(`/api/v1/dev/keys/${id}`, { method: 'PATCH', body: JSON.stringify(x), headers: { 'Content-Type': 'application/json' } }),
+  deleteKey: (id: number) => req<{ ok: boolean }>(`/api/v1/dev/keys/${id}`, { method: 'DELETE' }),
+  devEndpoints: () => req<DevEndpoints>('/api/v1/dev/endpoints'),
+  devLog: () => req<DevLog[]>('/api/v1/dev/log'),
   alertHistory: (limit = 100) => req<AlertEvent[]>(`/api/v1/alerts/history?limit=${limit}`),
 }

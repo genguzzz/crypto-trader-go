@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
-import { Radar, FlaskConical, Database, Monitor, Undo2 } from 'lucide-vue-next'
-import { api, type Settings, type Storage } from '../api'
+import { Radar, FlaskConical, Database, Monitor, Undo2, Code2 } from 'lucide-vue-next'
+import { api, type DevConfig, type Settings, type Storage } from '../api'
 import { store, refreshMeta, followDefaultRule, ruleOptions } from '../store'
 import { usd, catLabel, tzOptions, tzSetting, oiHalf, setOiHalf, oiFrac } from '../fmt'
 import ChipGroup from '../components/ui/ChipGroup.vue'
@@ -12,6 +12,8 @@ import Modal from '../components/Modal.vue'
 import SettingsSection from '../components/settings/SettingsSection.vue'
 import SettingRow from '../components/settings/SettingRow.vue'
 import { bytes } from '../components/status/storage'
+import Switch from '../components/ui/Switch.vue'
+import { devTab, setDevTab } from '../composables/devtab'
 
 const clone = (x: Settings): Settings => JSON.parse(JSON.stringify(x))
 // Render immediately from settings already loaded with /meta; refresh in the background.
@@ -28,6 +30,7 @@ onMounted(async () => {
   if (!s.value) { saved.value = await api.settings(); s.value = clone(saved.value) }
   api.turnovers().then(x => (all.value = x.rows)) // compact (~10 KB) list for the live estimate
   api.storage().then(x => (storage.value = x)).catch(() => {})
+  api.devConfig().then(x => { dev.value = x; globalRate.value = x.globalPerMin }).catch(() => {})
   const id = route.hash.slice(1)
   if (id) nextTick(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }))
 })
@@ -101,6 +104,26 @@ function setTz(v: string) {
 // scanner OI bar: the OI (万 USD) that fills half a row; applies live
 const oiHalfWan = computed({ get: () => Math.round(oiHalf.value / 1e4), set: (v: number) => setOiHalf(v * 1e4) })
 const oiSamples = [5e5, 5e6, 5e7, 5e8, 5e9]
+
+// ---- developer: external API (server, applies immediately) ----
+const dev = ref<DevConfig | null>(null)
+const globalRate = ref(0)
+const devMsg = ref('')
+const devErr = computed(() => (!Number.isInteger(globalRate.value) || globalRate.value < 10 || globalRate.value > 60000 ? '请输入 10–60000 的整数' : ''))
+async function saveDev(patch: Partial<DevConfig>) {
+  if (!dev.value) return
+  try {
+    dev.value = await api.saveDevConfig({ ...dev.value, ...patch })
+    globalRate.value = dev.value.globalPerMin
+    devMsg.value = ''
+  } catch (e: any) {
+    devMsg.value = '保存失败：' + e.message
+  }
+}
+function setGlobalRate(v: number) {
+  globalRate.value = v
+  if (!devErr.value && dev.value && v !== dev.value.globalPerMin) saveDev({ globalPerMin: v })
+}
 
 function revert() { if (saved.value) s.value = clone(saved.value); msg.value = null }
 async function save() {
@@ -228,6 +251,29 @@ onBeforeRouteLeave(() => !nChanged.value || window.confirm('有未保存的设�
         </div>
         <div class="oi-demo">
           <div v-for="v in oiSamples" :key="v" class="oi-b"><span class="oi-f" :style="{ width: oiFrac(v) * 100 + '%' }"></span><span class="tnum">{{ usd(v) }}</span><span class="muted tnum">{{ Math.round(oiFrac(v) * 100) }}%</span></div>
+        </div>
+      </SettingRow>
+    </SettingsSection>
+
+    <!-- 开发者 -->
+    <SettingsSection id="dev" title="开发者" :icon="Code2">
+      <template #tip>
+        给外部 Agent 的只读数据接口：REST（<code>/api/open/v1</code>）与 MCP 服务（<code>/mcp</code>），用 API Key / Token 认证、按凭证限流。凭证在 Dev 标签里创建和管理。<br />
+        <b>全服务器上限</b>：所有凭证加起来每分钟最多调用多少次（令牌桶，突发 = 1/6），用来保护行情记录不被外部查询拖慢；单个凭证的频率在创建时设置。<br />
+        开关与上限改完立即生效。“显示 Dev 标签”只影响本浏览器。
+      </template>
+      <template #aside><RouterLink to="/dev">管理凭证 →</RouterLink></template>
+      <SettingRow label="显示 Dev 标签" desc="导航栏里的 Dev 页：凭证、接口文档、试用与调用记录（仅本浏览器）">
+        <Switch :model-value="devTab" aria-label="显示 Dev 标签" @update:model-value="setDevTab" />
+      </SettingRow>
+      <SettingRow label="开放外部 API 与 MCP" desc="关闭后所有凭证的调用返回 503，凭证本身保留">
+        <Switch v-if="dev" :model-value="dev.enabled" aria-label="开放外部 API" @update:model-value="v => saveDev({ enabled: v })" />
+        <span v-else class="muted">—</span>
+      </SettingRow>
+      <SettingRow label="全服务器频率上限" desc="所有凭证合计，次/分钟" for-id="f-gr" :error="devErr || devMsg">
+        <div v-if="dev" class="ctl-line">
+          <Segmented :model-value="globalRate" size="sm" aria-label="全局上限预设" :options="[300, 600, 1200, 3000].map(v => ({ value: v, label: String(v) }))" @update:model-value="setGlobalRate" />
+          <span class="unit-in"><input id="f-gr" type="number" min="10" max="60000" step="100" :value="globalRate" @change="e => setGlobalRate(Number((e.target as HTMLInputElement).value))" /><span>次/分</span></span>
         </div>
       </SettingRow>
     </SettingsSection>

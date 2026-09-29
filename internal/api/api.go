@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"crypto-trader-go/internal/alerts"
+	"crypto-trader-go/internal/devapi"
 	"crypto-trader-go/internal/features"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/rules"
@@ -23,6 +24,7 @@ type Server struct {
 	Web    fs.FS           // built SPA (index.html + assets)
 	Icons  http.Handler    // coin icon proxy (optional)
 	Alerts *alerts.Service // monitoring rules + delivery (optional)
+	Dev    *devapi.Service // external API keys, open REST API and MCP server (optional)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -98,6 +100,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/stream", s.stream)
 	if s.Alerts != nil {
 		s.alertRoutes(mux)
+	}
+	if s.Dev != nil {
+		s.Dev.Mount(mux, s.E, s.Alerts)
 	}
 	if s.Icons != nil {
 		mux.Handle("GET /api/v1/icons/{ccy}", s.Icons)

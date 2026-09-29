@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Radar, FlaskConical, BellRing, Wallet, SlidersHorizontal, Activity } from 'lucide-vue-next'
+import { Radar, FlaskConical, BellRing, Wallet, SlidersHorizontal, Activity, Code2 } from 'lucide-vue-next'
 import { store } from './store'
 import LayoutMenu from './components/LayoutMenu.vue'
 import CoinIcon from './components/CoinIcon.vue'
 import { useDesktop } from './composables/device'
+import { devTab } from './composables/devtab'
 import { time, clock, usd, price, logPct } from './fmt'
 
 const desktop = useDesktop()
@@ -14,14 +15,15 @@ const phase = computed(() => {
   return p === 'live' ? { t: '实时', c: 'ok' } : p === 'backfill-1m' ? { t: '回填中', c: 'warn' } : p === 'bootstrap-5m' ? { t: '快速建池', c: 'warn' } : { t: '启动中', c: 'warn' }
 })
 
-const nav = [
+const nav = computed(() => [
   { to: '/', label: '扫描', icon: Radar, exact: true },
   { to: '/rules', label: '规则与战绩', short: '规则', icon: FlaskConical },
   { to: '/alerts', label: '监控', icon: BellRing },
   { to: '/positions', label: '仓位', icon: Wallet },
+  ...(devTab.value ? [{ to: '/dev', label: 'Dev', icon: Code2 }] : []),
   { to: '/settings', label: '设置', icon: SlidersHorizontal },
   { to: '/status', label: '系统', icon: Activity },
-]
+])
 
 /** Market pulse: BTC / ETH live price + 24h change from the current snapshot. */
 const pulse = computed(() =>
@@ -80,7 +82,7 @@ const pulse = computed(() =>
   <main><RouterView /></main>
 
   <!-- mobile bottom tab bar -->
-  <nav class="tabbar" aria-label="主导航">
+  <nav class="tabbar" aria-label="主导航" :style="{ gridTemplateColumns: `repeat(${nav.length}, minmax(0, 1fr))` }">
     <RouterLink v-for="n in nav" :key="n.to" :to="n.to" class="tab" :class="{ exact: n.exact }">
       <component :is="n.icon" :size="20" /><span>{{ n.short || n.label }}</span>
     </RouterLink>
@@ -136,7 +138,7 @@ const pulse = computed(() =>
   .nav { display: none; }
   .word small { display: none; }
   .tabbar {
-    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: grid; position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); background: rgba(0, 0, 0, .94); backdrop-filter: blur(10px);
     border-top: 1px solid var(--line);
   }

@@ -94,6 +94,7 @@ internal/features/     fact panel
 internal/rules/        rules and scoring
 internal/track/        track-record statistics
 internal/alerts/       monitoring rules (types registered in conditions.go), delivery channels (masking/sending/retries), history
+internal/devapi/       external access: API keys / tokens, rate limits, endpoint registry → open REST API, OpenAPI document, MCP server
 internal/api/          HTTP routes, SSE, icon proxy, gzip
 web/                   frontend (src/views pages, src/components components, embed.go embeds the build)
 deploy/                docker-compose.yml (server runtime), deploy.sh (build/upload/swap/rollback)
@@ -106,6 +107,16 @@ docs/                  documentation
 `GET health|status|meta|settings|catalog|storage|orderflow|liquidations|liqmap|universe?scope=active|all|watch|instruments/{id}|candles|compare|series|rules|rules/{id}/track|icons/{ccy}.png|stream(SSE)`;
 `PUT settings|watchlist/{id}`, `POST rules`, `DELETE rules/{id}|watchlist/{id}`; `GET positions` always returns "not connected" (until I4).
 Monitoring: `GET|POST alerts/rules`, `PUT|DELETE alerts/rules/{id}`, `GET|PUT alerts/channels` (secrets are returned masked; empty/masked = unchanged), `DELETE alerts/channels/{telegram|webhook}`, `POST alerts/channels/{ch}/test`, `GET alerts/history?limit=`.
+
+Developer (owner UI, same access as the rest of `/api/v1`): `GET|PUT dev/config` (external API switch, server-wide limit), `GET|POST dev/keys`, `PATCH|DELETE dev/keys/{id}` (rename, limits, revoke), `GET dev/log` (last 200 external calls, memory only), `GET dev/endpoints` (registry for the Dev tab).
+
+### External access for agents (`internal/devapi`)
+
+- **Credentials**: API keys (`ctg_sk_…`, optional expiry) and tokens (`ctg_at_…`, 1 h–30 d). Only the SHA-256 hash is stored (`api_keys` table); the secret is returned once on creation. Sent as `Authorization: Bearer <key>` or `X-API-Key`.
+- **Rate limits**: one token bucket per key (capacity = burst, refilled at the per-minute rate) plus a server-wide bucket (`GlobalPerMin`, burst 1/6 of it) that protects the recorder. Each endpoint has a cost (1 by default; order book 3, footprint levels 3, instrument / liquidation map / spot candles / `scope=all` 2, usage 0). Responses carry `X-RateLimit-Limit|Burst|Remaining|Reset|Cost`; 429 adds `Retry-After` and `retryAfterMs`. Usage counters are flushed to SQLite every 30 s.
+- **One registry, three surfaces** (`endpoints.go`): each read-only query is served as `GET /api/open/v1/<path>`, documented in `GET /api/open/v1/openapi.json` (no key needed) and exposed as an MCP tool at `POST /mcp` (streamable HTTP, stateless, JSON responses, protocol 2025-06-18 / 2025-03-26 / 2024-11-05; rate-limit errors come back as `isError` tool results). CORS is open because authentication uses headers only.
+- **Exposed**: data freshness (phase, last minute, coverage, stream connectivity, job progress), field definitions, pool snapshot (filter/sort/limit, one rule's scores by default), catalog search, instrument detail, candles (swap/spot), comparison with BTC/ETH, OI / funding series, order book (depth-limited), order flow, liquidations, estimated liquidation map, rules, track records, fired alert events (without delivery details). **Not exposed**: settings, alert channels, storage/memory/database internals, anything that writes.
+- The Settings page switch disables all external calls (503) without deleting keys; the Dev tab (shown by default, per-browser toggle in Settings) manages keys and has a request tester.
 
 ## 7. Deployment
 
