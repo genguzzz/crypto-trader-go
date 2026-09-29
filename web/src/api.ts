@@ -36,7 +36,7 @@ export interface SeriesPoint { t: number; v: number; u?: number }
 /** Liquidations per bar (USDT): long = long positions liquidated (forced sells). */
 export interface LiqBar { t: number; long: number; short: number; nl: number; ns: number }
 export interface LiqEvent { t: number; long: boolean; px: number; usd: number }
-export interface Liquidations { bars: LiqBar[]; since: number; recent?: LiqEvent[]; err?: string }
+export interface Liquidations { bars: LiqBar[]; since: number; recent?: LiqEvent[]; err?: string; syncing?: boolean }
 /** Estimated liquidation map: USDT per price bin (p = bin low). */
 export interface LiqMap { px: number; step: number; from: number; days: number; lever: number; levers: number[]; bins: { p: number; long: number; short: number }[] }
 export interface OrderFlow { bars: FlowBar[] | null; recording: boolean; since: number }

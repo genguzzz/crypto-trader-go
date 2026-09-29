@@ -31,7 +31,8 @@ const (
 	liqKeep       = 30 * 24 * time.Hour
 	liqPages      = 30 // × 100 orders; OKX keeps ~24h (≈2–3k orders for BTC on a normal day)
 	liqFresh      = 20 * time.Second
-	liqMMR        = 0.005 // maintenance margin rate assumed by the map
+	liqWait       = 500 * time.Millisecond // longest a query waits for a sync before serving stored data
+	liqMMR        = 0.005                  // maintenance margin rate assumed by the map
 	liqMapMaxDays = 30
 )
 
@@ -204,6 +205,8 @@ type LiqResp struct {
 	Since  int64      `json:"since"`  // earliest covered time: bars before it are unknown, not zero
 	Recent []LiqEvent `json:"recent"` // newest first
 	Err    string     `json:"err,omitempty"`
+	// Syncing: a fetch from OKX is still running, so Bars may lack the newest (or, on first open, all) orders.
+	Syncing bool `json:"syncing,omitempty"`
 }
 
 // Liquidations returns liquidation totals per bar (UTC-aligned like candles) plus recent orders.
@@ -216,11 +219,24 @@ func (e *Engine) Liquidations(ctx context.Context, id, bar string, limit, recent
 		return LiqResp{}, fmt.Errorf("unknown instrument")
 	}
 	var resp LiqResp
-	c, cancel := context.WithTimeout(ctx, 10*time.Second)
-	if err := e.syncLiq(c, id); err != nil {
-		resp.Err = err.Error() // serve what is stored
+	// Sync in the background and wait only briefly: a cold instrument pages through up to liqPages
+	// REST calls (seconds), which used to hold up the whole chart. Stored orders are served at once;
+	// the chart's periodic refresh picks up the rest.
+	done := make(chan error, 1)
+	go func() {
+		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		done <- e.syncLiq(c, id)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			resp.Err = err.Error() // serve what is stored
+		}
+	case <-time.After(liqWait):
+		resp.Syncing = true
+	case <-ctx.Done():
 	}
-	cancel()
 	limit = max(10, min(limit, 3000))
 	now := time.Now().UnixMilli()
 	from := now/step*step - int64(limit-1)*step
