@@ -37,8 +37,9 @@ export interface SeriesPoint { t: number; v: number; u?: number }
 export interface LiqBar { t: number; long: number; short: number; nl: number; ns: number }
 export interface LiqEvent { t: number; long: boolean; px: number; usd: number }
 export interface Liquidations { bars: LiqBar[]; since: number; recent?: LiqEvent[]; err?: string; syncing?: boolean }
-/** Estimated liquidation map: USDT per price bin (p = bin low). */
-export interface LiqMap { px: number; step: number; from: number; days: number; lever: number; levers: number[]; bins: { p: number; long: number; short: number }[] }
+/** Estimated liquidation map: USDT per price bin (p = bin low); longBy / shortBy split it by tier in the order of `levers`. */
+export interface LiqBin { p: number; long: number; short: number; longBy: number[]; shortBy: number[] }
+export interface LiqMap { px: number; step: number; from: number; days: number; lever: number; levers: number[]; weights: number[]; fine: number; at: number; bins: LiqBin[] }
 export interface OrderFlow { bars: FlowBar[] | null; recording: boolean; since: number }
 export interface Coin { id: string; symbol: string; name: string; rank: number; marketCap: number; fdv: number; circulating: number; total: number; max: number; updatedAt: string; fetchedAt: number }
 export interface TableUsage { name: string; table: string; bytes: number; budget: number; ages: string[]; tight: boolean }

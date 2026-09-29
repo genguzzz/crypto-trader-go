@@ -72,7 +72,7 @@ onMounted(() => {
   sS = chart.addSeries(HistogramSeries, { ...o, color: alpha('up', 0.8) })
   sL = chart.addSeries(HistogramSeries, { ...o, color: alpha('down', 0.8) })
   load(true)
-  timer = window.setInterval(() => { if (!document.hidden) load() }, 30_000)
+  timer = window.setInterval(() => { if (!document.hidden) load() }, 10_000)
 })
 onUnmounted(() => { clearInterval(timer); chart?.remove() })
 watch(period, v => { localStorage.setItem('ctg.liqPeriod', v); load(true) })
@@ -85,7 +85,7 @@ watch(() => props.id, () => load(true))
       <span>强平 <InfoTip>
         <b>数据</b>：OKX 公共接口的逐笔强平单（liquidation-orders，已成交，不需要账户），金额 = 破产价 × 张数 × 面值（USDT）。<br />
         <b>多 / 空</b>：多 = 多单被强平（强制卖出，图中红柱向下），空 = 空单被强平（强制买入，绿柱向上）。<br />
-        <b>覆盖</b>：OKX 只提供最近约 24 小时；活跃池、自选、最近查看的合约每分钟同步一次，本机保留 30 天。没有记录的时段不画柱；统计窗口早于记录起点时标“不完整”。<br />
+        <b>覆盖</b>：OKX 只提供最近约 24 小时；活跃池、自选、最近查看的合约每分钟同步一次，打开详情页时每 10 秒同步并刷新，本机保留 30 天。没有记录的时段不画柱；统计窗口早于记录起点时标“不完整”。<br />
         <b>最新强平</b>：最近 20 笔，金额在其中前 10% 的加粗。
       </InfoTip></span>
       <Segmented v-model="period" size="sm" aria-label="强平周期" :options="[{ value: '15m', label: '15m' }, { value: '1H', label: '1H' }, { value: '4H', label: '4H' }]" />

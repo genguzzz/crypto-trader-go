@@ -38,6 +38,7 @@ The backlog of smaller, not yet filed items is listed in the Roadmap issue. Issu
 | 2026-09-29 | Scanner list: sort-direction toggle; funding column moved forward on PC and shown on phone cards (graded colors); open-interest bar as the row background (log-logistic scale, configurable half point) |
 | 2026-09-29 | English documentation, contribution conventions, worktree + pull request workflow, issue-based roadmap |
 | 2026-09-29 | Agent access: API keys and short-lived tokens (hashed, shown once), per-key token-bucket limits with endpoint costs and a server-wide ceiling, read-only REST API (`/api/open/v1`, OpenAPI document) and MCP server (`/mcp`) from one endpoint registry; Dev tab (keys, docs, tester, request log) and Settings → Developer switches |
+| 2026-09-29 | Liquidation map closer to CoinGlass: 5m steps with per-minute OI (hourly only where data is broken), bars stacked by leverage tier (ordinal red/green ramps) with tier filter and 1/7-day look-back, per-tier crosshair readout; map and liquidation bars refresh every 10 s on an open detail page |
 
 ## Rules
 
