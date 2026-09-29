@@ -135,14 +135,20 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			Desc: "Every fact-panel field (key, label, unit, formula) used in universe rows, percentiles and rule weights, plus the category codes.",
 			run: func(ctx context.Context, a Args) (any, error) {
 				return map[string]any{"fields": features.Fields, "categories": map[string]string{"1": "crypto", "3": "stock/ETF", "4": "commodity"},
-					"units": map[string]string{"log": "natural-log return (0.01 ≈ +1%)", "z": "z-score", "bps": "basis points", "rate/h": "funding rate per hour (0.0001 = 0.01%/h)", "x": "multiple (ratio)"}}, nil
+					"units": map[string]string{
+						"log":    "natural log (of a price, OI or turnover ratio). Simple change = exp(v) − 1: 0.01 → +1.01%, 0.10 → +10.5%, −0.10 → −9.5%; v × 100 is only an approximation for small values. vol_surprise_4h: multiple of the 7-day median = exp(v) (0.69 → ×2.0)",
+						"z":      "z-score (standard deviations)",
+						"bps":    "basis points (1 bp = 0.01%)",
+						"rate/h": "funding rate per hour, normalized from 4h/8h settlements (0.0001 = 0.01%/h)",
+						"x":      "ratio or multiple as stated in the field description"}}, nil
 			},
 		},
 		{
 			Name: "get_universe", Path: "universe", Summary: "Monitoring pool snapshot: fact panel, percentiles and rule scores",
 			Desc: "The latest per-minute snapshot. Each row has 12h USDT turnover and rank, the fact panel (values), percentiles within the active pool (pct, 0-100) " +
 				"and user-rule scores (long/short 0-100, unvalidated; missing inputs = unscored, never 0). Also lists contracts recently removed from the pool with the reason. " +
-				"Pool = 12h turnover over 720 confirmed 1m candles strictly above the threshold, top N.",
+				"Pool = 12h turnover over 720 confirmed 1m candles strictly above the threshold, top N. Rows are ordered by 12h turnover unless sort is given, so the default is a liquidity list, not a candidate list. " +
+				"log-unit values are natural logs (see list_fields). validation summarises the rule's track record; scores alone are not trade recommendations.",
 			Params: []Param{
 				{Name: "scope", In: "query", Type: "string", Enum: []string{"active", "watch", "all"}, Default: "active", Desc: "active = pool + watchlist, watch = watchlist only, all = whole recording universe"},
 				{Name: "rule", In: "query", Type: "string", Desc: "rule id whose scores to include (default: the server's default rule; '*' = all rules; see list_rules)"},
@@ -219,21 +225,43 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 		},
 		{
 			Name: "compare_with_majors", Path: "compare", Summary: "Relative performance vs BTC and ETH",
-			Desc:   "Closes of the instrument, BTC-USDT-SWAP and ETH-USDT-SWAP normalized to 100 at the first common bar.",
+			Desc: "Closes of the instrument, BTC-USDT-SWAP and ETH-USDT-SWAP normalized to 100 at baseTs, the first returned bar (the last bar may be forming). " +
+				"Values are simple price ratios: 101.5 = +1.5% since baseTs.",
 			Params: []Param{instParam("query"), barParam("15m"), limitParam(200, 3000, "number of bars")},
 			run: func(ctx context.Context, a Args) (any, error) {
 				pts, ids, err := e.Compare(a.Str("instId"), a.Str("bar"), a.Int("limit"))
-				return map[string]any{"ids": ids, "points": tail(pts, a.Int("limit"))}, err
+				if err != nil {
+					return nil, err
+				}
+				pts = rebase(tail(pts, a.Int("limit")))
+				var base int64
+				if len(pts) > 0 {
+					base = pts[0].T
+				}
+				return map[string]any{"ids": ids, "baseTs": base, "points": pts}, nil
 			},
 		},
 		{
 			Name: "get_series", Path: "series", Summary: "Recorded open interest or settled funding history",
-			Desc: "field=oi: recorded open-interest samples (v = coins, u = USD). field=funding: settled funding rates per funding time (v = rate per interval, not per hour).",
+			Desc: "field=oi: recorded open-interest samples (v = coins, u = USD). field=funding: settled funding rates at each funding time (v = rate per settlement interval, not per hour; intervals are 4h or 8h). " +
+				"Both return only points with t within the last `hours` hours.",
 			Params: []Param{instParam("query"),
 				{Name: "field", In: "query", Type: "string", Enum: []string{"oi", "funding"}, Required: true, Desc: "oi or funding"},
 				{Name: "hours", In: "query", Type: "integer", Default: 24, Min: 1, Max: 720, Desc: "look-back in hours"}},
 			run: func(ctx context.Context, a Args) (any, error) {
-				return e.Series(a.Str("instId"), a.Str("field"), a.Int("hours"))
+				pts, err := e.Series(a.Str("instId"), a.Str("field"), a.Int("hours"))
+				if err != nil {
+					return nil, err
+				}
+				// the engine pads funding by 7 days for the UI chart; the API honours the requested window
+				from := time.Now().UnixMilli() - int64(a.Int("hours"))*3_600_000
+				out := make([]market.SeriesPoint, 0, len(pts))
+				for _, p := range pts {
+					if p.T >= from {
+						out = append(out, p)
+					}
+				}
+				return out, nil
 			},
 		},
 		{
@@ -253,8 +281,9 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 		},
 		{
 			Name: "get_orderflow", Path: "orderflow", Summary: "Taker buy/sell volume per bar (delta), optional footprint",
-			Desc: "Per bar: buy / sell = taker buy and sell USDT, n = trade count, src = trades (recorded here) or rubik (OKX history, no footprint). " +
-				"levels=true adds the footprint [price, buy, sell] with a shared price step.",
+			Desc: "Per bar: buy / sell = taker buy and sell USDT, n = trade count, src = trades (recorded here from the public trade stream) or rubik (OKX taker-volume history for 5m+ bars, no footprint). " +
+				"Bars without full coverage are omitted: a missing bar is unknown, not zero. since = earliest locally recorded trade minute in range (older bars can only come from rubik). " +
+				"The newest bar may be the forming one and can change. levels=true adds the footprint [price, buy, sell] with a shared price step.",
 			Params: []Param{instParam("query"), barParam("15m"), limitParam(200, 1000, "number of bars"),
 				{Name: "levels", In: "query", Type: "boolean", Default: false, Desc: "include per-price footprint levels (large)"}},
 			CostTxt: "1; levels=true costs 3",
@@ -272,7 +301,8 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 		},
 		{
 			Name: "get_liquidations", Path: "liquidations", Summary: "Liquidations per bar and recent liquidation orders",
-			Desc: "Per bar: long / short = USDT of long / short positions liquidated, nl / ns = counts. since = earliest covered time (earlier bars are unknown, not zero). recent = newest liquidation orders.",
+			Desc: "Per bar: long / short = USDT of long / short positions liquidated, nl / ns = counts. Only bars with liquidations are listed: a bar missing at or after since means zero, " +
+				"before since means unknown (not recorded). err is set when the latest sync with OKX failed and stored data was served. recent = newest liquidation orders.",
 			Params: []Param{instParam("query"), barParam("1H"), limitParam(200, 1000, "number of bars"),
 				{Name: "recent", In: "query", Type: "integer", Default: 20, Min: 0, Max: 500, Desc: "number of most recent liquidation orders"}},
 			run: func(ctx context.Context, a Args) (any, error) {
@@ -287,7 +317,17 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				"shrunk as OI falls and removed once price trades through. bins = [{p: bin low price, long, short}] in USDT.",
 			Params:  []Param{instParam("query"), {Name: "days", In: "query", Type: "integer", Default: 7, Min: 1, Max: 7, Desc: "look-back days"}},
 			CostTxt: "2", cost: func(Args) int { return 2 },
-			run: func(ctx context.Context, a Args) (any, error) { return e.LiqMap(ctx, a.Str("instId"), a.Int("days")) },
+			run: func(ctx context.Context, a Args) (any, error) {
+				m, err := e.LiqMap(ctx, a.Str("instId"), a.Int("days"))
+				if err != nil {
+					return nil, err
+				}
+				return struct {
+					Estimate bool   `json:"estimate"`
+					Basis    string `json:"basis"`
+					market.LiqMapResp
+				}{true, "model estimate from hourly open-interest increments and assumed leverage tiers (levers); not observed positions or exchange liquidation levels", m}, nil
+			},
 		},
 		{
 			Name: "list_rules", Path: "rules", Summary: "Scoring rules",
@@ -298,7 +338,11 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 		},
 		{
 			Name: "get_rule_track_record", Path: "rules/{ruleId}/track", Summary: "Out-of-sample track record of a rule",
-			Desc:   "Rank IC between score rank and forward return rank within the pool (per horizon), t-stat, hit rate, top-quintile excess and net-of-cost returns, for live snapshots and the 14-day replay.",
+			Desc: "Per horizon, for live snapshots (out-of-sample) and the 14-day replay (recomputed over recent history, which may overlap the period the rule was designed on): " +
+				"Spearman Rank IC between score and forward log return within the pool, its t-stat and hit rate over non-overlapping cross-sections; " +
+				"topExcessBps = top-quintile mean forward return minus the pool mean (gross, relative skill); " +
+				"topNetBps = top-quintile absolute forward return minus 10 bps round-trip taker fees and the spread (replay assumes 2 bps), so it includes the pool's overall drift. " +
+				"Short side uses −return. Metrics are null when not measured. A verdict needs ≥ 30 cross-sections; no rule is validated by default.",
 			Params: []Param{{Name: "ruleId", In: "path", Type: "string", Required: true, Desc: "rule id from list_rules"}},
 			run: func(ctx context.Context, a Args) (any, error) {
 				rep, ok := e.Track(a.Str("ruleId"))
@@ -430,6 +474,51 @@ func universe(e *market.Engine, a Args) (any, error) {
 		"seq": snap.Seq, "asOfMinute": snap.AsOfMinute, "decisionTs": snap.DecisionTs, "computedAt": snap.ComputedAt,
 		"preview": snap.Preview, "previewAt": snap.PreviewAt, "provisional": snap.Provisional, "phase": snap.Phase,
 		"threshold": snap.Threshold, "topN": snap.TopN, "coverage": snap.Coverage, "rule": ruleID,
-		"total": total, "rows": rows, "removed": snap.Removed,
+		"total": total, "rows": rows, "removed": snap.Removed, "validation": validation(e, ruleID),
 	}, nil
+}
+
+// validation summarises the evidence behind the scores shown, so a score is never read without it.
+func validation(e *market.Engine, ruleID string) any {
+	if ruleID == "*" {
+		return map[string]string{"status": "unvalidated", "note": "scores rank instruments within the pool; see get_rule_track_record per rule"}
+	}
+	rep, ok := e.Track(ruleID)
+	if !ok {
+		return nil
+	}
+	type hz struct {
+		Kind      string `json:"kind"`
+		HorizonH  int    `json:"horizonH"`
+		CrossSect int    `json:"crossSections"`
+		Verdict   string `json:"verdict"`
+	}
+	var hs []hz
+	for _, x := range rep.Live {
+		hs = append(hs, hz{"live", x.HorizonH, x.CrossSects, x.Verdict})
+	}
+	for _, x := range rep.Replay {
+		hs = append(hs, hz{"replay", x.HorizonH, x.CrossSects, x.Verdict})
+	}
+	return map[string]any{"status": "unvalidated", "ruleId": rep.RuleID, "version": rep.Version, "horizons": hs,
+		"note": "scores are percentile ranks within the pool (50 = neutral), not probabilities or trade signals; they do not check order flow, the book or liquidity beyond the spread gate. See get_rule_track_record."}
+}
+
+// rebase renormalizes compare points to 100 at the first returned bar.
+func rebase(pts []market.ComparePoint) []market.ComparePoint {
+	if len(pts) == 0 {
+		return pts
+	}
+	b := pts[0].V
+	out := make([]market.ComparePoint, len(pts))
+	for i, p := range pts {
+		v := make(map[string]float64, len(p.V))
+		for k, x := range p.V {
+			if b[k] > 0 {
+				v[k] = x / b[k] * 100
+			}
+		}
+		out[i] = market.ComparePoint{T: p.T, V: v}
+	}
+	return out
 }

@@ -86,6 +86,7 @@ async function del() {
   }
 }
 const scorable = computed(() => (store.meta?.fields || []).filter(f => f.key !== 'turnover12h'))
+const sgn = (v: number | null) => (v == null ? '' : v > 0 ? 'up' : 'down')
 const verdictClass = (v: string) => (v.startsWith('有初步') ? 'good' : v.startsWith('方向相反') ? 'bad' : 'warn')
 const H = (h: number) => `${h}h`
 </script>
@@ -132,10 +133,10 @@ const H = (h: number) => `${h}h`
                 <tr v-for="s in (kind === 'replay' ? tr?.replay : tr?.live) || []" :key="s.horizonH" :class="{ empty: !s.crossSections }">
                   <td>{{ H(s.horizonH) }}</td>
                   <td class="num">{{ s.crossSections }}<span class="muted">×{{ s.medianNames }}</span></td>
-                  <td class="num" :class="s.longIC > 0 ? 'up' : 'down'">{{ num(s.longIC, 3) }} <span class="muted">({{ num(s.longT, 1) }})</span></td>
-                  <td class="num" :class="s.shortIC > 0 ? 'up' : 'down'">{{ num(s.shortIC, 3) }} <span class="muted">({{ num(s.shortT, 1) }})</span></td>
-                  <td class="num">{{ num(s.longTopExcessBps, 1) }} / <span :class="s.longTopNetBps > 0 ? 'up' : 'down'">{{ num(s.longTopNetBps, 1) }}</span> bps</td>
-                  <td class="num">{{ num(s.shortTopExcessBps, 1) }} / <span :class="s.shortTopNetBps > 0 ? 'up' : 'down'">{{ num(s.shortTopNetBps, 1) }}</span> bps</td>
+                  <td class="num" :class="sgn(s.longIC)">{{ num(s.longIC, 3) }} <span class="muted">({{ num(s.longT, 1) }})</span></td>
+                  <td class="num" :class="sgn(s.shortIC)">{{ num(s.shortIC, 3) }} <span class="muted">({{ num(s.shortT, 1) }})</span></td>
+                  <td class="num">{{ num(s.longTopExcessBps, 1) }} / <span :class="sgn(s.longTopNetBps)">{{ num(s.longTopNetBps, 1) }}</span> bps</td>
+                  <td class="num">{{ num(s.shortTopExcessBps, 1) }} / <span :class="sgn(s.shortTopNetBps)">{{ num(s.shortTopNetBps, 1) }}</span> bps</td>
                   <td><span class="tag" :class="verdictClass(s.verdict)">{{ s.verdict }}</span></td>
                 </tr>
               </tbody>
