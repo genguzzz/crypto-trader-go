@@ -109,6 +109,7 @@ async function load(mode: 'fit' | 'anchor' | 'keep' = 'keep') {
     cache.set(key, d)
     apply(d, hit ? 'keep' : mode, view)
     err.value = ''
+    if (d.lq?.syncing) setTimeout(() => my === seq && load(), 2000) // server is still fetching liquidations: pick them up shortly
   } catch (e: any) {
     if (my === seq) err.value = e.message
   } finally {
