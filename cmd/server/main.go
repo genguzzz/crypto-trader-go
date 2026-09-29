@@ -19,6 +19,7 @@ import (
 
 	"crypto-trader-go/internal/alerts"
 	"crypto-trader-go/internal/api"
+	"crypto-trader-go/internal/devapi"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/okx"
 	"crypto-trader-go/internal/refdata"
@@ -83,13 +84,18 @@ func main() {
 	}
 	eng.OnConfirmed(al.OnSnapshot)
 	go al.Run(ctx)
+	dev, err := devapi.New(st)
+	if err != nil {
+		log.Fatal(err)
+	}
+	go dev.Run(ctx)
 	var dist fs.FS
 	if *serveWeb {
 		if dist, err = fs.Sub(web.Dist, "dist"); err != nil {
 			log.Fatal(err)
 		}
 	}
-	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al,
+	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al, Dev: dev,
 		Icons: &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()}}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

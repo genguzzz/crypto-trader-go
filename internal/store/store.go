@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS alert_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts
 CREATE INDEX IF NOT EXISTS alert_events_ts ON alert_events(ts);
 CREATE TABLE IF NOT EXISTS liquidations(inst_id TEXT NOT NULL, ts INTEGER NOT NULL, long INTEGER NOT NULL, px REAL NOT NULL,
   sz REAL NOT NULL, usd REAL NOT NULL, PRIMARY KEY(inst_id, ts, long, px, sz)) WITHOUT ROWID;
-`
+` + apiKeySchema
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(10000)")

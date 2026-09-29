@@ -8,6 +8,7 @@ import Status from './views/Status.vue'
 import Alerts from './views/Alerts.vue'
 import Positions from './views/Positions.vue'
 import SettingsView from './views/Settings.vue'
+import Dev from './views/Dev.vue'
 import { startStream } from './store'
 import './style.css'
 import InfoTip from './components/InfoTip.vue'
@@ -25,6 +26,7 @@ const router = createRouter({
     { path: '/status', component: Status },
     { path: '/positions', component: Positions },
     { path: '/settings', component: SettingsView },
+    { path: '/dev', component: Dev },
   ],
   scrollBehavior: (_to, _from, saved) => saved || { top: 0 },
 })
