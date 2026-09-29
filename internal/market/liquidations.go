@@ -21,19 +21,25 @@ import (
 // an instrument opened on the detail page is synced on request. Stored raw, aggregated per bar on
 // query, kept liqKeep.
 //
-// Map (estimate, not exchange data): positions opened each hour (OI increase, both sides) are spread
-// over leverage tiers and placed at their approximate liquidation prices; OI decreases shrink every
-// open level proportionally; a level is removed once a later candle trades through it. What remains
-// is where the model expects liquidations to cluster if price moves there.
+// Map (estimate, not exchange data): positions opened in each step (OI increase, both sides) are
+// spread over leverage tiers and placed at their approximate liquidation prices; OI decreases
+// shrink every open level proportionally; a level is removed once a later candle trades through
+// it. Steps are 5m (5m candles + per-minute OI, including the forming bar and the latest OI
+// sample) wherever that data is unbroken, hourly before. Amounts are kept per tier so the chart
+// can color them by leverage. What remains is where the model expects liquidations to cluster if
+// price moves there. Same kind of model as CoinGlass's liquidation map; its leverage mix, inputs
+// (it aggregates exchanges and weighs in volume) and scale differ, so levels agree in shape and
+// position, not in amount.
 
 const (
 	liqEvery      = time.Minute
 	liqKeep       = 30 * 24 * time.Hour
-	liqPages      = 30 // × 100 orders; OKX keeps ~24h (≈2–3k orders for BTC on a normal day)
-	liqFresh      = 20 * time.Second
+	liqPages      = 30                     // × 100 orders; OKX keeps ~24h (≈2–3k orders for BTC on a normal day)
+	liqFresh      = 8 * time.Second        // an open chart polls every 10 s: each poll picks up new orders
 	liqWait       = 500 * time.Millisecond // longest a query waits for a sync before serving stored data
 	liqMMR        = 0.005                  // maintenance margin rate assumed by the map
 	liqMapMaxDays = 30
+	liqMapTTL     = 5 * time.Second // map recomputed at most this often per instrument and window
 )
 
 // Leverage tiers of the map model (weights renormalised over the tiers the contract allows).
@@ -283,24 +289,65 @@ func (e *Engine) Liquidations(ctx context.Context, id, bar string, limit, recent
 }
 
 type LiqBin struct {
-	P     float64 `json:"p"`     // bin low price
-	Long  float64 `json:"long"`  // USDT of long positions estimated to liquidate in this bin
-	Short float64 `json:"short"` // same, short positions
+	P       float64   `json:"p"`       // bin low price
+	Long    float64   `json:"long"`    // USDT of long positions estimated to liquidate in this bin
+	Short   float64   `json:"short"`   // same, short positions
+	LongBy  []float64 `json:"longBy"`  // Long split by leverage tier (same order as LiqMapResp.Levers)
+	ShortBy []float64 `json:"shortBy"` // Short split by leverage tier
 }
 
 type LiqMapResp struct {
-	Px     float64   `json:"px"`   // last price
-	Step   float64   `json:"step"` // bin size
-	From   int64     `json:"from"`
-	Days   int       `json:"days"`
-	Lever  float64   `json:"lever"`  // contract max leverage (tiers above it are dropped)
-	Levers []float64 `json:"levers"` // tiers used
-	Bins   []LiqBin  `json:"bins"`   // ascending by price, non-empty only
+	Px      float64   `json:"px"`   // last price
+	Step    float64   `json:"step"` // bin size
+	From    int64     `json:"from"`
+	Days    int       `json:"days"`
+	Lever   float64   `json:"lever"`   // contract max leverage (tiers above it are dropped)
+	Levers  []float64 `json:"levers"`  // tiers used
+	Weights []float64 `json:"weights"` // assumed share of new positions per tier (sums to 1)
+	// Fine: start of the part modelled on 5m candles and per-minute OI (0 = hourly only). Before
+	// it the model steps hourly, placing a whole hour's new positions at one price.
+	Fine int64    `json:"fine"`
+	At   int64    `json:"at"`   // computed at (ms)
+	Bins []LiqBin `json:"bins"` // ascending by price, non-empty only
 }
 
-// LiqMap estimates where open positions would be liquidated (see the header comment).
+var liqMapCache = struct {
+	sync.Mutex
+	m map[string]liqMapHit
+}{m: map[string]liqMapHit{}}
+
+type liqMapHit struct {
+	at   time.Time
+	resp LiqMapResp
+}
+
+// LiqMap estimates where open positions would be liquidated (see the header comment). Results
+// are cached for liqMapTTL so every open chart can poll it.
 func (e *Engine) LiqMap(ctx context.Context, id string, days int) (LiqMapResp, error) {
 	days = max(1, min(days, liqMapMaxDays))
+	key := fmt.Sprintf("%s|%d", id, days)
+	liqMapCache.Lock()
+	hit, ok := liqMapCache.m[key]
+	liqMapCache.Unlock()
+	if ok && time.Since(hit.at) < liqMapTTL {
+		return hit.resp, nil
+	}
+	resp, err := e.liqMap(ctx, id, days)
+	if err != nil {
+		return resp, err
+	}
+	liqMapCache.Lock()
+	for k, v := range liqMapCache.m {
+		if time.Since(v.at) > time.Minute {
+			delete(liqMapCache.m, k)
+		}
+	}
+	liqMapCache.m[key] = liqMapHit{time.Now(), resp}
+	liqMapCache.Unlock()
+	return resp, nil
+}
+
+func (e *Engine) liqMap(ctx context.Context, id string, days int) (LiqMapResp, error) {
 	hours := days * 24
 	cs, err := e.Candles(id, "1H", hours+1)
 	if err != nil {
@@ -315,36 +362,53 @@ func (e *Engine) LiqMap(ctx context.Context, id string, days int) (LiqMapResp, e
 	if err != nil {
 		return LiqMapResp{}, err
 	}
-	oiAt := map[int64]float64{} // hour open → OI (coins) at its last sample
-	for _, o := range ois {
-		if o.OiCcy > 0 {
-			oiAt[o.Ts/hourMs*hourMs] = o.OiCcy
-		}
+	// the in-memory latest OI sample is newer than the stored per-minute one
+	e.mu.RLock()
+	if in := e.insts[id]; in != nil && in.oiNow.OiCcy > 0 && (len(ois) == 0 || in.oiNow.Ts > ois[len(ois)-1].Ts) {
+		ois = append(ois, in.oiNow)
 	}
+	e.mu.RUnlock()
+	fine, _ := e.Candles(id, "5m", min(3000, hours*12+1))
+	steps, fineFrom := liqSteps(cs, fine, ois)
 	lever := e.maxLever(ctx, id)
 	tiers := liqTiersFor(lever)
 	last := cs[len(cs)-1].C
+	if n := len(fine); n > 0 && fine[n-1].T >= cs[len(cs)-1].T {
+		last = fine[n-1].C
+	}
 	step := niceStep(last * 0.001)
-	longs, shorts := estimateLiqLevels(cs, oiAt, tiers, step)
-	resp := LiqMapResp{Px: last, Step: step, From: from, Days: days, Lever: lever}
+	longs, shorts := estimateLiqLevels(steps, tiers, step)
+	resp := LiqMapResp{Px: last, Step: step, From: from, Days: days, Lever: lever, Fine: fineFrom, At: now}
 	for _, t := range tiers {
 		resp.Levers = append(resp.Levers, t.Lever)
+		resp.Weights = append(resp.Weights, t.W)
 	}
 	lim := int64(math.Ceil(0.5 / 0.001)) // ±50% of price
 	merged := map[int64]*LiqBin{}
-	add := func(k int64, v float64, long bool) {
-		if v < 1 || math.Abs(float64(k)-last/step) > float64(lim) {
+	add := func(k int64, vs []float64, long bool) {
+		if math.Abs(float64(k)-last/step) > float64(lim) {
+			return
+		}
+		var sum float64
+		for _, v := range vs {
+			sum += v
+		}
+		if sum < 1 {
 			return
 		}
 		b := merged[k]
 		if b == nil {
-			b = &LiqBin{P: float64(k) * step}
+			b = &LiqBin{P: float64(k) * step, LongBy: make([]float64, len(tiers)), ShortBy: make([]float64, len(tiers))}
 			merged[k] = b
 		}
-		if long {
-			b.Long += v
-		} else {
-			b.Short += v
+		for i, v := range vs {
+			if long {
+				b.LongBy[i] += v
+				b.Long += v
+			} else {
+				b.ShortBy[i] += v
+				b.Short += v
+			}
 		}
 	}
 	for k, v := range longs {
@@ -359,6 +423,61 @@ func (e *Engine) LiqMap(ctx context.Context, id string, days int) (LiqMapResp, e
 	}
 	sort.Slice(resp.Bins, func(i, j int) bool { return resp.Bins[i].P < resp.Bins[j].P })
 	return resp, nil
+}
+
+// liqStep is one candle of the map model with the OI (coins) at its last sample.
+type liqStep struct {
+	T       int64
+	H, L, C float64
+	OI      float64
+	HasOI   bool
+}
+
+// liqSteps joins hourly and 5m candles (both ascending) with OI samples into the model's input:
+// 5m steps over the recent stretch where 5m candles and per-minute OI are unbroken (fineFrom, on
+// an hour boundary; 0 = none), hourly steps before it. The first step is the OI baseline.
+func liqSteps(hourly, fine []Candle, ois []store.OISample) (steps []liqStep, fineFrom int64) {
+	const fStep = 5 * minuteMs
+	oiH, oiF := map[int64]float64{}, map[int64]float64{} // bucket open → OI at its last sample
+	for _, o := range ois {
+		if o.OiCcy > 0 {
+			oiH[o.Ts/hourMs*hourMs] = o.OiCcy
+			oiF[o.Ts/fStep*fStep] = o.OiCcy
+		}
+	}
+	// walk back from the newest 5m candle while candles are contiguous and each has an OI sample
+	start := len(fine)
+	for i := len(fine) - 1; i >= 0; i-- {
+		if _, ok := oiF[fine[i].T]; !ok || (i < len(fine)-1 && fine[i+1].T-fine[i].T != fStep) {
+			break
+		}
+		start = i
+	}
+	if start < len(fine) {
+		fineFrom = (fine[start].T + hourMs - 1) / hourMs * hourMs
+		if fineFrom <= hourly[0].T { // fine data spans the whole window: keep one hourly baseline
+			fineFrom = hourly[0].T + hourMs
+		}
+		if fineFrom > fine[len(fine)-1].T {
+			fineFrom = 0
+		}
+	}
+	for _, c := range hourly {
+		if fineFrom > 0 && c.T >= fineFrom {
+			break
+		}
+		oi, ok := oiH[c.T]
+		steps = append(steps, liqStep{T: c.T, H: c.H, L: c.L, C: c.C, OI: oi, HasOI: ok})
+	}
+	if fineFrom > 0 {
+		for _, c := range fine {
+			if c.T >= fineFrom {
+				oi, ok := oiF[c.T]
+				steps = append(steps, liqStep{T: c.T, H: c.H, L: c.L, C: c.C, OI: oi, HasOI: ok})
+			}
+		}
+	}
+	return steps, fineFrom
 }
 
 // maxLever is the contract's max leverage from the instrument list (refreshed every 6h; 50 if unknown).
@@ -407,14 +526,30 @@ func liqTiersFor(lever float64) []liqTier {
 	return out
 }
 
-// estimateLiqLevels runs the map model over hourly candles (ascending) and OI in coins by hour open:
-// USDT still open per price bin (bin = floor(px/step)) for long and short liquidations.
-func estimateLiqLevels(cs []Candle, oiAt map[int64]float64, tiers []liqTier, step float64) (longs, shorts map[int64]float64) {
-	longs, shorts = map[int64]float64{}, map[int64]float64{}
+// estimateLiqLevels runs the map model over its steps (ascending; the first is only the OI
+// baseline): USDT still open per price bin (bin = floor(px/step)) and leverage tier, for long and
+// short liquidations.
+func estimateLiqLevels(steps []liqStep, tiers []liqTier, step float64) (longs, shorts map[int64][]float64) {
+	longs, shorts = map[int64][]float64{}, map[int64][]float64{}
+	if len(steps) == 0 {
+		return
+	}
 	bin := func(p float64) int64 { return int64(math.Floor(p / step)) }
-	prevOI := oiAt[cs[0].T/hourMs*hourMs-hourMs]
-	havePrev := prevOI > 0
-	for _, c := range cs {
+	put := func(m map[int64][]float64, k int64, i int, v float64) {
+		if m[k] == nil {
+			m[k] = make([]float64, len(tiers))
+		}
+		m[k][i] += v
+	}
+	scale := func(m map[int64][]float64, f float64) {
+		for _, vs := range m {
+			for i := range vs {
+				vs[i] *= f
+			}
+		}
+	}
+	prevOI, havePrev := steps[0].OI, steps[0].HasOI && steps[0].OI > 0
+	for _, c := range steps[1:] {
 		// 1) levels this candle traded through are gone (liquidated, or the guess was wrong)
 		lo, hi := bin(c.L), bin(c.H)
 		for k := range longs {
@@ -429,31 +564,26 @@ func estimateLiqLevels(cs []Candle, oiAt map[int64]float64, tiers []liqTier, ste
 		}
 		// 2) OI change during the candle: opened positions (both sides) get levels, closed ones
 		// shrink every level proportionally
-		oi, ok := oiAt[c.T/hourMs*hourMs]
-		if !ok {
+		if !c.HasOI {
 			havePrev = false // unknown change: skip, don't bridge the gap
 			continue
 		}
 		if havePrev {
-			d := oi - prevOI
+			d := c.OI - prevOI
 			if d > 0 {
 				p := (c.H + c.L + c.C) / 3
-				for _, t := range tiers {
+				for i, t := range tiers {
 					usd := d * p * t.W
-					longs[bin(p*(1-1/t.Lever+liqMMR))] += usd
-					shorts[bin(p*(1+1/t.Lever-liqMMR))] += usd
+					put(longs, bin(p*(1-1/t.Lever+liqMMR)), i, usd)
+					put(shorts, bin(p*(1+1/t.Lever-liqMMR)), i, usd)
 				}
 			} else if d < 0 && prevOI > 0 {
 				f := max(0, 1+d/prevOI)
-				for k := range longs {
-					longs[k] *= f
-				}
-				for k := range shorts {
-					shorts[k] *= f
-				}
+				scale(longs, f)
+				scale(shorts, f)
 			}
 		}
-		prevOI, havePrev = oi, true
+		prevOI, havePrev = c.OI, true
 	}
 	return longs, shorts
 }
