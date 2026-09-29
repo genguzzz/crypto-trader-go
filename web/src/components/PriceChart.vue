@@ -28,7 +28,8 @@ const mapTiers = ref<number[]>(readTiers()) // leverage tiers drawn on the map
 function readTiers(): number[] {
   try {
     const v = JSON.parse(localStorage.getItem('ctg.liqMapTiers') || 'null')
-    if (Array.isArray(v) && v.length) return v.filter((x: unknown) => typeof x === 'number')
+    const xs = Array.isArray(v) ? v.filter((x: unknown): x is number => LIQ_TIERS.includes(x as number)) : []
+    if (xs.length) return xs
   } catch { /* default */ }
   return [...LIQ_TIERS]
 }
