@@ -1,7 +1,7 @@
 import type { ISeriesPrimitive, IPrimitivePaneView, IPrimitivePaneRenderer, SeriesAttachedParameter, Time, ISeriesApi, SeriesType } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
-import { alpha } from '../../theme'
-import type { LiqMap } from '../../api'
+import { alpha, liqTierColor } from '../../theme'
+import type { LiqMap, LiqBin } from '../../api'
 
 const ROW_PX = 3 // merge price bins until a row is at least this tall
 const MAX_W = 0.24 // widest bar: share of the pane width
@@ -9,9 +9,11 @@ const MAX_W_PX = 200
 
 /**
  * Estimated liquidation map drawn over the candles: a horizontal histogram against the right edge
- * of the price pane (long liquidations below the price in red, short above in green) plus the
- * cumulative amount from the last price outward (thin lines, own scale).
+ * of the price pane, each bar stacked by leverage tier (long liquidations below the price in a red
+ * ramp, short above in a green ramp, brighter = higher leverage) plus the cumulative amount from
+ * the last price outward (thin lines, own scale). Hidden tiers drop out of bars, rows and lines.
  */
+type Row = { long: number; short: number; longBy: number[]; shortBy: number[] }
 export class LiqMapOverlay implements ISeriesPrimitive<Time> {
   private m?: LiqMap
   private series?: ISeriesApi<SeriesType>
@@ -20,8 +22,9 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
   private cumLong: [number, number][] = [] // [price, cumulative USDT from the last price down to it], descending price
   private cumShort: [number, number][] = [] // ascending price
   private rowStep = 0 // price size of the rows last drawn
-  private rowSums = new Map<number, { long: number; short: number }>()
+  private rowSums = new Map<number, Row>()
   private hoverPx: number | null = null
+  private hidden = new Set<number>() // leverage tiers not drawn
 
   constructor() {
     const renderer: IPrimitivePaneRenderer = { draw: t => this.draw(t) }
@@ -33,11 +36,32 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
 
   setData(m: LiqMap) {
     this.m = m
+    this.rebuild()
+  }
+
+  /** Leverage tiers to leave out (by leverage). */
+  setHidden(levers: number[]) {
+    this.hidden = new Set(levers)
+    this.rebuild()
+  }
+
+  /** Visible amount of one side of a bin. */
+  private val(b: LiqBin, long: boolean) {
+    const by = long ? b.longBy : b.shortBy
+    if (!by || !this.m) return long ? b.long : b.short
+    let v = 0
+    by.forEach((x, i) => { if (!this.hidden.has(this.m!.levers[i])) v += x })
+    return v
+  }
+
+  private rebuild() {
+    const m = this.m
+    if (!m) return
     const bins = m.bins || []
     let a = 0
-    this.cumLong = bins.filter(b => b.long > 0 && b.p < m.px).sort((x, y) => y.p - x.p).map(b => [b.p, (a += b.long)])
+    this.cumLong = bins.filter(b => b.p < m.px).sort((x, y) => y.p - x.p).map(b => [b.p, (a += this.val(b, true))] as [number, number]).filter((x, i, xs) => i === 0 ? x[1] > 0 : x[1] > xs[i - 1][1])
     a = 0
-    this.cumShort = bins.filter(b => b.short > 0 && b.p >= m.px).sort((x, y) => x.p - y.p).map(b => [b.p + m.step, (a += b.short)])
+    this.cumShort = bins.filter(b => b.p >= m.px).sort((x, y) => x.p - y.p).map(b => [b.p + m.step, (a += this.val(b, false))] as [number, number]).filter((x, i, xs) => i === 0 ? x[1] > 0 : x[1] > xs[i - 1][1])
     this.requestUpdate?.()
   }
 
@@ -49,10 +73,12 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
   }
 
   /** The drawn row containing `px`: its price range and estimated amounts. */
-  rowAt(px: number): { lo: number; hi: number; long: number; short: number } | null {
-    if (!this.rowStep) return null
+  rowAt(px: number): { lo: number; hi: number; long: number; short: number; tiers: { lever: number; long: number; short: number }[] } | null {
+    if (!this.rowStep || !this.m) return null
     const k = Math.floor(px / this.rowStep + 1e-9), r = this.rowSums.get(k)
-    return { lo: k * this.rowStep, hi: (k + 1) * this.rowStep, long: r?.long ?? 0, short: r?.short ?? 0 }
+    const tiers = this.m.levers.map((lever, i) => ({ lever, long: r?.longBy[i] ?? 0, short: r?.shortBy[i] ?? 0 }))
+      .filter(t => !this.hidden.has(t.lever) && t.long + t.short > 0)
+    return { lo: k * this.rowStep, hi: (k + 1) * this.rowStep, long: r?.long ?? 0, short: r?.short ?? 0, tiers }
   }
 
   /** Estimated USDT liquidated if price moved from the last price to `px` (longs below, shorts above). */
@@ -85,16 +111,20 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
       if (!(binPx > 0)) return
       const mult = Math.max(1, Math.ceil(ROW_PX / binPx)), rowStep = m.step * mult
       // regroup to display rows; only rows on screen set the scale
-      const rows = new Map<number, { long: number; short: number }>()
+      const n = m.levers.length, rows = new Map<number, Row>()
       for (const b of m.bins) {
         const k = Math.floor(b.p / rowStep + 1e-9)
-        const r = rows.get(k) ?? { long: 0, short: 0 }
-        r.long += b.long; r.short += b.short
-        rows.set(k, r)
+        let r = rows.get(k)
+        if (!r) { r = { long: 0, short: 0, longBy: new Array(n).fill(0), shortBy: new Array(n).fill(0) }; rows.set(k, r) }
+        for (let i = 0; i < n; i++) {
+          if (this.hidden.has(m.levers[i])) continue
+          const l = b.longBy?.[i] ?? (n === 1 ? b.long : 0), sh = b.shortBy?.[i] ?? (n === 1 ? b.short : 0)
+          r.longBy[i] += l; r.shortBy[i] += sh; r.long += l; r.short += sh
+        }
       }
       this.rowStep = rowStep
       this.rowSums = rows
-      const drawn: { top: number; h: number; r: { long: number; short: number } }[] = []
+      const drawn: { top: number; h: number; r: Row }[] = []
       let max = 0
       for (const [k, r] of rows) {
         const ya = s.priceToCoordinate(k * rowStep), yb = s.priceToCoordinate((k + 1) * rowStep)
@@ -114,11 +144,20 @@ export class LiqMapOverlay implements ISeriesPrimitive<Time> {
           ctx.fillRect(W - maxW, Math.min(ya, yb), maxW, Math.max(1, Math.abs(ya - yb)))
         }
       }
+      // stacked from the right edge: longs by tier (low leverage outermost-right), then shorts
+      ctx.globalAlpha = 0.75
       for (const { top, h, r } of drawn) {
-        const wl = (r.long / max) * maxW, ws = (r.short / max) * maxW
-        if (wl > 0.3) { ctx.fillStyle = alpha('down', 0.5); ctx.fillRect(W - wl, top, wl, h) }
-        if (ws > 0.3) { ctx.fillStyle = alpha('up', 0.5); ctx.fillRect(W - ws - wl, top, ws, h) }
+        let x = W
+        for (const [by, long] of [[r.longBy, true], [r.shortBy, false]] as [number[], boolean][]) {
+          for (let i = 0; i < n; i++) {
+            const w = (by[i] / max) * maxW
+            if (w <= 0) continue
+            x -= w
+            if (w > 0.3) { ctx.fillStyle = liqTierColor(m.levers[i], long); ctx.fillRect(x, top, w, h) }
+          }
+        }
       }
+      ctx.globalAlpha = 1
       // cumulative from the last price outward, scaled to the larger side
       const cmax = Math.max(this.cumLong.at(-1)?.[1] ?? 0, this.cumShort.at(-1)?.[1] ?? 0)
       if (!cmax) return
