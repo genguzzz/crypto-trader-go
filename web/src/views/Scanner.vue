@@ -67,10 +67,18 @@ const watchCount = computed(() => (store.snap?.rows || []).filter(r => r.watch).
 const filtered = computed(() => !!q.value || onlyWatch.value || onlyPass.value || catSel.value.length < 3)
 function clearFilters() { q.value = ''; onlyWatch.value = false; onlyPass.value = false; catSel.value = ['1', '3', '4'] }
 const ruleModel = computed({ get: () => store.ruleId, set: (v: string) => setRule(v) })
-const sortOptions = computed(() => [
-  { value: 'score', label: '按方向分' }, { value: 'long', label: '多头分' }, { value: 'short', label: '空头分' }, { value: 'mcap', label: '总市值' }, { value: 'oi', label: '持仓量' }, { value: 'turnover12h', label: '12h 成交额' },
-  ...(store.meta?.fields.filter(f => f.key !== 'turnover12h').map(f => ({ value: f.key, label: f.label })) || []),
-])
+// Funding rates rank by magnitude: a strongly negative rate is as extreme as a strongly positive one.
+const absSortKeys = new Set(['funding_hourly', 'funding_pred_hourly'])
+const sortOptions = computed(() => {
+  const fs = store.meta?.fields || []
+  const fundingOpts = fs.filter(f => absSortKeys.has(f.key)).map(f => ({ value: f.key, label: `${f.label}（绝对值）` }))
+  return [
+    { value: 'score', label: '按方向分' }, { value: 'long', label: '多头分' }, { value: 'short', label: '空头分' },
+    ...fundingOpts,
+    { value: 'mcap', label: '总市值' }, { value: 'oi', label: '持仓量' }, { value: 'turnover12h', label: '12h 成交额' },
+    ...fs.filter(f => f.key !== 'turnover12h' && !absSortKeys.has(f.key)).map(f => ({ value: f.key, label: f.label })),
+  ]
+})
 const selected = computed(() => (route.query.sel as string) || '')
 const rule = computed(() => store.meta?.rules.find(r => r.id === store.ruleId))
 
@@ -92,7 +100,10 @@ function sortVal(r: Row): number | null {
     case 'oi': return r.oiUsd || null
     case 'long': return scoreOf(r, 'long')
     case 'short': return scoreOf(r, 'short')
-    default: return r.values?.[sortKey.value] ?? null
+    default: {
+      const v = r.values?.[sortKey.value] ?? null
+      return v != null && absSortKeys.has(sortKey.value) ? Math.abs(v) : v
+    }
   }
 }
 // The list re-sorts on every snapshot (10s preview scores) — while a finger/mouse is down or the
