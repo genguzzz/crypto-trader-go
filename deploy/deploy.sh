@@ -78,8 +78,9 @@ echo "▸ uploading $(du -h "$BIN" | cut -f1) → server:$DIR/bin/ctg.new"
 scp -q $SSH_OPTS "$BIN" "$HOST:$DIR/bin/ctg.new"
 echo "▸ swapping binary and restarting container"
 remote "set -e; cd $DIR; chmod 755 bin/ctg.new; if [ -f bin/ctg ]; then cp -p bin/ctg bin/ctg.prev; fi; mv bin/ctg.new bin/ctg
-  rm -f bin/ctg.bad; docker compose up -d --no-recreate >/dev/null 2>&1; docker compose restart ctg >/dev/null 2>&1
-  docker compose up -d ctg-strategy ctg-ai >/dev/null 2>&1; docker compose restart ctg-strategy ctg-ai >/dev/null 2>&1"
+  rm -f bin/ctg.bad
+  # up -d recreates services whose compose config or env_file changed; restart picks up the new binary.
+  docker compose up -d >/dev/null 2>&1; docker compose restart ctg ctg-strategy ctg-ai >/dev/null 2>&1"
 if wait_healthy; then
   echo "✓ deployed $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD || echo '+dirty')"
 else
