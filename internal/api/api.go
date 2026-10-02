@@ -25,6 +25,10 @@ type Server struct {
 	Icons  http.Handler    // coin icon proxy (optional)
 	Alerts *alerts.Service // monitoring rules + delivery (optional)
 	Dev    *devapi.Service // external API keys, open REST API and MCP server (optional)
+	// Mounts registers extra route groups (trading, interaction, AI) on the same mux.
+	Mounts []func(*http.ServeMux)
+	// AdminKey guards writes to trading / interaction / AI routes (see admin.go).
+	AdminKey string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -110,7 +114,10 @@ func (s *Server) Handler() http.Handler {
 	if s.Web != nil {
 		mux.Handle("/", spa(s.Web))
 	}
-	return logRequests(withGzip(mux))
+	for _, m := range s.Mounts {
+		m(mux)
+	}
+	return logRequests(withGzip(adminGate(s.AdminKey, mux)))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
