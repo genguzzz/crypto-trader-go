@@ -2,8 +2,9 @@
 import type { Component } from 'vue'
 import { ToggleGroupRoot, ToggleGroupItem } from 'reka-ui'
 
-/** Multi-select filter pills sharing FilterChip styling (Reka ToggleGroup type="multiple"). */
-export interface ChipOption<V> { value: V; label: string; icon?: Component; count?: number }
+/** Multi-select filter pills sharing FilterChip styling (Reka ToggleGroup type="multiple").
+ *  Slot `lead` (scoped: option) replaces the icon, e.g. with a colour key. */
+export interface ChipOption<V> { value: V; label: string; icon?: Component; count?: number; title?: string }
 defineProps<{ options: ChipOption<T>[]; ariaLabel?: string; atLeastOne?: boolean }>()
 const model = defineModel<T[]>({ required: true })
 </script>
@@ -11,8 +12,8 @@ const model = defineModel<T[]>({ required: true })
 <template>
   <ToggleGroupRoot type="multiple" :model-value="model as any" class="cg" :aria-label="ariaLabel"
     @update:model-value="(v: any) => { if (!(atLeastOne && (!v || v.length === 0))) model = v }">
-    <ToggleGroupItem v-for="o in options" :key="String(o.value)" :value="o.value as any" class="fchip">
-      <component :is="o.icon" v-if="o.icon" :size="13" class="fc-ic" />
+    <ToggleGroupItem v-for="o in options" :key="String(o.value)" :value="o.value as any" class="fchip" :title="o.title">
+      <slot name="lead" :option="o"><component :is="o.icon" v-if="o.icon" :size="13" class="fc-ic" /></slot>
       <span>{{ o.label }}</span>
       <span v-if="o.count !== undefined" class="fc-n">{{ o.count }}</span>
     </ToggleGroupItem>
