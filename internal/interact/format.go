@@ -31,6 +31,8 @@ func marker(kind string) string {
 		return "🔴"
 	case "prompt":
 		return "🟡"
+	case "strategy":
+		return "🔵"
 	}
 	return "⚪"
 }
