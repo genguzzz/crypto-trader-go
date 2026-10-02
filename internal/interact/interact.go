@@ -216,6 +216,22 @@ func targets(c Config) []string {
 	if c.Telegram.delivers() {
 		out = append(out, "telegram")
 	}
+	if c.Webhook.delivers() {
+		out = append(out, "webhook")
+	}
+	return out
+}
+
+// eventTargets are the channels that take an event kind.
+func eventTargets(c Config, kind string) []string {
+	var out []string
+	global := c.wants(kind)
+	if c.Telegram.delivers() && global {
+		out = append(out, "telegram")
+	}
+	if c.Webhook.delivers() && c.Webhook.wants(kind, global) {
+		out = append(out, "webhook")
+	}
 	return out
 }
 
@@ -284,6 +300,13 @@ func (h *Hub) startChannels() {
 	if h.runCtx == nil || h.runCtx.Err() != nil || len(h.active) > 0 {
 		return
 	}
+	if wc := h.cfg.Webhook; wc.delivers() {
+		w := &webhook{cfg: wc, hc: h.client}
+		ctx, cancel := context.WithCancel(h.runCtx)
+		r := &remote{ch: w, wake: make(chan struct{}, 1), cancel: cancel, done: make(chan struct{})}
+		h.active[w.Name()] = r
+		go func() { defer close(r.done); h.sender(ctx, r) }()
+	}
 	tc := h.cfg.Telegram
 	if !tc.polls() {
 		return
@@ -341,11 +364,7 @@ func (h *Hub) Notify(ev trade.Event) {
 	if ev.Ts == 0 {
 		ev.Ts = time.Now().UnixMilli()
 	}
-	cfg := h.config()
-	if !cfg.wants(ev.Kind) {
-		return
-	}
-	names := targets(cfg)
+	names := eventTargets(h.config(), ev.Kind)
 	if len(names) == 0 {
 		return
 	}
@@ -663,6 +682,7 @@ func (h *Hub) Config() ConfigView {
 	}
 	v.Status.Recipients = len(v.Telegram.AllowUserIDs)
 	v.Status.Backlog = h.backlog("telegram")
+	v.Webhook.Backlog = h.backlog("webhook")
 	v.Status.Strangers = strangers
 	return v
 }
@@ -683,7 +703,7 @@ func (h *Hub) SaveConfig(in ConfigView) (ConfigView, error) {
 		h.cfgMu.Unlock()
 		return ConfigView{}, err
 	}
-	restart := !sameTelegram(old.Telegram, next.Telegram)
+	restart := !sameTelegram(old.Telegram, next.Telegram) || !sameWebhook(old.Webhook, next.Webhook)
 	if restart {
 		h.stopChannels()
 	}
@@ -692,6 +712,9 @@ func (h *Hub) SaveConfig(in ConfigView) (ConfigView, error) {
 	h.mu.Unlock()
 	if !next.Telegram.delivers() {
 		h.dropChannel("telegram")
+	}
+	if !next.Webhook.delivers() {
+		h.dropChannel("webhook")
 	}
 	if restart {
 		h.startChannels()
@@ -748,8 +771,9 @@ func (h *Hub) Test(ctx context.Context) (map[string]string, string, error) {
 		res["telegram"] = "未启用"
 	case !cfg.Telegram.delivers():
 		res["telegram"] = "白名单为空：先在私聊中向机器人发送 /start 获取用户 ID"
-	case len(chans) == 0:
-		res["telegram"] = "未运行"
+	}
+	if !cfg.Webhook.delivers() {
+		res["webhook"] = "未启用"
 	}
 	for _, c := range chans {
 		if _, set := res[c.Name()]; set {
@@ -759,6 +783,11 @@ func (h *Hub) Test(ctx context.Context) (map[string]string, string, error) {
 			res[c.Name()] = err.Error()
 		} else {
 			res[c.Name()] = "ok"
+		}
+	}
+	for _, n := range []string{"telegram", "webhook"} {
+		if _, set := res[n]; !set {
+			res[n] = "未运行"
 		}
 	}
 	p := trade.Prompt{ID: "test-" + newShort(), Default: "ignore", Deadline: time.Now().Add(2 * time.Minute),

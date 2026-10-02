@@ -15,6 +15,7 @@ const configKey = "interact.config"
 // never returned by the API or logged (View masks it).
 type Config struct {
 	Telegram TelegramConfig `json:"telegram"`
+	Webhook  WebhookConfig  `json:"webhook"`
 	Kinds    []string       `json:"kinds"` // event kinds delivered to remote channels; empty = all
 	Quiet    bool           `json:"quiet"` // deliver silently, except prompts and critical kinds
 }
@@ -36,8 +37,8 @@ func (t TelegramConfig) delivers() bool { return t.polls() && len(t.AllowUserIDs
 // Kinds is the list of event kinds the UI can toggle (trade.Event.Kind values).
 var Kinds = []KindInfo{
 	{"signal", "信号"}, {"order", "下单"}, {"fill", "成交"}, {"cancel", "撤单"}, {"stop", "止损"},
-	{"target", "止盈"}, {"liquidation", "强平"}, {"reject", "拒单"}, {"breaker", "熔断"},
-	{"instance", "策略实例"}, {"ai", "AI"}, {"daily", "日报"},
+	{"target", "止盈"}, {"time", "持仓到期"}, {"liquidation", "强平"}, {"reject", "拒单"}, {"breaker", "熔断"},
+	{"instance", "策略实例"}, {"strategy", "策略消息"}, {"ai", "AI"}, {"daily", "日报"},
 }
 
 type KindInfo struct {
@@ -85,6 +86,15 @@ type ConfigView struct {
 		AllowUserIDs []int64 `json:"allowUserIds"`
 		ClearToken   bool    `json:"clearToken,omitempty"`
 	} `json:"telegram"`
+	Webhook struct {
+		Enabled     bool     `json:"enabled"`
+		URL         string   `json:"url"`
+		Secret      string   `json:"secret"`
+		Configured  bool     `json:"configured"` // a secret is stored
+		ClearSecret bool     `json:"clearSecret,omitempty"`
+		Kinds       []string `json:"kinds"`
+		Backlog     int      `json:"backlog"`
+	} `json:"webhook"`
 	Kinds    []string       `json:"kinds"`
 	Quiet    bool           `json:"quiet"`
 	Status   TelegramStatus `json:"status"`
@@ -111,6 +121,9 @@ func (c Config) view() ConfigView {
 	v.Telegram.BotToken = Mask(c.Telegram.BotToken)
 	v.Telegram.Configured = c.Telegram.BotToken != ""
 	v.Telegram.AllowUserIDs = append([]int64{}, c.Telegram.AllowUserIDs...)
+	v.Webhook.Enabled, v.Webhook.URL = c.Webhook.Enabled, c.Webhook.URL
+	v.Webhook.Secret, v.Webhook.Configured = Mask(c.Webhook.Secret), c.Webhook.Secret != ""
+	v.Webhook.Kinds = append([]string{}, c.Webhook.Kinds...)
 	v.Kinds = append([]string{}, c.Kinds...)
 	v.Quiet = c.Quiet
 	v.AllKinds = Kinds
@@ -152,21 +165,52 @@ func (c Config) merge(in ConfigView) (Config, error) {
 	if out.Telegram.Enabled && out.Telegram.BotToken == "" {
 		return c, fmt.Errorf("启用 Telegram 前需填写 Bot Token")
 	}
+	var err error
+	if out.Kinds, err = validKinds(in.Kinds); err != nil {
+		return c, err
+	}
+	wh := in.Webhook
+	out.Webhook = WebhookConfig{Enabled: wh.Enabled, URL: strings.TrimSpace(wh.URL), Secret: c.Webhook.Secret}
+	sec := strings.TrimSpace(wh.Secret)
+	switch {
+	case wh.ClearSecret:
+		out.Webhook.Secret = ""
+	case sec != "" && sec != Mask(c.Webhook.Secret) && !strings.HasPrefix(sec, maskDots):
+		if len(sec) > 200 {
+			return c, fmt.Errorf("Webhook 密钥最长 200 个字符")
+		}
+		out.Webhook.Secret = sec
+	}
+	if out.Webhook.URL != "" {
+		if err := validWebhookURL(out.Webhook.URL); err != nil {
+			return c, err
+		}
+	} else if out.Webhook.Enabled {
+		return c, fmt.Errorf("启用 Webhook 前需填写地址")
+	}
+	if out.Webhook.Kinds, err = validKinds(wh.Kinds); err != nil {
+		return c, err
+	}
+	return out, nil
+}
+
+func validKinds(in []string) ([]string, error) {
 	ks := map[string]bool{}
-	for _, k := range in.Kinds {
+	for _, k := range in {
 		ok := false
 		for _, x := range Kinds {
 			ok = ok || x.Kind == k
 		}
 		if !ok {
-			return c, fmt.Errorf("未知事件类型 %q", k)
+			return nil, fmt.Errorf("未知事件类型 %q", k)
 		}
 		ks[k] = true
 	}
+	var out []string
 	for k := range ks {
-		out.Kinds = append(out.Kinds, k)
+		out = append(out, k)
 	}
-	sort.Strings(out.Kinds)
+	sort.Strings(out)
 	return out, nil
 }
 
@@ -174,6 +218,10 @@ func parseConfig(raw string) (Config, error) {
 	var c Config
 	err := json.Unmarshal([]byte(raw), &c)
 	return c, err
+}
+
+func sameWebhook(a, b WebhookConfig) bool {
+	return a.Enabled == b.Enabled && a.URL == b.URL && a.Secret == b.Secret
 }
 
 // sameTelegram reports whether the running bot can be kept as is.

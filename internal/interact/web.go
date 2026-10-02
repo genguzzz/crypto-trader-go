@@ -62,10 +62,13 @@ func (h *Hub) Register(mux *http.ServeMux) {
 			httpErr(w, http.StatusConflict, err.Error())
 			return
 		}
-		ok := true
+		ok, some := true, false // every enabled channel delivered, and there was one
 		for _, v := range res {
-			ok = ok && v == "ok"
+			if v != "未启用" {
+				ok, some = ok && v == "ok", true
+			}
 		}
+		ok = ok && some
 		writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "channels": res, "promptId": id})
 	})
 	mux.HandleFunc("GET /api/v1/interact/prompts", func(w http.ResponseWriter, r *http.Request) {
