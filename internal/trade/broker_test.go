@@ -184,9 +184,9 @@ func TestBarStopPriority(t *testing.T) {
 	}{
 		{"both inside: stop first", "long", 95, 105, Bar{O: 100, H: 106, L: 94, C: 100}, OrdStop, 95 - half(100), false},
 		{"target only", "long", 95, 105, Bar{O: 100, H: 106, L: 96, C: 105}, OrdTarget, 105 - half(100), false},
-		{"gap below stop fills at the open", "long", 95, 105, Bar{O: 93, H: 94, L: 92, C: 93}, OrdStop, 93 - half(93), false},
-		{"gap above target fills at the open", "long", 95, 105, Bar{O: 107, H: 108, L: 94, C: 107}, OrdTarget, 107 - half(107), false},
-		{"short: both inside, stop first", "short", 105, 95, Bar{O: 100, H: 106, L: 94, C: 100}, OrdStop, 105 + half(100), false},
+		{"gap below stop fills at the open", "long", 95, 105, Bar{O: 93, H: 94, L: 92, C: 93}, OrdStop, snapTick(93-half(93), 0.01, false), false},
+		{"gap above target fills at the open", "long", 95, 105, Bar{O: 107, H: 108, L: 94, C: 107}, OrdTarget, snapTick(107-half(107), 0.01, false), false},
+		{"short: both inside, stop first", "short", 105, 95, Bar{O: 100, H: 106, L: 94, C: 100}, OrdStop, snapTick(105+half(100), 0.01, true), false},
 		{"inside the range: nothing", "long", 95, 105, Bar{O: 100, H: 104, L: 96, C: 101}, "", 0, true},
 	}
 	for _, c := range cases {
