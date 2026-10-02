@@ -266,7 +266,9 @@ func (s *Service) Accounts() []Account {
 	s.mu.RUnlock()
 	out := make([]Account, 0, len(bs))
 	for _, b := range bs {
-		out = append(out, b.locked(func() Account { return s.withInstances(b.view()) }))
+		if a := b.locked(func() Account { return s.withInstances(b.view()) }); !isTrial(a.Name) {
+			out = append(out, a)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Archived != out[j].Archived {

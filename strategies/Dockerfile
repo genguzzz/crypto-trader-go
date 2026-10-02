@@ -3,7 +3,7 @@
 # in $CTG_RUN_DIR shared with the ctg container.
 FROM python:3.12-slim
 
-RUN pip install --no-cache-dir "numpy>=2.0,<3"
+RUN pip install --no-cache-dir "numpy>=2.0,<3" "pyflakes>=3.2,<4"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

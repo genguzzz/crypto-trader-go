@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"time"
 )
@@ -22,10 +23,16 @@ func (s *Service) Submit(ctx context.Context, sg Signal) (int64, error) {
 	if sg.InstID == "" {
 		return 0, fmt.Errorf("instId required")
 	}
-	for _, x := range []float64{sg.Strength, sg.StopLoss, sg.TakeProfit, sg.MaxSlippageBp, sg.Leverage, sg.ReduceFrac, sg.Price} {
+	for _, x := range []float64{sg.Strength, sg.StopLoss, sg.TakeProfit, sg.MaxSlippageBp, sg.Leverage, sg.ReduceFrac, sg.Price, sg.TrailDist} {
 		if !finite(x) || x < 0 {
 			return 0, fmt.Errorf("numeric fields must be finite and non-negative")
 		}
+	}
+	if sg.TimeLimitMs < 0 {
+		return 0, fmt.Errorf("timeLimitMs must be non-negative")
+	}
+	if sg.Action != OpenLong && sg.Action != OpenShort {
+		sg.Reverse, sg.TrailDist, sg.TimeLimitMs = false, 0, 0
 	}
 	ri := s.instRT(sg.InstanceID)
 	var inst Instance
@@ -74,6 +81,8 @@ func (s *Service) Submit(ctx context.Context, sg Signal) (int64, error) {
 		reason = "合约不存在或已下线"
 	case sg.Action == Reduce && (sg.ReduceFrac <= 0 || sg.ReduceFrac > 1):
 		reason = "减仓比例 reduceFrac 需在 (0, 1]"
+	case ri != nil && !ri.ver.Meta.allows(sg.Action):
+		reason = "策略声明了不做" + map[Action]string{OpenLong: "多", OpenShort: "空"}[sg.Action] + "（can_long / can_short）"
 	}
 	if err := insertSignal(s.db, &sg); err != nil {
 		return 0, err
@@ -208,14 +217,14 @@ func (s *Service) reviewRequest(b *book, inst Instance, sg Signal) ReviewRequest
 	if v, ok := b.market().Factors(sg.InstID); ok {
 		market["factors"] = v
 	}
-	if ver.Timeframe != "" {
-		if bars, err := b.market().Bars(sg.InstID, ver.Timeframe, 24); err == nil && len(bars) > 0 {
+	if tf := InstanceTimeframe(inst, ver); tf != "" {
+		if bars, err := b.market().Bars(sg.InstID, tf, 24); err == nil && len(bars) > 0 {
 			closes := make([]float64, len(bars))
 			for i, x := range bars {
 				closes[i] = x.C
 			}
 			market["closes"] = closes
-			market["timeframe"] = ver.Timeframe
+			market["timeframe"] = tf
 		}
 	}
 	var recent []DecisionSummary
@@ -290,43 +299,10 @@ func (s *Service) execute(ctx context.Context, b *book, sg Signal, scale float64
 	bp := sg.MaxSlippageBp
 	switch sg.Action {
 	case OpenLong, OpenShort:
-		if err := b.checkOpen(sg, ref, now); err != nil {
-			return OutRejected, err.Error()
+		if p := b.pos[k]; sg.Reverse && p != nil && (p.PosSide == "long") != (sg.Action == OpenLong) {
+			return s.reverse(b, sg, p, q, ref, scale, now)
 		}
-		long := sg.Action == OpenLong
-		existing := b.pos[k]
-		lev := sg.Leverage
-		if existing != nil {
-			lev = existing.Leverage
-		}
-		out, err := size(sizeIn{Equity: b.equity(), Cash: b.cash(), InstMargin: b.instMargin(sg.InstID), Entry: ref, Stop: sg.StopLoss, Long: long,
-			Strength: sg.Strength, Scale: scale, Lever: lev, Spec: spec, Limits: b.acc.Limits, MMR: s.opts.MaintMarginRate})
-		if err != nil {
-			return OutRejected, err.Error()
-		}
-		if existing != nil && out.Lever < existing.Leverage-0.005 {
-			return OutRejected, fmt.Sprintf("加仓止损过远：需要低于现有 %.2fx 的杠杆", existing.Leverage)
-		}
-		posSide := "short"
-		if long {
-			posSide = "long"
-		}
-		g := fmt.Sprintf("g%d", sg.ID)
-		b.groups[g] = groupSpec{stop: sg.StopLoss, target: sg.TakeProfit, signal: sg}
-		o := &Order{InstanceID: sg.InstanceID, SignalID: sg.ID, InstID: sg.InstID, Side: sideOf(posSide, true), PosSide: posSide, Type: OrdMarket,
-			Qty: out.Qty, Price: ref * (1 + sgn(long)*bp/1e4), Leverage: out.Lever, OCOGroup: g, State: OsLive, CreatedAt: now}
-		if err := b.addOrder(s.db, o); err != nil {
-			return OutRejected, "下单失败：" + err.Error()
-		}
-		s.changed(b.acc.ID, "order")
-		detail := fmt.Sprintf("%s 张 · %.2fx · 保证金约 %s USDT", fmtQty(out.Qty), out.Lever, fmtUSDT(out.Margin))
-		if !b.barModel {
-			b.execLive(o, q, true, "fill", now)
-			if o.Filled <= 0 {
-				detail += "；未成交：" + o.Reason
-			}
-		}
-		return OutOrdered, detail
+		return s.open(b, sg, q, ref, scale, now, false)
 	default:
 		p := b.pos[k]
 		if p == nil {
@@ -362,6 +338,121 @@ func (s *Service) execute(ctx context.Context, b *book, sg Signal, scale float64
 		}
 		return OutOrdered, detail
 	}
+}
+
+// open sizes and places an opening order with its stop/target group (caller holds b.mu). reopen
+// marks the second half of a reverse, which the re-entry cooldown does not apply to.
+func (s *Service) open(b *book, sg Signal, q Quote, ref, scale float64, now int64, reopen bool) (SignalOutcome, string) {
+	spec, ok := b.market().Spec(sg.InstID)
+	if !ok {
+		return OutRejected, "合约不存在或已下线"
+	}
+	if err := b.checkOpen(sg, ref, now, reopen); err != nil {
+		return OutRejected, err.Error()
+	}
+	k := posKey{sg.InstanceID, sg.InstID}
+	long := sg.Action == OpenLong
+	existing := b.pos[k]
+	lev := sg.Leverage
+	if existing != nil {
+		lev = existing.Leverage
+	}
+	out, err := size(sizeIn{Equity: b.equity(), Cash: b.cash(), InstMargin: b.instMargin(sg.InstID), Entry: ref, Stop: sg.StopLoss, Long: long,
+		Strength: sg.Strength, Scale: scale, Lever: lev, Spec: spec, Limits: b.acc.Limits, MMR: s.opts.MaintMarginRate})
+	if err != nil {
+		return OutRejected, err.Error()
+	}
+	if existing != nil && out.Lever < existing.Leverage-0.005 {
+		return OutRejected, fmt.Sprintf("加仓止损过远：需要低于现有 %.2fx 的杠杆", existing.Leverage)
+	}
+	posSide := "short"
+	if long {
+		posSide = "long"
+	}
+	g := fmt.Sprintf("g%d", sg.ID)
+	b.groups[g] = groupSpec{stop: sg.StopLoss, target: sg.TakeProfit, trail: sg.TrailDist, limitMs: sg.TimeLimitMs, signal: sg}
+	o := &Order{InstanceID: sg.InstanceID, SignalID: sg.ID, InstID: sg.InstID, Side: sideOf(posSide, true), PosSide: posSide, Type: OrdMarket,
+		Qty: out.Qty, Price: ref * (1 + sgn(long)*sg.MaxSlippageBp/1e4), Leverage: out.Lever, OCOGroup: g, State: OsLive, CreatedAt: now}
+	if err := b.addOrder(s.db, o); err != nil {
+		return OutRejected, "下单失败：" + err.Error()
+	}
+	s.changed(b.acc.ID, "order")
+	detail := fmt.Sprintf("%s 张 · %.2fx · 保证金约 %s USDT", fmtQty(out.Qty), out.Lever, fmtUSDT(out.Margin))
+	switch {
+	case reopen && b.barModel: // the close just filled at this bar's price: open at the same price
+		f, closes, err := b.fill(o, fillReq{qty: o.Qty, px: ref, ts: now})
+		if err != nil {
+			b.cancel(s.db, o, "成交失败："+err.Error(), now)
+			return OutRejected, "成交失败：" + err.Error()
+		}
+		b.afterFill(o, f, closes, "fill")
+	case !b.barModel:
+		b.execLive(o, q, true, "fill", now)
+		if o.Filled <= 0 {
+			detail += "；未成交：" + o.Reason
+		}
+	}
+	return OutOrdered, detail
+}
+
+// reverse closes the instance's opposite position and opens the new side once the close fills
+// (at once live, at the next bar open in a backtest). Caller holds b.mu.
+func (s *Service) reverse(b *book, sg Signal, p *posState, q Quote, ref, scale float64, now int64) (SignalOutcome, string) {
+	k := posKey{sg.InstanceID, sg.InstID}
+	if len(b.ordersFor(k, func(o *Order) bool { return o.ReduceOnly && o.Type == OrdMarket })) > 0 {
+		return OutRejected, "已有待成交的平仓单"
+	}
+	if err := b.checkOpen(sg, ref, now, true); err != nil { // would the new side be allowed? else keep the position
+		return OutRejected, "反手被拒：" + err.Error()
+	}
+	buy := p.PosSide == "short"
+	o := &Order{InstanceID: sg.InstanceID, SignalID: sg.ID, InstID: sg.InstID, Side: sideOf(p.PosSide, false), PosSide: p.PosSide, Type: OrdMarket,
+		Qty: p.Qty, Price: ref * (1 + sgn(buy)*sg.MaxSlippageBp/1e4), ReduceOnly: true, Leverage: p.Leverage, State: OsLive, Reason: "反手平仓", CreatedAt: now}
+	if err := b.addOrder(s.db, o); err != nil {
+		return OutRejected, "下单失败：" + err.Error()
+	}
+	s.changed(b.acc.ID, "order")
+	b.reopen[o.ID] = reopenSpec{signal: sg, scale: scale}
+	detail := fmt.Sprintf("反手：平%s %s 张，成交后开%s", sideName(p.PosSide), fmtQty(p.Qty), sideName(map[bool]string{true: "long", false: "short"}[sg.Action == OpenLong]))
+	if !b.barModel {
+		b.reversing, b.revNote = sg.ID, ""
+		b.execLive(o, q, true, "fill", now)
+		b.reversing, detail = 0, detail+b.revNote
+		if o.Filled <= 0 {
+			delete(b.reopen, o.ID)
+			detail += "；平仓未成交：" + o.Reason
+		}
+	}
+	return OutOrdered, detail
+}
+
+// reopenAfter sends the opening half of a reverse once its closing order filled (caller holds b.mu).
+func (s *Service) reopenAfter(b *book, o *Order, f Fill) {
+	r, ok := b.reopen[o.ID]
+	if !ok {
+		return
+	}
+	delete(b.reopen, o.ID)
+	q := Quote{Last: f.Px, Mark: f.Px, Ts: f.Ts}
+	out, detail := s.open(b, r.signal, q, f.Px, r.scale, f.Ts, true)
+	note := "；反手开仓：" + detail
+	if out != OutOrdered {
+		note = "；反手开仓被拒：" + detail
+	}
+	if b.reversing == r.signal.ID { // still inside execute: the note joins the signal's outcome
+		b.revNote = note
+		return
+	}
+	if out != OutOrdered {
+		id := r.signal.ID
+		s.enqueue(r.signal.InstanceID, "signal_result", func(ctx context.Context, x Session) error {
+			return x.SignalResult(ctx, id, OutRejected, "反手开仓被拒："+detail)
+		})
+	}
+	if _, err := s.db.Exec(`UPDATE trade_signals SET outcome_reason=outcome_reason||? WHERE id=?`, note, r.signal.ID); err != nil {
+		log.Printf("trade: signal %d reverse note: %v", r.signal.ID, err)
+	}
+	s.changed(b.acc.ID, "signal")
 }
 
 // execQuote fetches the quote used for execution (with depth when the live source offers it).

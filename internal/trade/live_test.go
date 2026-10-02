@@ -83,7 +83,7 @@ func TestLiveLoop(t *testing.T) {
 
 type faultSession struct{ *fakeSession }
 
-func (f faultSession) Bar(context.Context, string, string, Bar) error { return ErrFaulted }
+func (f faultSession) Bars(context.Context, string, []InstBar) error { return ErrFaulted }
 
 type faultRunner struct {
 	*fakeRunner

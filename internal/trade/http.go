@@ -112,6 +112,57 @@ func (s *Service) Register(mux *http.ServeMux) {
 		list, err := s.Strategies()
 		reply(w, 200)(map[string]any{"added": n, "strategies": list}, err)
 	})
+	mux.HandleFunc("GET "+p+"/sources", func(w http.ResponseWriter, r *http.Request) { reply(w, 200)(s.Sources()) })
+	mux.HandleFunc("POST "+p+"/sources", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Code        string `json:"code"`
+			FromVersion string `json:"fromVersion"`
+		}
+		if readJSONMax(w, r, &in, maxSourceBytes+4096) {
+			reply(w, http.StatusCreated)(s.CreateSource(in.Code, in.FromVersion))
+		}
+	})
+	mux.HandleFunc("GET "+p+"/sources/{id}", s.withID(func(w http.ResponseWriter, r *http.Request, id int64) {
+		reply(w, 200)(s.Source(id))
+	}))
+	mux.HandleFunc("PUT "+p+"/sources/{id}", s.withID(func(w http.ResponseWriter, r *http.Request, id int64) {
+		var in struct {
+			Code string `json:"code"`
+		}
+		if readJSONMax(w, r, &in, maxSourceBytes+4096) {
+			reply(w, 200)(s.SaveSource(id, in.Code))
+		}
+	}))
+	mux.HandleFunc("DELETE "+p+"/sources/{id}", s.withID(func(w http.ResponseWriter, r *http.Request, id int64) {
+		reply(w, 200)(map[string]bool{"ok": true}, s.DeleteSource(id))
+	}))
+	mux.HandleFunc("POST "+p+"/sources/{id}/publish", s.withID(func(w http.ResponseWriter, r *http.Request, id int64) {
+		res, err := s.PublishSource(r.Context(), id)
+		if err != nil && res.Check.Diagnostics != nil {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(statusOf(err))
+			json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "check": res.Check})
+			return
+		}
+		reply(w, 200)(res, err)
+	}))
+	mux.HandleFunc("POST "+p+"/check", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Code string `json:"code"`
+		}
+		if readJSONMax(w, r, &in, maxSourceBytes+4096) {
+			reply(w, 200)(s.Check(r.Context(), in.Code))
+		}
+	})
+	mux.HandleFunc("POST "+p+"/trial", func(w http.ResponseWriter, r *http.Request) {
+		var in TrialInput
+		if readJSONMax(w, r, &in, maxSourceBytes+64<<10) {
+			reply(w, 200)(s.Trial(r.Context(), in))
+		}
+	})
+	mux.HandleFunc("GET "+p+"/instances/{id}/logs", s.withID(func(w http.ResponseWriter, r *http.Request, id int64) {
+		writeJSON(w, s.RunLog(id))
+	}))
 	mux.HandleFunc("GET "+p+"/accounts/{id}/instances", s.withID(func(w http.ResponseWriter, r *http.Request, id int64) {
 		reply(w, 200)(s.Instances(id))
 	}))
@@ -170,7 +221,11 @@ func reply(w http.ResponseWriter, code int) func(any, error) {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	return readJSONMax(w, r, v, 64<<10)
+}
+
+func readJSONMax(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		httpErr(w, 400, "invalid JSON: "+err.Error())

@@ -121,13 +121,18 @@ func TestPythonRunner(t *testing.T) {
 	bars := crossBars(t)
 	md := crossMD{bars: bars}
 	sink := &fakeSink{}
-	inst := trade.Instance{ID: 42, AccountID: 1, Params: map[string]float64{"fast": 5, "slow": 20}}
+	if !ver.Meta.CanShort || ver.Params[0].Type != trade.PTTimeframe {
+		t.Fatalf("meta / params: %+v %+v", ver.Meta, ver.Params)
+	}
+	// entry 1 = cross: the bars end on the crossing bar
+	inst := trade.Instance{ID: 42, AccountID: 1, Params: map[string]float64{"fast": 5, "slow": 20, "entry": 1},
+		Universe: trade.Universe{Static: []string{"ETH-USDT-SWAP"}}}
 	s, err := h.Start(ctx, inst, ver, trade.ModeBacktest, nil, md, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
 	last := bars[len(bars)-1]
-	if err := s.Bar(ctx, "ETH-USDT-SWAP", "4H", last); err != nil {
+	if err := s.Bars(ctx, "4H", []trade.InstBar{{InstID: "ETH-USDT-SWAP", Bar: last}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(sink.sigs) != 1 {
@@ -137,8 +142,8 @@ func TestPythonRunner(t *testing.T) {
 	if sig.Action != trade.OpenLong || sig.InstID != "ETH-USDT-SWAP" || !(sig.StopLoss < last.C && last.C < sig.TakeProfit) {
 		t.Fatalf("signal: %+v", sig)
 	}
-	if !strings.Contains(string(s.State()), "reenter") {
-		t.Fatalf("state: %s", s.State())
+	if st := s.Status(); !strings.Contains(st, "ETH 快线在上") {
+		t.Fatalf("status: %q", st)
 	}
 	if err := s.Stop(ctx); err != nil {
 		t.Fatal(err)
@@ -146,5 +151,13 @@ func TestPythonRunner(t *testing.T) {
 	<-s.Done()
 	if s.Err() != nil {
 		t.Fatal(s.Err())
+	}
+
+	chk, err := h.Check(ctx, "from ctg import Strategy\nclass Bad(Strategy):\n    universe = ['x']\n    def on_bar(self, ctx, bar):\n        return nope\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chk.Fatal() || len(chk.Strategies) != 1 || chk.Strategies[0].Name != "bad" {
+		t.Fatalf("check: %+v", chk)
 	}
 }

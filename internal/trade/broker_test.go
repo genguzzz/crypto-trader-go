@@ -295,7 +295,7 @@ func TestDailyBreaker(t *testing.T) {
 	if !b.checkBreaker(md.Now()) {
 		t.Fatal("not tripped at −51.5")
 	}
-	err := b.checkOpen(Signal{InstanceID: 2, InstID: btc, Action: OpenLong, StopLoss: 1}, 100000, md.Now())
+	err := b.checkOpen(Signal{InstanceID: 2, InstID: btc, Action: OpenLong, StopLoss: 1}, 100000, md.Now(), false)
 	if err == nil || !strings.Contains(err.Error(), "日内熔断") {
 		t.Fatalf("open allowed while halted: %v", err)
 	}

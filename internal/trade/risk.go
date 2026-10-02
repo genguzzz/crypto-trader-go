@@ -108,13 +108,15 @@ func clamp01(x, def float64) float64 {
 }
 
 // checkOpen applies the account rules to an opening signal (caller holds b.mu). ref is the
-// reference entry price.
-func (b *book) checkOpen(sg Signal, ref float64, now int64) error {
+// reference entry price. The re-entry cooldown follows any full close of the instrument in the
+// account; reverse (the open half of a reverse, checked before its close is sent) is exempt from it
+// and from the instance's own opposite position, which the reverse closes first.
+func (b *book) checkOpen(sg Signal, ref float64, now int64, reverse bool) error {
 	l := b.acc.Limits
 	if b.checkBreaker(now) {
 		return fmt.Errorf("日内熔断：今日（UTC+8）不再开仓")
 	}
-	if t, ok := b.lastClose[sg.InstID]; ok && l.CooldownMin > 0 && now-t < int64(l.CooldownMin)*minuteMs {
+	if t, ok := b.lastClose[sg.InstID]; ok && !reverse && l.CooldownMin > 0 && now-t < int64(l.CooldownMin)*minuteMs {
 		return fmt.Errorf("冷却中：%s 平仓后 %d 分钟内不再开仓", shortInst(sg.InstID), l.CooldownMin)
 	}
 	if l.RequireStop && sg.StopLoss <= 0 {
@@ -125,19 +127,26 @@ func (b *book) checkOpen(sg Signal, ref float64, now int64) error {
 		return fmt.Errorf("止盈价 %s 位于参考价 %s 的错误一侧", fmtPx(sg.TakeProfit), fmtPx(ref))
 	}
 	k := posKey{sg.InstanceID, sg.InstID}
-	if p := b.pos[k]; p != nil {
-		if (p.PosSide == "long") != long {
+	own := b.pos[k]
+	flipping := own != nil && (own.PosSide == "long") != long
+	if own != nil && !(reverse && flipping) {
+		if flipping {
 			return fmt.Errorf("已有反向持仓，请先平仓")
 		}
-	} else {
-		for _, p := range b.pos {
-			if p.InstID == sg.InstID && (p.PosSide == "long") != long {
-				return fmt.Errorf("账户内另一实例持有反向仓位")
-			}
+		return nil // adding to the position
+	}
+	// a new position (a reverse's own position is about to close, so it does not count)
+	for key, p := range b.pos {
+		if key != k && p.InstID == sg.InstID && (p.PosSide == "long") != long {
+			return fmt.Errorf("账户内另一实例持有反向仓位")
 		}
-		if l.MaxPositions > 0 && len(b.pos) >= l.MaxPositions {
-			return fmt.Errorf("持仓数已达上限 %d", l.MaxPositions)
-		}
+	}
+	n := len(b.pos)
+	if own != nil {
+		n--
+	}
+	if l.MaxPositions > 0 && n >= l.MaxPositions {
+		return fmt.Errorf("持仓数已达上限 %d", l.MaxPositions)
 	}
 	return nil
 }

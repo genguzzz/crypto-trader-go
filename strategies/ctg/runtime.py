@@ -15,7 +15,7 @@ from .signal import Signal, SignalError
 from .strategy import Strategy
 from .wire import Conn, ProtocolError
 
-SDK_VERSION = "1"
+SDK_VERSION = "2"
 MAX_STATE = 64 << 10
 
 
@@ -49,14 +49,23 @@ class Runtime:
         self.cls = cls
         self.strategy: Strategy | None = None
         self.ctx = Context(self)
-        self.ctx.timeframe = cls.timeframe
+        self.ctx.timeframe = cls.default_timeframe()
         self.qid = 0
-        self.bar: Bar | None = None
+        self.closes: dict[str, float] = {}  # close of each bar in the event (reference price)
         self.sent_state = ""
+        self.sent_status: str | None = None
+        self.status_failed = False
 
     # ---- outgoing ----
     def log(self, level: str, msg: str) -> None:
         self.conn.send({"type": "log", "level": level, "msg": msg[:4000]})
+
+    def notify(self, level: str, text: str, data: dict) -> None:
+        try:
+            json.dumps(data, allow_nan=False)
+        except (TypeError, ValueError):
+            data = {k: str(v) for k, v in data.items()}
+        self.conn.send({"type": "notify", "level": level, "text": text[:1000], "data": data})
 
     def _call(self, msg: dict) -> dict:
         self.qid += 1
@@ -89,13 +98,16 @@ class Runtime:
 
     def _resolve(self, sig: Signal) -> dict:
         entry = atr = None
-        if sig.needs_atr():
-            b = self.ctx.bars(sig.inst, self.cls.timeframe, 100)
-            if len(b):
-                entry = float(b.c[-1])
-                atr = float(ta.atr(b.h, b.l, b.c, 14)[-1])
-            if self.bar is not None and self.bar.inst == sig.inst and math.isfinite(self.bar.c):
-                entry = self.bar.c
+        if sig.action in ("open_long", "open_short"):
+            levels = (sig.stop_loss, sig.take_profit, sig.trailing_stop)
+            if any(isinstance(x, str) for x in levels):
+                entry = self.closes.get(sig.inst)
+                if sig.needs_atr() or entry is None or not math.isfinite(entry):
+                    b = self.ctx.bars(sig.inst, self.ctx.timeframe, 100)
+                    if len(b):
+                        if entry is None or not math.isfinite(entry):
+                            entry = float(b.c[-1])
+                        atr = float(ta.atr(b.h, b.l, b.c, 14)[-1])
         return sig.to_wire(entry, atr)
 
     def _emit(self, out: Any) -> None:
@@ -131,6 +143,7 @@ class Runtime:
             st = self.strategy = self.cls(inst.get("params") or {})
             ctx.instance_id = int(inst.get("id") or 0)
             ctx.mode = msg.get("mode") or "live"
+            ctx.timeframe = msg.get("timeframe") or self.cls.default_timeframe()
             ctx.params = {k: getattr(st, k) for k in self.cls.param_specs()}
             ctx.universe = list((inst.get("universe") or {}).get("static") or [])
             state = msg.get("state")
@@ -139,14 +152,37 @@ class Runtime:
             return st.on_start(ctx)
         if st is None:
             raise ProtocolError(f"{t} before init")
-        if t == "bar":
-            self.bar = Bar(msg.get("instId", ""), msg.get("tf", ""), msg.get("bar") or {})
-            return st.on_bar(ctx, self.bar)
+        if t == "bars":
+            tf = msg.get("tf", "")
+            bars = {x.get("instId", ""): Bar(x.get("instId", ""), tf, x.get("bar") or {}) for x in msg.get("bars") or []}
+            self.closes = {k: b.c for k, b in bars.items()}
+            if self.cls.batched():
+                return st.on_bars(ctx, bars)
+            errs = []
+            for inst in sorted(bars):  # one at a time, so each bar's signals go out before the next bar
+                try:
+                    self._emit(st.on_bar(ctx, bars[inst]))
+                except (ProtocolError, SystemExit, OSError):
+                    raise
+                except Exception:  # one instrument's error must not starve the others
+                    errs.append(traceback.format_exc(limit=8)[-4000:])
+            if errs:
+                raise HandlerErrors(errs)
+            return None
+        if t == "timer":
+            return st.on_timer(ctx, msg.get("name", ""))
         if t == "universe":
             ctx.universe = list(msg.get("current") or [])
             return st.on_universe_change(ctx, list(msg.get("added") or []), list(msg.get("removed") or []))
         if t == "fill":
-            return st.on_fill(ctx, record(msg.get("fill") or {}))
+            fill = record(msg.get("fill") or {})
+            self._emit(st.on_fill(ctx, fill))
+            if fill.get("closed"):  # set by the host: this fill flattened the position
+                trade = record({"instId": fill.get("instId"), "posSide": fill.get("posSide"), "exitPx": fill.get("px"),
+                                "pnl": (fill.get("realizedPnl") or 0) - (fill.get("fee") or 0),
+                                "kind": fill.get("kind") or "fill", "ts": fill.get("ts")})
+                return st.on_position_closed(ctx, trade)
+            return None
         if t == "signal_result":
             return st.on_signal_result(ctx, record({k: msg.get(k) for k in ("signalId", "outcome", "reason")}))
         if t == "funding":
@@ -160,17 +196,37 @@ class Runtime:
         """Run one event; returns the handler error (already logged) or None."""
         self.ctx.now = int(msg.get("now") or 0)
         self.ctx._cache.clear()
-        self.bar = None
+        self.closes = {}
         err = None
         try:
             self._emit(self._dispatch(msg))
         except (ProtocolError, SystemExit, OSError):
             raise
+        except HandlerErrors as e:
+            for x in e.errs:
+                self.log("error", f"on_bar raised:\n{x}")
+            err = e.errs[-1]
         except Exception:
             err = traceback.format_exc(limit=8)[-4000:]
             self.log("error", f"{msg.get('type')} handler raised:\n{err}")
         self._flush_state()
+        self._flush_status()
         return err
+
+    def _flush_status(self) -> None:
+        st = self.strategy
+        if st is None or type(st).status is Strategy.status or self.status_failed:
+            return
+        try:
+            text = st.status(self.ctx)
+        except Exception:
+            self.status_failed = True  # report once, then stop asking
+            self.log("error", "status() raised:\n" + traceback.format_exc(limit=4)[-2000:])
+            return
+        text = "" if text is None else str(text)[:300]
+        if text != self.sent_status:
+            self.conn.send({"type": "status", "msg": text})
+            self.sent_status = text
 
     def run(self) -> int:
         while True:
@@ -190,6 +246,14 @@ class Runtime:
             self.conn.send(done)
             if msg.get("type") == "stop":
                 return 0
+
+
+class HandlerErrors(Exception):
+    """on_bar raised for one or more instruments of a batch (tracebacks in errs)."""
+
+    def __init__(self, errs: list[str]):
+        super().__init__(errs[-1])
+        self.errs = errs
 
 
 def _num(v: Any) -> float:

@@ -34,6 +34,7 @@ type replayer struct {
 	mu      sync.RWMutex
 	now     int64
 	bars    map[string]*barSeries // base bars
+	fine    map[string]*barSeries // 1m bars for timeframes below an hourly base (read on demand)
 	hourly  map[string]*barSeries // 1H bars for factors
 	oi      map[string][]store.OISample
 	funding map[string][]store.FundingSample // settled, ascending
@@ -61,7 +62,7 @@ func newReplayer(st *store.Store, specs func(string) (Spec, bool), from, to, bas
 		table = "candles_1h"
 	}
 	return &replayer{st: st, db: st.DB, specs: specs, from: from, to: to, base: base, table: table, now: from,
-		bars: map[string]*barSeries{}, hourly: map[string]*barSeries{}, oi: map[string][]store.OISample{},
+		bars: map[string]*barSeries{}, fine: map[string]*barSeries{}, hourly: map[string]*barSeries{}, oi: map[string][]store.OISample{},
 		funding: map[string][]store.FundingSample{}, scores: map[string]*scoreSet{}}
 }
 
@@ -176,15 +177,17 @@ func (r *replayer) Bars(id, tf string, n int) ([]Bar, error) {
 	if !ok {
 		return nil, fmt.Errorf("timeframe must be one of 1m,5m,15m,1H,4H,1D")
 	}
-	if step < r.base || step%r.base != 0 {
-		return nil, fmt.Errorf("回测基础周期为 %s，无法提供 %s K 线", map[int64]string{minuteMs: "1m", hourMs: "1H"}[r.base], tf)
-	}
 	n = max(1, min(n, 1000))
 	r.mu.Lock()
 	now := r.now
 	end := now / step * step
 	from := end - int64(n)*step
-	s := r.series(r.bars, r.table, id, from)
+	var s *barSeries
+	if step < r.base { // e.g. 15m bars in a 1H backtest: from 1m history, as far as it reaches
+		s = r.series(r.fine, "candles_1m", id, from)
+	} else {
+		s = r.series(r.bars, r.table, id, from)
+	}
 	r.mu.Unlock()
 	lo := sort.Search(len(s.bars), func(i int) bool { return s.bars[i].Ts >= from })
 	var out []Bar
@@ -400,7 +403,7 @@ func (r *replayer) Score(rule, id string) (float64, float64, bool) {
 	if !ok || (x.long == nil && x.short == nil) {
 		return 0, 0, false
 	}
-	var l, s float64
+	l, s := math.NaN(), math.NaN() // an unscored side
 	if x.long != nil {
 		l = *x.long
 	}

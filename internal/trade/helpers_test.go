@@ -109,10 +109,17 @@ type fakeRunner struct {
 	// onBar is the strategy: it runs inside Session.Bar (like Python between the event and done)
 	onBar   func(s *fakeSession, instID, tf string, b Bar)
 	onStart func(s *fakeSession)
+	check   func(code string) CheckResult
 }
 
 func (r *fakeRunner) Describe(context.Context) ([]StrategyVersion, error) { return r.versions, nil }
 func (r *fakeRunner) Available() bool                                     { return true }
+func (r *fakeRunner) Check(_ context.Context, code string) (CheckResult, error) {
+	if r.check != nil {
+		return r.check(code), nil
+	}
+	return CheckResult{Diagnostics: []Diagnostic{}, Strategies: []StrategyVersion{{Name: "user-x", Timeframe: "1H", Params: []ParamSpec{}}}}, nil
+}
 func (r *fakeRunner) Start(ctx context.Context, inst Instance, ver StrategyVersion, mode Mode, state []byte, md MarketData, sink SignalSink) (Session, error) {
 	s := &fakeSession{r: r, inst: inst, mode: mode, md: md, sink: sink, done: make(chan struct{}), results: map[int64]SignalOutcome{}, startState: state}
 	r.mu.Lock()
@@ -158,16 +165,23 @@ func (s *fakeSession) fail(f string, a ...any) {
 	s.errs = append(s.errs, fmt.Sprintf(f, a...))
 	s.mu.Unlock()
 }
-func (s *fakeSession) Bar(ctx context.Context, instID, tf string, b Bar) error {
-	s.mu.Lock()
-	s.events = append(s.events, "bar:"+instID)
-	s.bars = append(s.bars, b)
-	s.mu.Unlock()
-	if s.r.onBar != nil {
-		s.r.onBar(s, instID, tf, b)
+func (s *fakeSession) Bars(ctx context.Context, tf string, items []InstBar) error {
+	for _, x := range items {
+		s.mu.Lock()
+		s.events = append(s.events, "bar:"+x.InstID)
+		s.bars = append(s.bars, x.Bar)
+		s.mu.Unlock()
+		if s.r.onBar != nil {
+			s.r.onBar(s, x.InstID, tf, x.Bar)
+		}
 	}
 	return nil
 }
+func (s *fakeSession) Timer(ctx context.Context, name string) error {
+	s.log("timer:" + name)
+	return nil
+}
+func (s *fakeSession) Status() string { return "" }
 func (s *fakeSession) Universe(ctx context.Context, added, removed, current []string) error {
 	s.mu.Lock()
 	s.universe = current

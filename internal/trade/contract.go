@@ -156,7 +156,7 @@ type Universe struct {
 
 type ScreenerQuery struct {
 	Rule     string                `json:"rule,omitempty"` // rule id; sort by its score on Side
-	Side     string                `json:"side,omitempty"` // long | short
+	Side     string                `json:"side,omitempty"` // long | short | both (the stronger side)
 	Top      int                   `json:"top"`
 	MinScore float64               `json:"minScore,omitempty"`
 	Filter   map[string][2]float64 `json:"filter,omitempty"`  // field → [min,max] on fact-panel values (NaN-free)
@@ -165,23 +165,59 @@ type ScreenerQuery struct {
 
 // StrategyVersion is an immutable (code, param schema) pair. ID = first 12 hex of sha256(code).
 type StrategyVersion struct {
-	ID              string      `json:"id"`
-	Name            string      `json:"name"` // class-level name, e.g. "majors-trend"
-	File            string      `json:"file"` // path under strategies/
-	Description     string      `json:"description"`
-	Timeframe       string      `json:"timeframe"`
-	Params          []ParamSpec `json:"params"`
-	DefaultUniverse Universe    `json:"defaultUniverse"`
-	Code            string      `json:"code,omitempty"`
-	CreatedAt       int64       `json:"createdAt"`
+	ID              string       `json:"id"`
+	Name            string       `json:"name"` // class-level name, e.g. "majors-trend"
+	File            string       `json:"file"` // path under strategies/
+	Description     string       `json:"description"`
+	Timeframe       string       `json:"timeframe"`
+	Params          []ParamSpec  `json:"params"`
+	DefaultUniverse Universe     `json:"defaultUniverse"`
+	Meta            StrategyMeta `json:"meta"`
+	Code            string       `json:"code,omitempty"`
+	CreatedAt       int64        `json:"createdAt"`
 }
+
+// StrategyMeta is what a strategy class declares besides its params (SDK ≥ 2).
+type StrategyMeta struct {
+	CanShort bool              `json:"canShort,omitempty"` // may emit open_short
+	CanLong  bool              `json:"canLong,omitempty"`  // may emit open_long
+	Warmup   int               `json:"warmup,omitempty"`   // bars of history the strategy reads
+	Schedule map[string]string `json:"schedule,omitempty"` // timer name → interval ("15m", "1H"), on_timer
+	Batch    bool              `json:"batch,omitempty"`    // overrides on_bars (one event per bar time)
+	Builtin  bool              `json:"builtin,omitempty"`  // shipped in strategies/library (read-only in the editor)
+	SourceID int64             `json:"sourceId,omitempty"` // user strategy this version was published from
+	Draft    bool              `json:"draft,omitempty"`    // registered for a trial run only; hidden from lists
+}
+
+// allows reports whether the strategy declared it may take an opening action. Versions that declare
+// neither direction (SDK 1, or strategies that only send messages) are not restricted.
+func (m StrategyMeta) allows(a Action) bool {
+	if !m.CanLong && !m.CanShort {
+		return true
+	}
+	return (a != OpenLong || m.CanLong) && (a != OpenShort || m.CanShort)
+}
+
+// Param types. Every value travels as a number: bool 0/1, choice and timeframe the option index.
+const (
+	PTFloat     = "float"
+	PTInt       = "int"
+	PTBool      = "bool"
+	PTChoice    = "choice"
+	PTTimeframe = "timeframe"
+)
 
 type ParamSpec struct {
 	Name      string   `json:"name"`
+	Type      string   `json:"type,omitempty"` // "" = float (SDK 1)
 	Default   float64  `json:"default"`
 	Min       *float64 `json:"min,omitempty"`
 	Max       *float64 `json:"max,omitempty"`
 	Step      *float64 `json:"step,omitempty"`
+	Options   []string `json:"options,omitempty"` // choice / timeframe
+	Labels    []string `json:"labels,omitempty"`  // display names of Options (optional)
+	Group     string   `json:"group,omitempty"`
+	Label     string   `json:"label,omitempty"` // display name (default: Name)
 	Desc      string   `json:"desc,omitempty"`
 	AITunable bool     `json:"aiTunable,omitempty"`
 }
@@ -198,6 +234,7 @@ type Instance struct {
 	Exec          ExecMode           `json:"exec"`
 	State         InstanceState      `json:"state"`
 	StateReason   string             `json:"stateReason,omitempty"`
+	Status        string             `json:"status,omitempty"` // the strategy's own status() line (running instances)
 	ConfigVersion int                `json:"configVersion"`
 	Heartbeat     int64              `json:"heartbeat"` // ms, last event acknowledged
 	CreatedAt     int64              `json:"createdAt"`
@@ -213,9 +250,12 @@ type Signal struct {
 	StopLoss      float64       `json:"stopLoss,omitempty"`   // absolute price (SDK resolves "2atr")
 	TakeProfit    float64       `json:"takeProfit,omitempty"` // absolute price
 	MaxSlippageBp float64       `json:"maxSlippageBp,omitempty"`
-	Leverage      float64       `json:"leverage,omitempty"`   // requested; capped by Limits.MaxLeverage
-	ReduceFrac    float64       `json:"reduceFrac,omitempty"` // for Reduce
-	TTLms         int64         `json:"ttlMs,omitempty"`      // default 5 min
+	Leverage      float64       `json:"leverage,omitempty"`    // requested; capped by Limits.MaxLeverage
+	ReduceFrac    float64       `json:"reduceFrac,omitempty"`  // for Reduce
+	TTLms         int64         `json:"ttlMs,omitempty"`       // default 5 min
+	Reverse       bool          `json:"reverse,omitempty"`     // open: first close this instance's opposite position (no cooldown)
+	TrailDist     float64       `json:"trailDist,omitempty"`   // open: trailing stop distance (price units)
+	TimeLimitMs   int64         `json:"timeLimitMs,omitempty"` // open: close the position after this long
 	Reason        string        `json:"reason"`
 	Ts            int64         `json:"ts"`     // decision time (bar close, exchange time), ms
 	RecvTs        int64         `json:"recvTs"` // local receive time, ms
@@ -264,6 +304,8 @@ type Fill struct {
 	RealizedPnl float64 `json:"realizedPnl"` // for closing fills, before fee
 	Liquidation bool    `json:"liquidation,omitempty"`
 	Ts          int64   `json:"ts"`
+	Kind        string  `json:"kind,omitempty"`   // fill | stop | target | time | liquidation (events only, not stored)
+	Closed      bool    `json:"closed,omitempty"` // this fill closed the position (events only, not stored)
 }
 
 type Position struct {
@@ -328,7 +370,7 @@ type MarketData interface {
 	Bars(instID, tf string, n int) ([]Bar, error)     // tf: 1m 5m 15m 1H 4H 1D; oldest first; confirmed only
 	Factors(instID string) (map[string]float64, bool) // fact-panel values of the last confirmed minute
 	Screener(q ScreenerQuery) ([]ScreenRow, error)
-	Score(rule, instID string) (long, short float64, ok bool)
+	Score(rule, instID string) (long, short float64, ok bool)    // an unscored side is NaN
 	FundingRate(instID string, at int64) (rate float64, ok bool) // settled rate for the settlement at `at`
 	Keep(instID string, on bool)                                 // keep the instrument streaming while a position/universe needs it
 }
@@ -352,14 +394,15 @@ type Interactor interface {
 }
 
 type Event struct {
-	Kind      string   `json:"kind"` // signal | order | fill | cancel | stop | target | liquidation | reject | breaker | instance | ai | daily
-	AccountID int64    `json:"accountId"`
-	Account   string   `json:"account"`
-	Mode      Mode     `json:"mode"`
-	Title     string   `json:"title"` // one line, Chinese, e.g. "开多成交"
-	Lines     []string `json:"lines"`
-	Ts        int64    `json:"ts"`
-	Ref       string   `json:"ref,omitempty"` // e.g. "ord-8f2c"
+	Kind      string         `json:"kind"` // signal | order | fill | cancel | stop | target | time | liquidation | reject | breaker | instance | ai | daily | strategy
+	AccountID int64          `json:"accountId"`
+	Account   string         `json:"account"`
+	Mode      Mode           `json:"mode"`
+	Title     string         `json:"title"` // one line, Chinese, e.g. "开多成交"
+	Lines     []string       `json:"lines"`
+	Ts        int64          `json:"ts"`
+	Ref       string         `json:"ref,omitempty"`  // e.g. "ord-8f2c"
+	Data      map[string]any `json:"data,omitempty"` // machine-readable payload (strategy messages, for webhooks)
 }
 
 type Prompt struct {
@@ -414,6 +457,18 @@ type Decision struct {
 	LatencyMs   int64              `json:"latencyMs"`
 }
 
+// InstBar is one instrument's bar in a batch delivered at one bar time.
+type InstBar struct {
+	InstID string
+	Bar    Bar
+}
+
+// SeriesPoint is one bucket of a data series (ts = bucket open, ms).
+type SeriesPoint struct {
+	Ts int64   `json:"ts"`
+	V  float64 `json:"v"`
+}
+
 // SignalSink is what the strategy host calls. Submit validates and persists the signal and returns
 // its id immediately; processing (AI, confirm, risk, order) continues asynchronously in live mode and
 // synchronously in backtest mode (the replayer waits for it before advancing).
@@ -422,6 +477,11 @@ type SignalSink interface {
 	Position(instanceID int64, instID string) (Position, bool)
 	Positions(instanceID int64) []Position
 	AccountView(instanceID int64) (Account, bool)
+	// Series reads a data series of instID as of the instance's clock (oi, funding, buy, sell, delta).
+	Series(instanceID int64, instID, field, tf string, n int) ([]SeriesPoint, error)
+	// Notify delivers a strategy message (ctx.notify); Log records a strategy log line (ctx.log).
+	Notify(instanceID int64, level, text string, data map[string]any)
+	Log(instanceID int64, level, msg string)
 }
 
 // ---------- strategy runtime (implemented by internal/strategyhost) ----------
@@ -432,19 +492,50 @@ type Runner interface {
 	Describe(ctx context.Context) ([]StrategyVersion, error)
 	// Start spawns a process for the instance and completes the init handshake (on_start).
 	Start(ctx context.Context, inst Instance, ver StrategyVersion, mode Mode, state []byte, md MarketData, sink SignalSink) (Session, error)
+	// Check compiles and inspects strategy source for the editor (nothing is stored or run).
+	Check(ctx context.Context, code string) (CheckResult, error)
 	Available() bool // supervisor connected
+}
+
+// CheckResult is what the editor shows for a piece of strategy source.
+type CheckResult struct {
+	Diagnostics []Diagnostic      `json:"diagnostics"`
+	Strategies  []StrategyVersion `json:"strategies"` // declared classes (no ID / code)
+}
+
+// Diagnostic is one problem at a 1-based line and 0-based column.
+type Diagnostic struct {
+	Line     int    `json:"line"`
+	Col      int    `json:"col"`
+	EndLine  int    `json:"endLine,omitempty"`
+	EndCol   int    `json:"endCol,omitempty"`
+	Severity string `json:"severity"` // error | warning
+	Message  string `json:"message"`
+}
+
+// Fatal reports whether any diagnostic is an error.
+func (c CheckResult) Fatal() bool {
+	for _, d := range c.Diagnostics {
+		if d.Severity == "error" {
+			return true
+		}
+	}
+	return false
 }
 
 // Session is one running instance process. Every method blocks until the process acknowledged the
 // event (lockstep) or ctx/5 s timeout; a timeout kills the process and returns ErrFaulted.
 type Session interface {
-	Bar(ctx context.Context, instID, tf string, b Bar) error
+	// Bars delivers the bars of every universe instrument that closed at one bar time.
+	Bars(ctx context.Context, tf string, bars []InstBar) error
+	Timer(ctx context.Context, name string) error
 	Universe(ctx context.Context, added, removed, current []string) error
 	Fill(ctx context.Context, f Fill) error
 	SignalResult(ctx context.Context, signalID int64, outcome SignalOutcome, reason string) error
 	Funding(ctx context.Context, instID string, rate, amount float64) error
 	Stop(ctx context.Context) error
 	State() []byte         // latest ctx.state (persist it)
+	Status() string        // latest status() line of the strategy
 	Done() <-chan struct{} // closed when the process exits
 	Err() error            // why it exited (nil after Stop)
 }

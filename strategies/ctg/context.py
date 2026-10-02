@@ -68,6 +68,19 @@ class Bars:
         return len(self.c)
 
 
+class Series:
+    """A data series, oldest first: numpy arrays ts (bucket open, ms) and v."""
+
+    __slots__ = ("ts", "v")
+
+    def __init__(self, rows: list):
+        self.ts = np.array([int(r.get("ts") or 0) for r in rows], dtype=np.int64)
+        self.v = np.array([_f(r.get("v")) for r in rows], dtype=float)
+
+    def __len__(self) -> int:
+        return len(self.v)
+
+
 class Context:
     """Read access to market data and the account, plus `state` (a dict persisted after every event)."""
 
@@ -93,6 +106,36 @@ class Context:
         """Fact-panel values of the last confirmed minute (missing → NaN); {} if unknown."""
         d = self._rt.query("factors", {"instId": inst}) or {}
         return {k: _f(v) for k, v in d.items()}
+
+    def series(self, inst: str, field: str, tf: str | None = None, n: int = 100) -> Series:
+        """Last n complete buckets of a data series (cached within one event):
+        oi (open interest USDT at the bucket close), funding (settled rates, one per settlement),
+        buy / sell / delta (taker buy, sell, buy − sell notional USDT)."""
+        key = ("series", inst, field, tf or self.timeframe, int(n))
+        if key not in self._cache:
+            rows = self._rt.query("series", {"instId": inst, "field": field, "tf": key[3], "n": key[4]}) or []
+            self._cache[key] = Series(rows)
+        return self._cache[key]
+
+    def rank(self, rule: str, side: str = "long", among: list[str] | None = None, min_score: float | None = None,
+             top: int | None = None) -> list[Record]:
+        """Instruments of the active pool ranked by a rule's score, best first. side: long | short | both
+        (each row then takes its stronger side). Rows: inst_id, side, score, long, short, values.
+        among limits the ranking to those instruments."""
+        rows = self.screener(rule, side, 200, None)
+        want = set(among) if among is not None else None
+        out = []
+        for r in rows:
+            if want is not None and r.inst_id not in want:
+                continue
+            lg, sh = _f(r.get("long")), _f(r.get("short"))
+            s = side if side != "both" else ("short" if sh > lg else "long")
+            score = sh if s == "short" else lg
+            if math.isnan(score) or (min_score is not None and score < min_score):
+                continue
+            out.append(Record(inst_id=r.inst_id, side=s, score=score, long=lg, short=sh, values=r.get("values") or {}))
+        out.sort(key=lambda x: (-x.score, x.inst_id))
+        return out[:top] if top else out
 
     def screener(self, rule: str = "", side: str = "long", top: int = 20, min_score: float | None = None,
                  filter: dict | None = None) -> list[Record]:
@@ -128,4 +171,11 @@ class Context:
         return self._rt.submit(signal)
 
     def log(self, msg: str, level: str = "info") -> None:
+        """A line in the instance's run log (shown on its card and in trial runs)."""
         self._rt.log(level, str(msg))
+
+    def notify(self, text: str, level: str = "info", **data) -> None:
+        """Send a message to the owner's channels (Telegram, webhook) — live instances only; backtests
+        and trial runs keep it in the run log. At most 30 per hour; identical text once per 10 minutes.
+        Extra keyword arguments travel as data (webhook JSON, extra lines in Telegram)."""
+        self._rt.notify(level, str(text), data)

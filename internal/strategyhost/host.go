@@ -193,6 +193,7 @@ type supervisor struct {
 	w       *wire
 	mu      sync.Mutex
 	pending map[int64]chan []describedClass
+	checks  map[int64]chan checkResult
 	gone    chan struct{}
 }
 
@@ -204,7 +205,7 @@ func (h *Host) Available() bool {
 }
 
 func (h *Host) supervise(w *wire) {
-	sp := &supervisor{w: w, pending: map[int64]chan []describedClass{}, gone: make(chan struct{})}
+	sp := &supervisor{w: w, pending: map[int64]chan []describedClass{}, checks: map[int64]chan checkResult{}, gone: make(chan struct{})}
 	h.mu.Lock()
 	old := h.sup
 	h.sup = sp
@@ -254,6 +255,16 @@ func (h *Host) supervise(w *wire) {
 			sp.mu.Unlock()
 			if ch != nil {
 				ch <- m.Strategies
+			}
+		case "check_result":
+			sp.mu.Lock()
+			ch := sp.checks[m.ID]
+			delete(sp.checks, m.ID)
+			sp.mu.Unlock()
+			if ch != nil && m.Result != nil {
+				ch <- *m.Result
+			} else if ch != nil {
+				ch <- checkResult{Diagnostics: []trade.Diagnostic{{Line: 1, Severity: "error", Message: "empty check result"}}}
 			}
 		case "exited":
 			h.exited(m.Instance, m.Token, m.Code, m.Stderr)
@@ -341,6 +352,7 @@ func (h *Host) Describe(ctx context.Context) ([]trade.StrategyVersion, error) {
 			Timeframe:       d.Timeframe,
 			Params:          d.Params,
 			DefaultUniverse: d.Universe,
+			Meta:            d.Meta,
 			Code:            d.Code,
 		}
 		if v.Params == nil {
@@ -354,6 +366,53 @@ func (h *Host) Describe(ctx context.Context) ([]trade.StrategyVersion, error) {
 		h.classes[k] = v
 	}
 	h.mu.Unlock()
+	return out, nil
+}
+
+// Check asks the supervisor to inspect strategy source in a throwaway process.
+func (h *Host) Check(ctx context.Context, code string) (trade.CheckResult, error) {
+	h.mu.Lock()
+	sp := h.sup
+	h.nextID++
+	id := h.nextID
+	h.mu.Unlock()
+	if sp == nil {
+		return trade.CheckResult{}, ErrUnavailable
+	}
+	ch := make(chan checkResult, 1)
+	sp.mu.Lock()
+	sp.checks[id] = ch
+	sp.mu.Unlock()
+	defer func() {
+		sp.mu.Lock()
+		delete(sp.checks, id)
+		sp.mu.Unlock()
+	}()
+	if err := sp.w.send(map[string]any{"type": "check", "id": id, "code": code}); err != nil {
+		return trade.CheckResult{}, fmt.Errorf("check: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, h.opts.DescribeTimeout)
+	defer cancel()
+	var got checkResult
+	select {
+	case got = <-ch:
+	case <-sp.gone:
+		return trade.CheckResult{}, ErrUnavailable
+	case <-ctx.Done():
+		return trade.CheckResult{}, fmt.Errorf("check: %w", ctx.Err())
+	}
+	out := trade.CheckResult{Diagnostics: got.Diagnostics, Strategies: []trade.StrategyVersion{}}
+	if out.Diagnostics == nil {
+		out.Diagnostics = []trade.Diagnostic{}
+	}
+	for _, d := range got.Strategies {
+		v := trade.StrategyVersion{Name: d.Name, Description: d.Description, Timeframe: d.Timeframe, Params: d.Params,
+			DefaultUniverse: d.Universe, Meta: d.Meta}
+		if v.Params == nil {
+			v.Params = []trade.ParamSpec{}
+		}
+		out.Strategies = append(out.Strategies, v)
+	}
 	return out, nil
 }
 
@@ -410,7 +469,8 @@ func (h *Host) Start(ctx context.Context, inst trade.Instance, ver trade.Strateg
 	if len(state) > 0 && json.Valid(state) {
 		st = json.RawMessage(state)
 	}
-	err = s.event(ctx, "init", map[string]any{"instance": inst, "strategy": verNoCode, "state": st, "mode": mode})
+	err = s.event(ctx, "init", map[string]any{"instance": inst, "strategy": verNoCode, "state": st, "mode": mode,
+		"timeframe": s.tf})
 	var he *HandlerError
 	if errors.As(err, &he) {
 		h.log.Printf("%s: on_start raised: %s", s.prefix, truncate(he.Msg, 2000))
@@ -431,8 +491,8 @@ func (h *Host) attach(w *wire, m inMsg) {
 		_ = w.send(map[string]any{"type": "error", "error": "unauthorized"})
 		return
 	}
-	if m.SDK != "" && m.SDK != "1" {
-		h.log.Printf("%s: sdk version %q (host speaks 1)", s.prefix, m.SDK)
+	if m.SDK != "2" {
+		h.log.Printf("%s: sdk version %q (host speaks 2)", s.prefix, m.SDK)
 	}
 	close(s.attached)
 	s.readLoop()

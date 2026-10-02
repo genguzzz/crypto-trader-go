@@ -50,25 +50,50 @@ func (s *Service) OnMinute(snap *market.Snapshot) {
 	s.updateKeep()
 }
 
-// queueBars queues the bars of the instance timeframe that closed at T.
+// queueBars queues, for bar time T, one batch with the bars of the instance timeframe that closed
+// at T (instruments with a gap are left out) and the timers that are due.
 func (s *Service) queueBars(ri *instRT, T int64) {
-	tf := ri.ver.Timeframe
-	step, ok := TFMillis(tf)
-	if !ok || T%step != 0 {
-		return
-	}
-	for _, id := range ri.currentUniverse() {
-		bars, err := ri.b.market().Bars(id, tf, 2)
-		if err != nil || len(bars) == 0 {
-			continue
+	tf := ri.timeframe()
+	if step, ok := TFMillis(tf); ok && T%step == 0 {
+		var items []InstBar
+		for _, id := range ri.currentUniverse() {
+			bars, err := ri.b.market().Bars(id, tf, 2)
+			if err != nil || len(bars) == 0 || bars[len(bars)-1].Ts != T-step {
+				continue
+			}
+			items = append(items, InstBar{InstID: id, Bar: bars[len(bars)-1]})
 		}
-		bar := bars[len(bars)-1]
-		if bar.Ts != T-step {
-			continue // no confirmed bar for this period (gap)
+		if len(items) > 0 {
+			// the host allows 5 s + 0.5 s per instrument for a batch; leave it room to answer first
+			ri.push(sessCall{"bars", func(ctx context.Context, x Session) error { return x.Bars(ctx, tf, items) },
+				s.opts.SessionTimeout + time.Duration(len(items))*600*time.Millisecond})
 		}
-		inst := id
-		ri.push(sessCall{"bar", func(ctx context.Context, x Session) error { return x.Bar(ctx, inst, tf, bar) }})
 	}
+	for _, name := range sortedKeys(ri.ver.Meta.Schedule) {
+		if every, ok := TFMillis(ri.ver.Meta.Schedule[name]); ok && T%every == 0 {
+			ri.push(sessCall{name: "timer", fn: func(ctx context.Context, x Session) error { return x.Timer(ctx, name) }})
+		}
+	}
+}
+
+// minStep is the shortest clock an instance needs (its timeframe or a timer).
+func minStep(inst Instance, ver StrategyVersion) int64 {
+	step, _ := TFMillis(InstanceTimeframe(inst, ver))
+	for _, v := range ver.Meta.Schedule {
+		if x, ok := TFMillis(v); ok && (step == 0 || x < step) {
+			step = x
+		}
+	}
+	return step
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // minuteBook settles funding, rolls the day / checks the breaker and records the equity sample.
@@ -77,6 +102,7 @@ func (s *Service) minuteBook(b *book, T int64) {
 	now := b.market().Now()
 	b.settleFunding(T, now, s.opts.FundingGrace.Milliseconds())
 	b.checkBreaker(T)
+	b.expire(T)
 	eq := b.equity()
 	b.mu.Unlock()
 	if _, err := s.db.Exec(`INSERT OR REPLACE INTO trade_equity VALUES(?,?,?)`, b.acc.ID, T, eq); err != nil {
@@ -89,17 +115,7 @@ func (s *Service) minuteBook(b *book, T int64) {
 // A missing settled rate means "no settlement at that hour" once grace has passed (live data
 // can arrive a little late; backtests pass grace 0). Caller holds b.mu.
 func (b *book) settleFunding(upTo, now, grace int64) {
-	keys := make([]posKey, 0, len(b.pos))
-	for k := range b.pos {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].id != keys[j].id {
-			return keys[i].id < keys[j].id
-		}
-		return keys[i].inst < keys[j].inst
-	})
-	for _, k := range keys {
+	for _, k := range b.sortedPosKeys() {
 		p := b.pos[k]
 		np := *p
 		for h := (p.FundedTo/hourMs + 1) * hourMs; h <= upTo; h += hourMs {

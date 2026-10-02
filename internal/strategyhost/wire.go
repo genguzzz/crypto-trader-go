@@ -83,6 +83,12 @@ type inMsg struct {
 	Code       int              `json:"code"`
 	Stderr     string           `json:"stderr"`
 	Strategies []describedClass `json:"strategies"`
+	Result     *checkResult     `json:"result"`
+}
+
+type checkResult struct {
+	Diagnostics []trade.Diagnostic `json:"diagnostics"`
+	Strategies  []describedClass   `json:"strategies"`
 }
 
 type signalMsg struct {
@@ -95,20 +101,31 @@ type signalMsg struct {
 	Leverage      float64      `json:"leverage"`
 	ReduceFrac    float64      `json:"reduceFrac"`
 	TTLms         int64        `json:"ttlMs"`
+	Reverse       bool         `json:"reverse"`
+	TrailDist     float64      `json:"trailDist"`
+	TimeLimitMs   int64        `json:"timeLimitMs"`
 	Reason        string       `json:"reason"`
+}
+
+// notifyMsg is ctx.notify; statusMsg carries the strategy's status() line.
+type notifyMsg struct {
+	Level string         `json:"level"`
+	Text  string         `json:"text"`
+	Data  map[string]any `json:"data"`
 }
 
 // describedClass is one strategy class reported by the supervisor's describe.
 type describedClass struct {
-	File        string            `json:"file"`
-	Class       string            `json:"class"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	Timeframe   string            `json:"timeframe"`
-	Params      []trade.ParamSpec `json:"params"`
-	Universe    trade.Universe    `json:"universe"`
-	Code        string            `json:"code"`
-	Error       string            `json:"error"`
+	File        string             `json:"file"`
+	Class       string             `json:"class"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Timeframe   string             `json:"timeframe"`
+	Params      []trade.ParamSpec  `json:"params"`
+	Universe    trade.Universe     `json:"universe"`
+	Meta        trade.StrategyMeta `json:"meta"`
+	Code        string             `json:"code"`
+	Error       string             `json:"error"`
 }
 
 // num maps NaN/Inf (not representable in JSON) to null.
