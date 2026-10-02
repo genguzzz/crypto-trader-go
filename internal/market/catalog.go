@@ -118,7 +118,7 @@ func (e *Engine) restoreInst(in *Inst, now int64) {
 
 // recording reports whether an instrument streams live (WS). Caller holds e.mu.
 func (e *Engine) recording(in *Inst, now int64) bool {
-	return in.Eligible || e.watch[in.ID] || now-e.views[in.ID] < RecordViewed.Milliseconds()
+	return in.Eligible || e.watch[in.ID] || e.keep[in.ID] || now-e.views[in.ID] < RecordViewed.Milliseconds()
 }
 
 // Touch marks a detail view: it (re)starts live streaming for instruments outside the recording
