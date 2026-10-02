@@ -11,11 +11,12 @@ import Loading from '../../components/ui/Loading.vue'
 const prompts = ref<Prompt[] | null>(null)
 const error = ref('')
 const busy = ref<string | null>(null)
-const done = ref<{ id: string; title: string; label: string; at: number }[]>([]) // answered in this tab
+const history = ref<Prompt[]>([]) // closed prompts (answered / expired), newest first
 
 async function load() {
   try {
-    const xs = await interactApi.prompts('open')
+    const [xs, all] = await Promise.all([interactApi.prompts('open'), interactApi.prompts('all', 50)])
+    history.value = all.filter(p => p.state && p.state !== 'open').slice(0, 20)
     const dl = (p: Prompt) => (typeof p.deadline === 'number' ? p.deadline : Date.parse(p.deadline))
     prompts.value = xs.slice().sort((a, b) => dl(a) - dl(b)) // most urgent first
     store.openPrompts = xs.length
@@ -26,6 +27,8 @@ async function load() {
 }
 useTradeLive(load, { interact: true, pollMs: 5000 })
 
+const choiceLabel = (p: Prompt) => p.options.find(o => o.key === p.choice)?.label || p.choice || '—'
+const byLabel = (by?: string) => (!by ? '' : by === 'web' ? '网页' : by === 'timeout' ? '超时默认' : by === 'cancelled' ? '已撤回' : by.startsWith('telegram') ? 'Telegram' : by)
 const now = ref(Date.now())
 let clock: number | undefined
 onMounted(() => { clock = window.setInterval(() => (now.value = Date.now()), 1000) })
@@ -35,9 +38,9 @@ async function answer(p: Prompt, key: string) {
   busy.value = p.id
   try {
     await interactApi.answer(p.id, key)
-    done.value.unshift({ id: p.id, title: p.event.title, label: p.options.find(o => o.key === key)?.label || key, at: Date.now() })
     prompts.value = (prompts.value || []).filter(x => x.id !== p.id)
     refreshPrompts()
+    load()
   } catch (e: any) {
     error.value = e.message
     load()
@@ -66,10 +69,15 @@ async function answer(p: Prompt, key: string) {
     <div class="list">
       <PromptCard v-for="p in prompts || []" :key="p.id" :p="p" :now="now" :busy="busy === p.id" @answer="k => answer(p, k)" />
     </div>
-    <div v-if="done.length" class="panel">
-      <h3>刚刚处理</h3>
+    <div v-if="history.length" class="panel">
+      <h3>最近处理</h3>
       <ul class="dn">
-        <li v-for="x in done" :key="x.id"><span class="muted tnum">{{ time(x.at, true) }}</span><span class="t">{{ x.title }}</span><span class="tag">{{ x.label }}</span></li>
+        <li v-for="x in history" :key="x.id">
+          <span class="muted tnum">{{ time(x.answeredAt || (typeof x.deadline === 'number' ? x.deadline : Date.parse(x.deadline)), true) }}</span>
+          <span class="t" :title="x.event.lines?.join('\n')">{{ x.event.title }}<small v-if="x.event.account" class="muted"> · {{ x.event.account }}</small></span>
+          <span class="tag" :class="x.state === 'expired' ? '' : x.choice === 'execute' || x.choice === 'half' ? 'good' : ''">{{ x.state === 'expired' && x.by !== 'timeout' ? '已过期' : choiceLabel(x) }}</span>
+          <span class="muted by">{{ byLabel(x.by) }}</span>
+        </li>
       </ul>
     </div>
   </div>
@@ -85,5 +93,6 @@ async function answer(p: Prompt, key: string) {
 .dn { list-style: none; margin: 0; padding: 0; }
 .dn li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
 .dn li:first-child { border-top: none; }
+.dn .by { flex: none; font-size: var(--fs-xs); width: 56px; text-align: right; }
 .dn .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

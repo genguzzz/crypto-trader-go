@@ -5,8 +5,8 @@ import type { Account } from '../../tradeApi'
 import { accountStatus, amt, day, modeLabel, pct, tone } from './meta'
 
 /** Account summary card for the accounts list: equity is the focus, PnL and counts below. */
-const props = defineProps<{ a: Account; running?: number }>()
-const st = computed(() => accountStatus(props.a, props.running))
+const props = defineProps<{ a: Account; running?: number; paused?: number }>()
+const st = computed(() => accountStatus(props.a, props.running, props.paused))
 const total = computed(() => props.a.equity - props.a.deposit)
 const totalPct = computed(() => (props.a.deposit > 0 ? total.value / props.a.deposit : null))
 const to = computed(() => (props.a.mode === 'backtest' ? `/trading/backtests/${props.a.id}` : `/trading/accounts/${props.a.id}`))
