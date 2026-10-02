@@ -280,6 +280,131 @@ function makeReport(acc) {
     { id: ++db.ids.prop, ts: T0 - 6 * DAY, accountId: 2, instanceId: i3.id, strategy: 'alt-momentum', decisionId: 280, current: { min_score: 70 }, params: { min_score: 55 }, rationale: '放宽入场分数以增加信号数量。', state: 'rejected', decidedAt: T0 - 6 * DAY + HOUR, note: '被新的建议取代' },
   )
 }
+
+// ---------- round trips + period candles (internal/trade trades.go) ----------
+db.trades = {}
+db.candles = {}
+const MORE = { 'ARB-USDT-SWAP': 0.4921, 'WIF-USDT-SWAP': 0.8834, 'ORDI-USDT-SWAP': 9.214, 'TIA-USDT-SWAP': 1.9873, 'FIL-USDT-SWAP': 2.4512 }
+Object.assign(PX, MORE)
+Object.assign(CTVAL, { 'ARB-USDT-SWAP': 10, 'WIF-USDT-SWAP': 1, 'ORDI-USDT-SWAP': 0.1, 'TIA-USDT-SWAP': 1, 'FIL-USDT-SWAP': 0.1 })
+/** 1H random-walk candles ending near today's price, [ts, o, h, l, c, vol, volQuote]. */
+function hourly(instId, from, to, vol) {
+  const n = Math.ceil((to - from) / HOUR)
+  const closes = new Array(n)
+  let c = PX[instId]
+  for (let i = n - 1; i >= 0; i--) { closes[i] = c; c = c / (1 + vol * gauss() + 0.00002) }
+  const rows = []
+  let prev = closes[0] * (1 + vol * gauss() * 0.3)
+  for (let i = 0; i < n; i++) {
+    const o = prev, cl = closes[i], hi = Math.max(o, cl) * (1 + Math.abs(gauss()) * vol * 0.6), lo = Math.min(o, cl) * (1 - Math.abs(gauss()) * vol * 0.6)
+    const v = 1000 + rnd() * 9000
+    rows.push([Math.floor(from / HOUR) * HOUR + i * HOUR, o, hi, lo, cl, v, v * cl * CTVAL[instId]])
+    prev = cl
+  }
+  return rows
+}
+function aggregate(rows, ms) {
+  const out = []
+  for (const r of rows) {
+    const t = Math.floor(r[0] / ms) * ms, last = out[out.length - 1]
+    if (!last || last[0] !== t) out.push([t, r[1], r[2], r[3], r[4], r[5], r[6]])
+    else { last[2] = Math.max(last[2], r[2]); last[3] = Math.min(last[3], r[3]); last[4] = r[4]; last[5] += r[5]; last[6] += r[6] }
+  }
+  return out
+}
+/**
+ * Generate n round trips over [from, to] on the given instruments with prices taken from their
+ * candles, and an hourly equity curve consistent with them (deposit + realized nets + open PnL noise).
+ */
+function genTrades(acc, insts, n, from, to, opts = {}) {
+  const lead = Math.min((to - from) / 6, 60 * HOUR)
+  const bars = {}
+  for (const id of insts) bars[id] = hourly(id, from - lead, to, id.startsWith('BTC') ? 0.004 : id.startsWith('ETH') ? 0.005 : 0.009)
+  db.candles[acc.id] = bars
+  const trades = []
+  let fid = 1, nextId = 1
+  const span = to - from
+  // walk each instrument forward in time: flat → trade → flat, about n / insts.length trades each
+  const cursor = {} // instId → earliest next open
+  const per = n / insts.length
+  for (let k = 0; k < n * 40 && trades.length < n; k++) {
+    const instId = insts[k % insts.length], b = bars[instId]
+    const gap = (span / per) * (0.15 + rnd() * 1.1)
+    const openTs = Math.floor(((cursor[instId] ?? from) + gap * (cursor[instId] ? 0.75 : rnd() * 0.5)) / HOUR) * HOUR
+    if (openTs >= to - HOUR) continue
+    const hold = Math.max(1, Math.round((opts.hold || 18) * (0.2 + rnd() * 1.8)))
+    const openIdx = Math.floor((openTs - b[0][0]) / HOUR)
+    const isOpen = opts.openLast && openTs > to - 2 * DAY && rnd() < 0.5
+    const closeIdx = Math.min(b.length - 1, openIdx + hold)
+    const closeTs = isOpen ? 0 : b[closeIdx][0]
+    if (!isOpen && closeTs >= to) continue
+    cursor[instId] = isOpen ? Infinity : closeTs
+    const long = rnd() < (opts.longBias ?? 0.62)
+    const entryPx = b[openIdx][4], exitPx = isOpen ? undefined : b[closeIdx][4]
+    const ctVal = CTVAL[instId], lev = pick([3, 3, 5, 5, 10])
+    const notional = (opts.size || 1500) * (0.25 + rnd() * 1.6)
+    const qty = +(notional / (entryPx * ctVal)).toFixed(ctVal >= 1 ? 0 : 2) || 1
+    const real = qty * ctVal * entryPx
+    const dir = long ? 1 : -1
+    const pnl = isOpen ? 0 : dir * ((exitPx ?? entryPx) - entryPx) * qty * ctVal
+    const fees = real * 0.0005 * (isOpen ? 1 : 2)
+    const funding = isOpen ? 0 : +(gauss() * real * 0.0002).toFixed(4)
+    const net = pnl - fees + funding
+    const stopLoss = +(entryPx * (1 - dir * 0.03)).toPrecision(6), takeProfit = +(entryPx * (1 + dir * 0.06)).toPrecision(6)
+    let exitKind = isOpen ? 'open' : net > real * 0.02 && rnd() < 0.6 ? 'target' : net < -real * 0.01 && rnd() < 0.55 ? 'stop' : 'signal'
+    if (!isOpen && rnd() < 0.012) exitKind = 'liquidation'
+    if (!isOpen && exitKind === 'signal' && rnd() < 0.05) exitKind = 'manual'
+    const side = long ? 'buy' : 'sell', exitSide = long ? 'sell' : 'buy'
+    const fills = [{ id: fid++, ts: openTs, side, qty, px: entryPx, fee: real * 0.0005, pnl: 0, kind: 'open', orderType: 'market' }]
+    if (!isOpen && hold > 6 && rnd() < 0.25) { // a partial take-profit on the way
+      const mid = b[openIdx + Math.floor(hold / 2)], rq = +(qty / 2).toFixed(ctVal >= 1 ? 0 : 2) || 1
+      fills.push({ id: fid++, ts: mid[0], side: exitSide, qty: rq, px: mid[4], fee: rq * ctVal * mid[4] * 0.0005, pnl: dir * (mid[4] - entryPx) * rq * ctVal, kind: 'reduce', orderType: 'limit' })
+    }
+    if (!isOpen) fills.push({ id: fid++, ts: closeTs, side: exitSide, qty: fills.length > 1 ? +(qty - fills[1].qty).toFixed(2) : qty, px: exitPx, fee: (exitPx ?? 0) * qty * ctVal * 0.0005, pnl: pnl - (fills[1]?.pnl ?? 0), kind: 'close', orderType: exitKind === 'stop' ? 'stop' : exitKind === 'target' ? 'target' : exitKind === 'liquidation' ? 'liquidation' : 'market' })
+    trades.push({
+      id: nextId++, instanceId: opts.instanceId || 0, instId, posSide: long ? 'long' : 'short', openTs, closeTs: closeTs || undefined, entryPx, exitPx, qty, ctVal,
+      notional: +real.toFixed(2), leverage: lev, margin: +(real / lev).toFixed(2), pnl: +pnl.toFixed(4), fees: +fees.toFixed(4), funding, net: +net.toFixed(4),
+      returnPct: +(net / (real / lev)).toFixed(4), exitKind, openReason: pick(opts.reasons || ['EMA20 上穿 EMA60，4H 收盘确认', '突破 24 根 K 线高点，放量 2.3 倍', '残差反转：1H 超跌 2.1σ']),
+      closeReason: isOpen ? undefined : exitKind === 'stop' ? '触发止损' : exitKind === 'target' ? '触发止盈' : exitKind === 'liquidation' ? '标记价穿过强平价' : exitKind === 'manual' ? '手动平仓' : pick(['趋势反转：EMA20 下穿 EMA60', '持有到期', '分数跌出前 10']),
+      stopLoss, takeProfit, aiDecisionId: opts.ai && rnd() < 0.7 ? 301 + Math.floor(rnd() * 12) : undefined, fills,
+    })
+  }
+  trades.sort((a, b2) => a.openTs - b2.openTs)
+  trades.forEach((t, i) => (t.id = 100 * acc.id + i + 1))
+  db.trades[acc.id] = trades
+  // hourly equity consistent with the trades
+  const eq = []
+  const closes = trades.filter(t => t.closeTs).sort((a, b2) => a.closeTs - b2.closeTs)
+  let ci = 0, realized = 0, noise = 0
+  for (let t = from; t <= to; t += HOUR) {
+    while (ci < closes.length && closes[ci].closeTs <= t) realized += closes[ci++].net
+    const open = trades.filter(x => x.openTs <= t && (!x.closeTs || x.closeTs > t))
+    let upnl = 0
+    for (const x of open) {
+      const b = bars[x.instId], i = Math.min(b.length - 1, Math.floor((t - b[0][0]) / HOUR))
+      upnl += (x.posSide === 'long' ? 1 : -1) * (b[i][4] - x.entryPx) * x.qty * x.ctVal
+    }
+    noise = noise * 0.85 + gauss() * acc.deposit * 0.00012
+    eq.push([t, +(acc.deposit + realized + upnl + noise).toFixed(2)])
+  }
+  db.equity[acc.id] = eq
+}
+{
+  const byAcc = id => db.accounts.find(a => a.id === id)
+  const a1 = byAcc(1), a2 = byAcc(2), a3 = byAcc(3)
+  genTrades(a1, ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP'], 24, T0 - 21 * DAY, T0, { size: 2500, openLast: true, instanceId: 21 })
+  genTrades(a2, ['DOGE-USDT-SWAP', 'SUI-USDT-SWAP', 'PEPE-USDT-SWAP', 'LINK-USDT-SWAP', 'AVAX-USDT-SWAP'], 18, T0 - 9 * DAY, T0, { size: 600, ai: true, openLast: true, instanceId: 23, hold: 8 })
+  genTrades(a3, ['BTC-USDT-SWAP', 'ETH-USDT-SWAP'], 32, a3.from, a3.to, { size: 3000, hold: 40, instanceId: 24 })
+  // dense fixture: a 1H pool strategy over 90 days, 253 round trips on 8 instruments
+  const from = T0 - 92 * DAY, to = T0 - 2 * DAY
+  const a5 = addAccount({ id: 5, name: '池子反转 · 回测（253 笔）', mode: 'backtest', deposit: 20000, from, to, createdAt: T0 - DAY })
+  addInstance(5, '3c4d5e6f7a8b', { state: 'done', heartbeat: T0 - DAY, name: 'pool-reversal', universe: { screener: { rule: 'trend-oi-confirm', side: 'long', top: 10, refresh: '1H' } } })
+  a5.backtest = { state: 'done', progress: 1, clock: to, startedAt: T0 - DAY, finishedAt: T0 - DAY + 95_000 }
+  genTrades(a5, ['SOL-USDT-SWAP', 'DOGE-USDT-SWAP', 'SUI-USDT-SWAP', 'ARB-USDT-SWAP', 'WIF-USDT-SWAP', 'ORDI-USDT-SWAP', 'TIA-USDT-SWAP', 'FIL-USDT-SWAP'], 253, from, to,
+    { size: 1800, hold: 6, longBias: 0.75, instanceId: 25, reasons: ['残差反转：1H 超跌 2.1σ，多头分 82', '残差反转：1H 超跌 1.8σ，多头分 77', '残差反转：1H 超跌 2.6σ，多头分 91'] })
+  for (const a of db.accounts) refreshDerived(a)
+}
+
 function openPrompts() {
   // two always-open prompts whose deadlines roll forward (stable for screenshots)
   const t = now()
@@ -387,6 +512,17 @@ async function mockApi(req, res, url) {
     Object.assign(a.backtest, { state: 'failed', error: '已取消', finishedAt: now() })
     db.instances.filter(i => i.accountId === a.id).forEach(i => (i.state = 'stopped'))
     return ok(res, a)
+  }
+  if ((r = p.match(/^trade\/accounts\/(\d+)\/trades$/))) return ok(res, db.trades[+r[1]] || [])
+  if ((r = p.match(/^trade\/accounts\/(\d+)\/candles$/))) {
+    const id = +r[1], inst = q.get('instId') || ''
+    const rows = db.candles[id]?.[inst]
+    if (!inst) return send(res, 400, { error: 'instId required' })
+    if (!rows) return ok(res, { instId: inst, bar: '1H', from: 0, to: 0, rows: [] })
+    const span = rows[rows.length - 1][0] - rows[0][0]
+    const bar = q.get('bar') || (span / HOUR <= 1500 ? '1H' : '4H')
+    const out = bar === '4H' ? aggregate(rows, 4 * HOUR) : bar === '1D' ? aggregate(rows, DAY) : rows
+    return ok(res, { instId: inst, bar, from: rows[0][0], to: rows[rows.length - 1][0] + HOUR, rows: out })
   }
   if (p === 'trade/strategies' && m === 'GET') {
     const names = [...new Set(VERSIONS.map(v => v.name))]

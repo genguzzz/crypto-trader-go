@@ -2,7 +2,7 @@
  * Colours for canvas charts (lightweight-charts, footprint, depth). Same values as the CSS tokens
  * in style.css — canvases can't read CSS variables, so both live here and there.
  */
-const rgb = { up: '37,167,80', down: '202,63,100', gold: '245,197,66', oi: '91,155,255', oiDown: '247,166,0' }
+const rgb = { up: '37,167,80', down: '202,63,100', gold: '245,197,66', oi: '91,155,255', oiDown: '247,166,0', lime: '188,255,47', ink: '250,250,250', warn: '247,166,0' }
 export const C = {
   bg: '#0e0e0e',        // --bg-1: charts sit on panels
   grid: '#191919',

@@ -22,14 +22,15 @@ function clear() {
 </script>
 
 <template>
-  <SettingsSection id="admin" title="交易权限" :icon="KeyRound">
+  <SettingsSection id="admin" title="管理员密钥" :icon="KeyRound">
     <template #tip>
-      在登录功能（#1）上线前，服务器用一个<b>管理员密钥</b>保护所有会改变状态的交易、交互和 AI 操作：建账户、启停策略、平仓、回答确认、修改通道与 AI 凭证。只看页面不需要密钥。<br />
+      <b>模拟盘不需要密钥</b>：建账户、回测、启停策略、平仓、回答确认、批准 AI 建议都可以直接操作。<br />
+      在登录功能（#1）上线前，服务器只用<b>管理员密钥</b>保护存放凭证和会花钱的操作：保存交互通道（Telegram Token）、发送测试、保存 / 撤销 AI 凭证、修改模型、AI 测试和提炼经验。<br />
       密钥由服务器运维设置，这里只是把它保存在<b>本设备浏览器</b>（localStorage），请求时放在请求头里发送；不保存也可以，操作时会弹窗询问。<br />
       公共电脑上不要保存；用完点“清除”。
     </template>
     <template #aside><span class="tag" :class="adminKeySet ? 'good' : ''">{{ adminKeySet ? '本设备已保存' : '未保存' }}</span></template>
-    <SettingRow label="管理员密钥" desc="只保存在本浏览器，用于交易、确认和凭证操作" for-id="adm-k" :changed="!!value">
+    <SettingRow label="管理员密钥" desc="只保存在本浏览器，用于修改通道与 AI 凭证、AI 测试" for-id="adm-k" :changed="!!value">
       <div class="line">
         <input id="adm-k" v-model="value" class="w" type="password" autocomplete="off" spellcheck="false" :placeholder="adminKeySet ? '已保存，输入新值可替换' : '管理员密钥'" @keydown.enter="save" />
         <button type="button" class="primary" :disabled="!value.trim()" @click="save">保存</button>

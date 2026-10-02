@@ -22,8 +22,8 @@ function submit() {
 <template>
   <Modal :open="adminPrompt.open" title="输入管理员密钥" @close="resolveAdminKey(null)">
     <form class="ak" @submit.prevent="submit">
-      <div class="ak-h"><KeyRound :size="16" class="muted" /><span class="sub">交易操作、确认与凭证修改需要管理员密钥</span>
-        <InfoTip>在登录功能（#1）上线前，服务器用一个管理员密钥保护所有会改变状态的交易、交互和 AI 接口；查看页面不需要。密钥由服务器运维设置，只保存在本设备浏览器里，可在“设置 → 交易权限”里清除。</InfoTip>
+      <div class="ak-h"><KeyRound :size="16" class="muted" /><span class="sub">修改凭证与 AI 调用需要管理员密钥</span>
+        <InfoTip>模拟盘操作不需要密钥。在登录功能（#1）上线前，服务器只用管理员密钥保护存放凭证和会花钱的操作（交互通道配置与测试、AI 凭证、模型、AI 测试与提炼）。密钥由服务器运维设置，只保存在本设备浏览器里，可在“设置 → 管理员密钥”里清除。</InfoTip>
       </div>
       <input ref="input" v-model="value" type="password" autocomplete="current-password" spellcheck="false" placeholder="管理员密钥" aria-label="管理员密钥" />
       <div class="rm"><Switch v-model="remember" aria-label="在此设备上记住" /> 在此设备上记住</div>
