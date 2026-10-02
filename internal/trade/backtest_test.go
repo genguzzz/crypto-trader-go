@@ -115,13 +115,13 @@ func TestBacktestLockstepNoLookAhead(t *testing.T) {
 	entry, exit := fills[1], fills[0]
 	firstClose := t0 + 5*minuteMs // the signal at the first 5m close fills at the next 1m open
 	o := minuteOpen(firstClose)
-	if entry.Ts != firstClose || !approx(entry.Px, o+o*1e-4+0.1, 1e-6) {
-		t.Fatalf("entry %+v, want %v @ %v", entry, firstClose, o+o*1e-4+0.1)
+	if entry.Ts != firstClose || !approx(entry.Px, snapTick(o+o*1e-4+0.1, 0.1, true), 1e-6) {
+		t.Fatalf("entry %+v, want %v @ %v", entry, firstClose, snapTick(o+o*1e-4+0.1, 0.1, true))
 	}
 	closeAt := t0 + 150*minuteMs
 	o = minuteOpen(closeAt)
-	if exit.Ts != closeAt || !approx(exit.Px, o-o*1e-4-0.1, 1e-6) {
-		t.Fatalf("exit %+v, want %v @ %v", exit, closeAt, o-o*1e-4-0.1)
+	if exit.Ts != closeAt || !approx(exit.Px, snapTick(o-o*1e-4-0.1, 0.1, false), 1e-6) {
+		t.Fatalf("exit %+v, want %v @ %v", exit, closeAt, snapTick(o-o*1e-4-0.1, 0.1, false))
 	}
 	if f := ledgerSum(s, acc.ID, "funding"); f >= 0 {
 		t.Fatalf("long paid no funding: %v", f)

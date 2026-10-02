@@ -313,7 +313,7 @@ func (b *book) execLive(o *Order, q Quote, capped bool, kind string, now int64) 
 		if q.Bid > 0 && q.Ask >= q.Bid {
 			half = (q.Ask - q.Bid) / 2
 		}
-		px := q.Last + (math.Max(half, spec.TickSz)+spec.TickSz)*sgn(buy)
+		px := snapTick(q.Last+(math.Max(half, spec.TickSz)+spec.TickSz)*sgn(buy), spec.TickSz, buy)
 		if worst <= 0 || (buy && px <= worst) || (!buy && px >= worst) {
 			qty, notional = want, want*px
 		}
@@ -496,7 +496,7 @@ func (b *book) processBar(inst string, bar Bar) {
 	half := bar.O * barSpreadBp / 2 / 1e4
 	for _, o := range b.instOrders(inst, func(o *Order) bool { return o.Type == OrdMarket && o.State == OsLive }) {
 		buy := o.Side == "buy"
-		px := bar.O + (half+spec.TickSz)*sgn(buy)
+		px := snapTick(bar.O+(half+spec.TickSz)*sgn(buy), spec.TickSz, buy)
 		if o.Price > 0 && ((buy && px > o.Price) || (!buy && px < o.Price)) {
 			b.cancel(b.s.db, o, fmt.Sprintf("开盘价超出滑点上限（%s）", fmtPx(o.Price)), bar.Ts)
 			delete(b.groups, o.OCOGroup)
@@ -549,7 +549,7 @@ func (b *book) processBar(inst string, bar Bar) {
 			if gap {
 				px = bar.O
 			}
-			fpx := px + (half+spec.TickSz)*sgn(buy)
+			fpx := snapTick(px+(half+spec.TickSz)*sgn(buy), spec.TickSz, buy)
 			kind := "stop"
 			if o.Type == OrdTarget {
 				kind = "target"
@@ -566,4 +566,19 @@ func (b *book) processBar(inst string, bar Bar) {
 		}
 	}
 	b.marks[inst] = bar.C
+}
+
+// snapTick rounds a simulated fill price to the instrument tick, against the taker (buys up,
+// sells down), so modelled prices are prices the exchange could print.
+func snapTick(px, tick float64, buy bool) float64 {
+	if tick <= 0 || px <= 0 {
+		return px
+	}
+	n := px / tick
+	if buy {
+		n = math.Ceil(n - 1e-9)
+	} else {
+		n = math.Floor(n + 1e-9)
+	}
+	return math.Round(n*tick*1e10) / 1e10
 }
