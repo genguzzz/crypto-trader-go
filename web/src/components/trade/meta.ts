@@ -125,7 +125,7 @@ export function limitErrors(l: Limits): Record<string, string> {
   // ranges mirror internal/trade/accounts.go validLimits
   if (!Number.isInteger(l.maxPositions) || l.maxPositions < 1 || l.maxPositions > 100) e.maxPositions = '请输入 1–100 的整数'
   between('maxLeverage', l.maxLeverage, 1, 100, '请输入 1–100')
-  between('riskPct', l.riskPct, 0.0001, 0.2, '请输入 0.01%–20%')
+  between('riskPct', l.riskPct, 0.01, 5, '请输入 1%–500%')
   between('maxInstPct', l.maxInstPct, 0.01, 1, '请输入 1%–100%')
   between('dailyLossPct', l.dailyLossPct, 0, 1, '请输入 0–100%（0 = 不熔断）')
   between('slippageBp', l.slippageBp, 0.1, 500, '请输入 0.1–500 bp')

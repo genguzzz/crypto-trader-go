@@ -4,6 +4,7 @@ import type { Limits } from '../../tradeApi'
 import SettingRow from '../settings/SettingRow.vue'
 import NumInput from '../ui/NumInput.vue'
 import Switch from '../ui/Switch.vue'
+import RiskSlider from './RiskSlider.vue'
 import { limitErrors } from './meta'
 
 /** Account hard limits (wizard step 2 and "修改限额"). Percent fields are stored as fractions. */
@@ -18,7 +19,7 @@ const ch = (k: keyof Limits) => !!props.base && props.base[k] !== l.value[k]
     <div class="grp">仓位与风险
       <InfoTip>
         <b>账户硬规则</b>：策略和 AI 都不能绕过。每个信号先过这些规则，再按风险计算仓位。<br />
-        <b>单笔风险</b>：信号强度为 1 时，止损被打到亏掉的权益比例。仓位 = 权益 × 单笔风险 × 强度 ÷ (|入场 − 止损| × 合约面值)，再受杠杆、单合约上限约束，按最小下单量向下取整。<br />
+        <b>单笔风险</b>：信号强度为 1 时，止损被打到亏掉的权益比例，可设 1%–500%（滑杆为对数刻度）。超过 100% 意味着一次止损可能亏掉超过全部权益；实际仓位仍受杠杆和单合约上限约束。仓位 = 权益 × 单笔风险 × 强度 ÷ (|入场 − 止损| × 合约面值)，再受杠杆、单合约上限约束，按最小下单量向下取整。<br />
         <b>单合约上限</b>：一个合约占用的保证金不超过权益的这个比例（逐仓）。<br />
         <b>日亏损熔断</b>：当天（UTC+8）已实现 + 未实现亏损达到权益的这个比例后，当天不再接受开仓信号，次日自动恢复；平仓、止损不受影响。<br />
         <b>冷却</b>：某合约平仓后多少分钟内不再开同一合约。
@@ -33,11 +34,9 @@ const ch = (k: keyof Limits) => !!props.base && props.base[k] !== l.value[k]
         <NumInput id="l-lv" v-model="l.maxLeverage" unit="x" :min="1" :max="100" width="56px" />
       </div>
     </SettingRow>
-    <SettingRow label="单笔风险" desc="止损触发时亏掉的权益比例（强度 1）" for-id="l-rk" :changed="ch('riskPct')" :error="e.riskPct">
-      <div class="line">
-        <Segmented :model-value="l.riskPct" size="sm" aria-label="单笔风险预设" :options="[0.005, 0.01, 0.02].map(v => ({ value: v, label: v * 100 + '%' }))" @update:model-value="v => (l.riskPct = v)" />
-        <NumInput id="l-rk" v-model="l.riskPct" unit="%" :scale="100" :min="0.01" :max="20" width="56px" />
-      </div>
+    <SettingRow label="单笔风险" for-id="l-rk" :changed="ch('riskPct')" :error="e.riskPct">
+      <template #desc>止损触发时亏掉的权益比例（强度 1），1%–500%<span v-if="l.riskPct > 1" class="warn"> · 超过 100%：一次止损亏掉的超过全部权益</span></template>
+      <RiskSlider id="l-rk" v-model="l.riskPct" />
     </SettingRow>
     <SettingRow label="单合约上限" desc="一个合约的保证金占权益比例" for-id="l-mi" :changed="ch('maxInstPct')" :error="e.maxInstPct">
       <NumInput id="l-mi" v-model="l.maxInstPct" unit="%" :scale="100" :min="1" :max="100" />
@@ -93,6 +92,7 @@ const ch = (k: keyof Limits) => !!props.base && props.base[k] !== l.value[k]
 .lf { display: grid; grid-template-columns: minmax(0, 1fr); }
 .grp { display: flex; align-items: center; gap: 4px; margin-top: 14px; padding-bottom: 2px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); letter-spacing: .3px; border-bottom: 1px solid var(--line); }
 .grp:first-child { margin-top: 0; }
+.warn { color: var(--warn); }
 .line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .lf :deep(.sr) { padding: 12px 0; }
 @media (max-width: 700px) { .line { justify-content: flex-start; } }

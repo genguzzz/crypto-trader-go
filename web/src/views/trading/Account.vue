@@ -5,7 +5,7 @@ import { ChevronLeft, ArrowDownToLine, SlidersHorizontal, XCircle, Archive, Arch
 import { tradeApi, type AccountDetail, type Fill, type Instance, type InstanceAction, type LedgerEntry, type Order, type Position, type Signal } from '../../tradeApi'
 import { useTradeLive } from '../../composables/tradeLive'
 import { time, price } from '../../fmt'
-import EquityChart from '../../components/charts/EquityChart.vue'
+import TradeExplorer from '../../components/trade/TradeExplorer.vue'
 import SignalList from '../../components/trade/SignalList.vue'
 import InstanceCard from '../../components/trade/InstanceCard.vue'
 import InstanceEditor from '../../components/trade/InstanceEditor.vue'
@@ -35,11 +35,16 @@ const tab = ref<'pos' | 'open' | 'orders' | 'fills' | 'ledger'>('pos')
 const range = ref<number>(0) // days; 0 = all
 
 const DAY = 86_400_000
+const reloadKey = ref(0)
+let tradeFp = ''
 async function load() {
   try {
     const from = range.value ? Date.now() - range.value * DAY : undefined
     const [a, i, e, s] = await Promise.all([tradeApi.account(aid.value), tradeApi.instances(aid.value), tradeApi.equity(aid.value, from), tradeApi.signals(aid.value, 200)])
     d.value = a; insts.value = i; eq.value = e; signals.value = s
+    // round trips change only with fills: refetch them when positions or ordered signals change
+    const fp = `${a.account.openCount}|${s.filter(x => x.outcome === 'ordered').length}|${a.account.backtest?.state ?? ''}`
+    if (fp !== tradeFp) { if (tradeFp) reloadKey.value++; tradeFp = fp }
     error.value = ''
     loadTab()
   } catch (e: any) {
@@ -148,17 +153,17 @@ function onInstSaved() { instOpen.value = false; load() }
 
       <KpiRow :items="kpis" />
 
+      <div class="panel">
+        <TradeExplorer v-if="eq.length > 1" :account-id="a.id" :points="eq" :deposit="a.deposit" :reload-key="reloadKey">
+          <template #tools>
+            <Segmented v-if="!isBacktest" v-model="range" size="sm" aria-label="权益区间" :options="[{ value: 1, label: '1D' }, { value: 7, label: '7D' }, { value: 30, label: '30D' }, { value: 0, label: '全部' }]" />
+          </template>
+        </TradeExplorer>
+        <p v-else class="muted small">权益数据点不足，运行一段时间后显示（每分钟一个点）</p>
+      </div>
+
       <div class="cols">
         <div class="main">
-          <div class="panel">
-            <h3 class="h3f">权益曲线 <InfoTip>每分钟一个点（回测为每根 K 线），超过 2000 点时降采样。虚线是累计入金：曲线在它上方即盈利。</InfoTip>
-              <span class="sp"></span>
-              <Segmented v-if="!isBacktest" v-model="range" size="sm" aria-label="区间" :options="[{ value: 1, label: '1D' }, { value: 7, label: '7D' }, { value: 30, label: '30D' }, { value: 0, label: '全部' }]" />
-            </h3>
-            <EquityChart v-if="eq.length > 1" :points="eq" :deposit="a.deposit" :height="240" />
-            <p v-else class="muted small">数据点不足，运行一段时间后显示</p>
-          </div>
-
           <div class="panel">
             <div class="tabs">
               <Segmented v-model="tab" size="sm" aria-label="明细" :options="[

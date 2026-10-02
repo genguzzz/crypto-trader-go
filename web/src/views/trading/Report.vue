@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ChevronLeft, Radio, RotateCw, ListTree, Play, Square } from 'lucide-vue-next'
-import { tradeApi, type AccountDetail, type Fill, type Instance, type Report } from '../../tradeApi'
+import { tradeApi, type AccountDetail, type Instance, type Report } from '../../tradeApi'
 import { useTradeLive } from '../../composables/tradeLive'
 import { store } from '../../store'
-import EquityChart from '../../components/charts/EquityChart.vue'
-import FillsTable from '../../components/trade/FillsTable.vue'
+import TradeExplorer from '../../components/trade/TradeExplorer.vue'
+import InstContribution from '../../components/trade/InstContribution.vue'
 import Loading from '../../components/ui/Loading.vue'
-import CoinIcon from '../../components/CoinIcon.vue'
-import { amt, day, execLabel, pct, stateLabel, sym, tone, universeText } from '../../components/trade/meta'
+import { amt, day, execLabel, pct, stateLabel, tone, universeText } from '../../components/trade/meta'
 import { time } from '../../fmt'
 import Meter from '../../components/ui/Meter.vue'
 
@@ -18,14 +17,17 @@ const d = ref<AccountDetail | null>(null)
 const rep = ref<Report | null>(null)
 const insts = ref<Instance[] | null>(null)
 const eq = ref<[number, number][]>([])
-const fills = ref<Fill[] | null>(null)
+const explorer = ref<InstanceType<typeof TradeExplorer> | null>(null)
+const reloadKey = ref(0)
 const error = ref('')
 const repErr = ref('')
 
 async function load() {
   try {
-    const [a, i, e, f] = await Promise.all([tradeApi.account(aid.value), tradeApi.instances(aid.value), tradeApi.equity(aid.value), tradeApi.fills(aid.value, 500)])
-    d.value = a; insts.value = i; eq.value = e; fills.value = f
+    const [a, i, e] = await Promise.all([tradeApi.account(aid.value), tradeApi.instances(aid.value), tradeApi.equity(aid.value)])
+    // trades / candles change only while the backtest runs; refresh them then and once it ends
+    if (d.value && (a.account.backtest?.state === 'running' || d.value.account.backtest?.state !== a.account.backtest?.state)) reloadKey.value++
+    d.value = a; insts.value = i; eq.value = e
     error.value = ''
   } catch (e: any) {
     error.value = e.message
@@ -67,7 +69,7 @@ const metrics = computed<M[]>(() => {
     { l: '信号', v: String(total), s: `下单 ${sg.ordered ?? 0} · 拒绝 ${sg.rejected ?? 0} · 跳过 ${sg.skipped ?? 0}` },
   ]
 })
-const byInst = computed(() => (rep.value?.byInst || []).slice().sort((x, y) => y.pnl - x.pnl))
+const contrib = computed(() => (rep.value?.byInst || []).map(r => ({ instId: r.instId, net: r.pnl, trades: r.trades, wins: r.wins, fees: r.fees, turnover: r.turnover })))
 
 const busy = ref(false)
 async function run() {
@@ -127,31 +129,14 @@ async function cancel() {
       <p v-else-if="repErr && !running" class="muted small">报告暂不可用：{{ repErr }}</p>
 
       <div class="panel">
-        <h3>权益与回撤 <InfoTip>上：账户权益（USDT），虚线为入金。下：相对此前最高权益的回撤（%）。</InfoTip></h3>
-        <EquityChart v-if="eq.length > 1" :points="eq" :deposit="a.deposit" drawdown :height="320" />
+        <TradeExplorer v-if="eq.length > 1" ref="explorer" :account-id="a.id" :points="eq" :deposit="a.deposit" :reload-key="reloadKey" />
         <p v-else class="muted small">还没有权益数据</p>
       </div>
 
       <div class="cols">
         <div class="panel">
-          <h3>按合约 <InfoTip>盈亏 = 已实现 − 手续费 + 资金费（USDT）；胜率 = 盈利交易 ÷ 已平交易。</InfoTip></h3>
-          <div class="table-scroll">
-            <table v-if="byInst.length" class="t">
-              <thead><tr><th>合约</th><th class="num">交易</th><th class="num">胜率</th><th class="num">盈亏<small>USDT</small></th><th class="num">手续费</th><th class="num">资金费</th><th class="num">成交额</th></tr></thead>
-              <tbody>
-                <tr v-for="r in byInst" :key="r.instId">
-                  <td><span class="inst"><CoinIcon :inst-id="r.instId" :size="14" /><b>{{ sym(r.instId) }}</b></span></td>
-                  <td class="num">{{ r.trades }}</td>
-                  <td class="num">{{ r.trades ? pct(r.wins / r.trades, 0) : '—' }}</td>
-                  <td class="num" :class="tone(r.pnl)"><b>{{ amt(r.pnl, 2, true) }}</b></td>
-                  <td class="num sub">{{ amt(r.fees) }}</td>
-                  <td class="num" :class="tone(r.funding)">{{ amt(r.funding, 2, true) }}</td>
-                  <td class="num sub">{{ amt(r.turnover, 0) }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <p v-else class="muted small">没有交易</p>
-          </div>
+          <h3>各合约贡献 <InfoTip>每个合约的盈亏 = 已实现 − 手续费 + 资金费（USDT），条形长度按绝对值比例；胜率 = 盈利交易 ÷ 交易数。点一行在币对视角中查看该合约的全部交易。</InfoTip></h3>
+          <InstContribution :rows="contrib" @open="id => explorer?.openInst(id)" />
         </div>
         <div class="panel">
           <h3>策略配置</h3>
@@ -164,10 +149,6 @@ async function cancel() {
         </div>
       </div>
 
-      <div class="panel">
-        <h3>平仓交易 <span class="muted cnt">{{ (fills || []).filter(f => f.realizedPnl !== 0 || f.liquidation).length }}</span></h3>
-        <FillsTable :fills="fills" :instances="insts || []" closes />
-      </div>
     </template>
   </div>
 </template>

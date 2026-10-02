@@ -92,6 +92,23 @@ export interface Report {
   from?: number; to?: number
 }
 
+/** internal/trade TradeFill: one fill of a round trip. kind: open | add | reduce | close. */
+export interface TradeFill { id: number; ts: number; side: 'buy' | 'sell'; qty: number; px: number; fee: number; pnl: number; kind: 'open' | 'add' | 'reduce' | 'close'; orderType: string }
+export type ExitKind = 'signal' | 'stop' | 'target' | 'liquidation' | 'manual' | 'open'
+/**
+ * internal/trade Trade: one round trip of an instance in an instrument, flat to flat. closeTs 0 = still
+ * open. notional / margin / pnl / fees / funding / net in USDT; returnPct = net / margin.
+ */
+export interface Trade {
+  id: number; instanceId: number; instId: string; posSide: 'long' | 'short'; openTs: number; closeTs?: number
+  entryPx: number; exitPx?: number; qty: number; ctVal: number; notional: number; leverage: number; margin: number
+  pnl: number; fees: number; funding: number; net: number; returnPct: number; exitKind: ExitKind
+  openReason?: string; closeReason?: string; stopLoss?: number; takeProfit?: number; aiDecisionId?: number
+  fills: TradeFill[]
+}
+/** internal/trade CandleResp: rows = [ts, o, h, l, c, vol (contracts), volQuote (USDT)]. */
+export interface AccountCandles { instId: string; bar: string; from: number; to: number; rows: [number, number, number, number, number, number, number][] }
+
 /** GET trade/strategies: latest version per name + version history (newest first, without code). */
 export interface StrategyEntry { name: string; latest: StrategyVersion; versions: StrategyVersion[] }
 
@@ -171,9 +188,14 @@ function normStrategies(x: unknown): StrategyEntry[] {
   })
 }
 
+/** Plain write: paper trading, confirmations and proposals need no owner key (internal/api/admin.go). */
+const wreq = <T>(path: string, method: string, body?: unknown) =>
+  req<T>(path, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: body === undefined ? undefined : { 'Content-Type': 'application/json' } })
+
 /**
- * State-changing request: sends X-CTG-Admin from this browser's owner key. A 401 with code
- * admin_required opens the key dialog and retries once with the entered key.
+ * Protected write (credentials, channel config, paid AI calls — internal/api/admin.go adminPaths):
+ * sends X-CTG-Admin from this browser's owner key. A 401 with code admin_required opens the key
+ * dialog and retries once with the entered key.
  */
 async function mreq<T>(path: string, method: string, body?: unknown): Promise<T> {
   const send = (key: string) => fetch(path, {
@@ -206,34 +228,36 @@ export type InstanceAction = 'start' | 'pause' | 'resume' | 'stop'
 export const tradeApi = {
   // accounts
   accounts: async () => arr<Account>(await req<unknown>(`${T}/accounts`), 'accounts'),
-  createAccount: (a: NewAccount) => mreq<Account>(`${T}/accounts`, 'POST', a),
+  createAccount: (a: NewAccount) => wreq<Account>(`${T}/accounts`, 'POST', a),
   account: async (id: number) => normDetail(await req<unknown>(`${T}/accounts/${id}`)),
-  patchAccount: (id: number, p: { name?: string; limits?: Limits; archived?: boolean }) => mreq<Account>(`${T}/accounts/${id}`, 'PATCH', p),
-  deposit: (id: number, amount: number) => mreq<Account>(`${T}/accounts/${id}/deposit`, 'POST', { amount }),
+  patchAccount: (id: number, p: { name?: string; limits?: Limits; archived?: boolean }) => wreq<Account>(`${T}/accounts/${id}`, 'PATCH', p),
+  deposit: (id: number, amount: number) => wreq<Account>(`${T}/accounts/${id}/deposit`, 'POST', { amount }),
   equity: async (id: number, from?: number, to?: number) => arr<[number, number]>(await req<unknown>(`${T}/accounts/${id}/equity${qs({ from, to })}`)),
   fills: async (id: number, limit = 100, before?: number) => arr<Fill>(await req<unknown>(`${T}/accounts/${id}/fills${qs({ limit, before })}`)),
   orders: async (id: number, limit = 100, before?: number) => arr<Order>(await req<unknown>(`${T}/accounts/${id}/orders${qs({ limit, before })}`)),
   signals: async (id: number, limit = 100, before?: number) => arr<Signal>(await req<unknown>(`${T}/accounts/${id}/signals${qs({ limit, before })}`)),
   ledger: async (id: number, limit = 100, before?: number) => arr<LedgerEntry>(await req<unknown>(`${T}/accounts/${id}/ledger${qs({ limit, before })}`)),
-  close: (id: number, instId?: string) => mreq<unknown>(`${T}/accounts/${id}/close`, 'POST', instId ? { instId } : {}),
-  runBacktest: (id: number) => mreq<Account>(`${T}/backtests/${id}/run`, 'POST', {}),
-  cancelBacktest: (id: number) => mreq<Account>(`${T}/backtests/${id}/cancel`, 'POST', {}),
+  close: (id: number, instId?: string) => wreq<unknown>(`${T}/accounts/${id}/close`, 'POST', instId ? { instId } : {}),
+  runBacktest: (id: number) => wreq<Account>(`${T}/backtests/${id}/run`, 'POST', {}),
+  cancelBacktest: (id: number) => wreq<Account>(`${T}/backtests/${id}/cancel`, 'POST', {}),
   report: (id: number) => req<Report>(`${T}/accounts/${id}/report`),
+  trades: async (id: number) => arr<Trade>(await req<unknown>(`${T}/accounts/${id}/trades`)),
+  candles: (id: number, instId: string, bar?: string) => req<AccountCandles>(`${T}/accounts/${id}/candles${qs({ instId, bar })}`),
   // strategies
   strategies: async () => normStrategies(await req<unknown>(`${T}/strategies`)),
   strategy: (versionId: string) => req<StrategyVersion>(`${T}/strategies/${encodeURIComponent(versionId)}`),
-  reloadStrategies: () => mreq<unknown>(`${T}/strategies/reload`, 'POST', {}),
+  reloadStrategies: () => wreq<unknown>(`${T}/strategies/reload`, 'POST', {}),
   // instances
   instances: async (accountId: number) => arr<Instance>(await req<unknown>(`${T}/accounts/${accountId}/instances`), 'instances'),
-  createInstance: (accountId: number, x: NewInstance) => mreq<Instance>(`${T}/accounts/${accountId}/instances`, 'POST', x),
-  patchInstance: (id: number, p: Partial<Pick<Instance, 'params' | 'universe' | 'exec'>>) => mreq<Instance>(`${T}/instances/${id}`, 'PATCH', p),
-  instanceAction: (id: number, a: InstanceAction) => mreq<Instance>(`${T}/instances/${id}/${a}`, 'POST', {}),
+  createInstance: (accountId: number, x: NewInstance) => wreq<Instance>(`${T}/accounts/${accountId}/instances`, 'POST', x),
+  patchInstance: (id: number, p: Partial<Pick<Instance, 'params' | 'universe' | 'exec'>>) => wreq<Instance>(`${T}/instances/${id}`, 'PATCH', p),
+  instanceAction: (id: number, a: InstanceAction) => wreq<Instance>(`${T}/instances/${id}/${a}`, 'POST', {}),
 }
 
 export const interactApi = {
   /** state: open | all (internal/interact web.go); newest first for `all`. */
   prompts: async (state: 'open' | 'all' = 'open', limit?: number) => arr<Prompt>(await req<unknown>(`/api/v1/interact/prompts${qs({ state, limit })}`), 'prompts'),
-  answer: (id: string, choice: string) => mreq<unknown>(`/api/v1/interact/prompts/${encodeURIComponent(id)}`, 'POST', { choice }),
+  answer: (id: string, choice: string) => wreq<unknown>(`/api/v1/interact/prompts/${encodeURIComponent(id)}`, 'POST', { choice }),
   config: () => req<InteractConfig>('/api/v1/interact/config'),
   saveConfig: (c: InteractConfig) => mreq<InteractConfig>('/api/v1/interact/config', 'PUT', c),
   test: () => mreq<{ ok: boolean; channels?: Record<string, string>; promptId?: string; error?: string }>('/api/v1/interact/test', 'POST', {}),
@@ -249,7 +273,7 @@ export const aiApi = {
     arr<DecisionRecord>(await req<unknown>(`/api/v1/ai/decisions${qs({ ...q, accountId: q.accountId || undefined })}`)),
   decision: (id: number) => req<DecisionRecord>(`/api/v1/ai/decisions/${id}`),
   proposals: async (state?: 'pending' | 'approved' | 'rejected', limit?: number) => arr<Proposal>(await req<unknown>(`/api/v1/ai/proposals${qs({ state, limit })}`)),
-  decide: (id: number, approve: boolean) => mreq<Proposal>(`/api/v1/ai/proposals/${id}`, 'POST', { approve }),
+  decide: (id: number, approve: boolean) => wreq<Proposal>(`/api/v1/ai/proposals/${id}`, 'POST', { approve }),
   memory: (strategy: string, version?: number) =>
     req<{ strategy: string; current: MemoryDoc | null; versions: MemoryDoc[] | null }>(`/api/v1/ai/memory/${encodeURIComponent(strategy)}${qs({ version })}`),
   reflect: (strategy: string) => mreq<MemoryDoc>(`/api/v1/ai/memory/${encodeURIComponent(strategy)}/reflect`, 'POST', {}),
