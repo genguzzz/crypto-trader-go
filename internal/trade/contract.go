@@ -8,6 +8,7 @@ package trade
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -410,3 +411,31 @@ type SignalSink interface {
 	Positions(instanceID int64) []Position
 	AccountView(instanceID int64) (Account, bool)
 }
+
+// ---------- strategy runtime (implemented by internal/strategyhost) ----------
+
+// Runner starts strategy processes and lists available strategy code.
+type Runner interface {
+	// Describe lists strategies found in strategies/library (one entry per class, code included).
+	Describe(ctx context.Context) ([]StrategyVersion, error)
+	// Start spawns a process for the instance and completes the init handshake (on_start).
+	Start(ctx context.Context, inst Instance, ver StrategyVersion, mode Mode, state []byte, md MarketData, sink SignalSink) (Session, error)
+	Available() bool // supervisor connected
+}
+
+// Session is one running instance process. Every method blocks until the process acknowledged the
+// event (lockstep) or ctx/5 s timeout; a timeout kills the process and returns ErrFaulted.
+type Session interface {
+	Bar(ctx context.Context, instID, tf string, b Bar) error
+	Universe(ctx context.Context, added, removed, current []string) error
+	Fill(ctx context.Context, f Fill) error
+	SignalResult(ctx context.Context, signalID int64, outcome SignalOutcome, reason string) error
+	Funding(ctx context.Context, instID string, rate, amount float64) error
+	Stop(ctx context.Context) error
+	State() []byte         // latest ctx.state (persist it)
+	Done() <-chan struct{} // closed when the process exits
+	Err() error            // why it exited (nil after Stop)
+}
+
+// ErrFaulted is returned by Session methods when the process timed out or died.
+var ErrFaulted = errors.New("strategy process faulted")
