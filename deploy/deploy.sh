@@ -55,11 +55,31 @@ if [ "${1:-}" != --skip-build ]; then
   (cd "$ROOT/web" && npm run build >/dev/null)
   (cd "$ROOT" && GOOS=linux GOARCH=$ARCH CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN" ./cmd/server)
 fi
+# Python sidecars (strategy runner, AI worker): upload their dirs and rebuild an image only when its
+# Dockerfile/requirements changed. Strategy code is bind-mounted, so new strategies need no rebuild.
+sync_sidecars() {
+  echo "▸ syncing sidecars (strategies/, ai/) and compose file"
+  tar -C "$ROOT" --exclude='__pycache__' --exclude='*.pyc' --exclude='tests' -czf - strategies ai deploy/docker-compose.yml |
+    remote "set -e; cd $DIR; mkdir -p data/run; chown 65532:65532 data/run; rm -rf .sync && mkdir .sync && tar -xzf - -C .sync
+      cp .sync/deploy/docker-compose.yml docker-compose.yml
+      for d in strategies ai; do
+        old=\$( [ -d \$d ] && cat \$d/Dockerfile \$d/requirements.txt 2>/dev/null | sha256sum | cut -c1-16 || echo none)
+        rm -rf \$d && mv .sync/\$d \$d
+        new=\$(cat \$d/Dockerfile \$d/requirements.txt 2>/dev/null | sha256sum | cut -c1-16)
+        if [ \"\$old\" != \"\$new\" ] || ! docker image inspect ctg-\${d%ies}\$( [ \$d = strategies ] && echo y ):local >/dev/null 2>&1; then
+          echo \"  building \$d image\"; docker compose build -q ctg-\$( [ \$d = strategies ] && echo strategy || echo ai )
+        fi
+      done
+      rm -rf .sync"
+}
+sync_sidecars
+
 echo "▸ uploading $(du -h "$BIN" | cut -f1) → server:$DIR/bin/ctg.new"
 scp -q $SSH_OPTS "$BIN" "$HOST:$DIR/bin/ctg.new"
 echo "▸ swapping binary and restarting container"
 remote "set -e; cd $DIR; chmod 755 bin/ctg.new; if [ -f bin/ctg ]; then cp -p bin/ctg bin/ctg.prev; fi; mv bin/ctg.new bin/ctg
-  rm -f bin/ctg.bad; docker compose up -d --no-recreate >/dev/null 2>&1; docker compose restart ctg >/dev/null 2>&1"
+  rm -f bin/ctg.bad; docker compose up -d --no-recreate >/dev/null 2>&1; docker compose restart ctg >/dev/null 2>&1
+  docker compose up -d ctg-strategy ctg-ai >/dev/null 2>&1; docker compose restart ctg-strategy ctg-ai >/dev/null 2>&1"
 if wait_healthy; then
   echo "✓ deployed $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD || echo '+dirty')"
 else

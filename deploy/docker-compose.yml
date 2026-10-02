@@ -11,8 +11,9 @@ services:
     user: "65532:65532"
     entrypoint: ["/app/ctg"]
     command: ["-addr", "127.0.0.1:8686", "-db", "/data/ctg.db"]
-    env_file: [ctg.env]                                # optional extra env (e.g. CTG_PROXY), mode 600
+    env_file: [ctg.env]                                # optional extra env (CTG_PROXY, CTG_ADMIN_KEY, CTG_SECRET_KEY), mode 600
     environment:
+      CTG_RUN_DIR: /data/run                           # Unix sockets shared with ctg-strategy / ctg-ai
       GOMEMLIMIT: 1536MiB                             # live heap ~180 MB; a limit below it makes GC spin (~20 GC/s, 1.4 cores)
       GOGC: "75"
     volumes:
@@ -20,6 +21,48 @@ services:
       - ./data:/data                                   # SQLite + icon cache (settings/rules live in the DB)
     mem_limit: 2g                                      # ctg-prod has 4 GB
     stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # Strategy supervisor: one Python process per running strategy instance. No network at all; the
+  # only I/O is data/run/strategy.sock. Strategy code is bind-mounted so library updates need no rebuild.
+  ctg-strategy:
+    build: ./strategies
+    image: ctg-strategy:local
+    container_name: ctg-strategy
+    restart: unless-stopped
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    user: "65532:65532"
+    environment:
+      CTG_RUN_DIR: /run/ctg
+    volumes:
+      - ./strategies:/app:ro
+      - ./data/run:/run/ctg
+    mem_limit: 768m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # AI review worker (Claude Agent SDK). Host network only to reach the local proxy inbound on
+  # 127.0.0.1:17080 (x-ui/Xray → relay → residential-exit); the worker refuses to run without it.
+  ctg-ai:
+    build: ./ai
+    image: ctg-ai:local
+    container_name: ctg-ai
+    restart: unless-stopped
+    network_mode: host
+    user: "65532:65532"
+    environment:
+      CTG_RUN_DIR: /run/ctg
+      CTG_AI_PROXY: http://127.0.0.1:17080
+      HOME: /tmp/home
+    tmpfs: [/tmp]
+    volumes:
+      - ./data/run:/run/ctg
+    mem_limit: 768m
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
