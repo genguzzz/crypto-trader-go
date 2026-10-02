@@ -6,7 +6,6 @@ import InstrumentPage from './views/InstrumentPage.vue'
 import Rules from './views/Rules.vue'
 import Status from './views/Status.vue'
 import Alerts from './views/Alerts.vue'
-import Positions from './views/Positions.vue'
 import SettingsView from './views/Settings.vue'
 import Dev from './views/Dev.vue'
 import { startStream } from './store'
@@ -24,7 +23,19 @@ const router = createRouter({
     { path: '/rules/:id?', component: Rules, props: true },
     { path: '/alerts', component: Alerts },
     { path: '/status', component: Status },
-    { path: '/positions', component: Positions },
+    { path: '/positions', redirect: '/trading' },
+    {
+      path: '/trading', component: () => import('./views/trading/TradingLayout.vue'),
+      children: [
+        { path: '', component: () => import('./views/trading/Accounts.vue') },
+        { path: 'new', component: () => import('./views/trading/NewAccount.vue') },
+        { path: 'accounts/:id', component: () => import('./views/trading/Account.vue'), props: true },
+        { path: 'backtests/:id', component: () => import('./views/trading/Report.vue'), props: true },
+        { path: 'strategies', component: () => import('./views/trading/Strategies.vue') },
+        { path: 'prompts', component: () => import('./views/trading/Prompts.vue') },
+        { path: 'ai', component: () => import('./views/trading/AiLog.vue') },
+      ],
+    },
     { path: '/settings', component: SettingsView },
     { path: '/dev', component: Dev },
   ],

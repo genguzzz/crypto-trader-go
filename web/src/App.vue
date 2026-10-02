@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Radar, FlaskConical, BellRing, Wallet, SlidersHorizontal, Activity, Code2 } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
+import { Radar, FlaskConical, BellRing, ChartCandlestick, SlidersHorizontal, Activity, Code2, Ellipsis } from 'lucide-vue-next'
 import { store } from './store'
 import LayoutMenu from './components/LayoutMenu.vue'
+import AdminKeyModal from './components/AdminKeyModal.vue'
 import CoinIcon from './components/CoinIcon.vue'
 import { useDesktop } from './composables/device'
 import { devTab } from './composables/devtab'
@@ -15,15 +18,23 @@ const phase = computed(() => {
   return p === 'live' ? { t: '实时', c: 'ok' } : p === 'backfill-1m' ? { t: '回填中', c: 'warn' } : p === 'bootstrap-5m' ? { t: '快速建池', c: 'warn' } : { t: '启动中', c: 'warn' }
 })
 
-const nav = computed(() => [
+interface NavItem { to: string; label: string; short?: string; icon: any; exact?: boolean; badge?: number }
+const nav = computed<NavItem[]>(() => [
   { to: '/', label: '扫描', icon: Radar, exact: true },
   { to: '/rules', label: '规则与战绩', short: '规则', icon: FlaskConical },
   { to: '/alerts', label: '监控', icon: BellRing },
-  { to: '/positions', label: '仓位', icon: Wallet },
+  { to: '/trading', label: '交易', icon: ChartCandlestick, badge: store.openPrompts },
   ...(devTab.value ? [{ to: '/dev', label: 'Dev', icon: Code2 }] : []),
   { to: '/settings', label: '设置', icon: SlidersHorizontal },
   { to: '/status', label: '系统', icon: Activity },
 ])
+// phone tab bar: at most 5 slots — the first 4 plus "更多" holding the rest
+const tabMain = computed(() => (nav.value.length <= 5 ? nav.value : nav.value.slice(0, 4)))
+const tabMore = computed(() => (nav.value.length <= 5 ? [] : nav.value.slice(4)))
+const route = useRoute()
+const moreActive = computed(() => tabMore.value.some(n => route.path === n.to || route.path.startsWith(n.to + '/')))
+const moreOpen = ref(false)
+watch(() => route.path, () => (moreOpen.value = false))
 
 /** Market pulse: BTC / ETH live price + 24h change from the current snapshot. */
 const pulse = computed(() =>
@@ -45,6 +56,7 @@ const pulse = computed(() =>
     <nav class="nav" aria-label="主导航">
       <RouterLink v-for="n in nav" :key="n.to" :to="n.to" class="nav-i" :class="{ exact: n.exact }">
         <component :is="n.icon" :size="15" class="ni" /><span>{{ n.label }}</span>
+        <span v-if="n.badge" class="nav-bd tnum" :title="`${n.badge} 条待确认`">{{ n.badge }}</span>
       </RouterLink>
     </nav>
 
@@ -82,11 +94,24 @@ const pulse = computed(() =>
   <main><RouterView /></main>
 
   <!-- mobile bottom tab bar -->
-  <nav class="tabbar" aria-label="主导航" :style="{ gridTemplateColumns: `repeat(${nav.length}, minmax(0, 1fr))` }">
-    <RouterLink v-for="n in nav" :key="n.to" :to="n.to" class="tab" :class="{ exact: n.exact }">
-      <component :is="n.icon" :size="20" /><span>{{ n.short || n.label }}</span>
+  <nav class="tabbar" aria-label="主导航" :style="{ gridTemplateColumns: `repeat(${tabMain.length + (tabMore.length ? 1 : 0)}, minmax(0, 1fr))` }">
+    <RouterLink v-for="n in tabMain" :key="n.to" :to="n.to" class="tab" :class="{ exact: n.exact }">
+      <span class="tab-ic"><component :is="n.icon" :size="20" /><span v-if="n.badge" class="tab-bd tnum">{{ n.badge }}</span></span><span>{{ n.short || n.label }}</span>
     </RouterLink>
+    <PopoverRoot v-if="tabMore.length" v-model:open="moreOpen">
+      <PopoverTrigger class="tab more" :class="{ on: moreActive }" aria-label="更多">
+        <Ellipsis :size="20" /><span>更多</span>
+      </PopoverTrigger>
+      <PopoverPortal>
+        <PopoverContent class="lm-pop more-pop" side="top" align="end" :side-offset="10" :collision-padding="8">
+          <RouterLink v-for="n in tabMore" :key="n.to" :to="n.to" class="more-i">
+            <component :is="n.icon" :size="16" /><span>{{ n.label }}</span>
+          </RouterLink>
+        </PopoverContent>
+      </PopoverPortal>
+    </PopoverRoot>
   </nav>
+  <AdminKeyModal />
 </template>
 
 <style>
@@ -106,6 +131,7 @@ const pulse = computed(() =>
 }
 @media (hover: hover) { .nav-i:hover { color: var(--text-1); background: rgba(255, 255, 255, .04); } }
 .nav-i .ni { transition: color .12s; }
+.nav-bd { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--warn); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
 .nav-i.router-link-active:not(.exact), .nav-i.exact.router-link-exact-active {
   color: var(--text-1); background: var(--bg-3); box-shadow: 0 0 0 1px var(--line-2) inset;
 }
@@ -143,7 +169,14 @@ const pulse = computed(() =>
     border-top: 1px solid var(--line);
   }
   .tab { display: grid; justify-items: center; gap: 2px; color: var(--text-3); font-size: 10px; text-decoration: none !important; padding: 2px 0; }
-  .tab.router-link-active:not(.exact), .tab.exact.router-link-exact-active { color: var(--accent); }
+  .tab.router-link-active:not(.exact), .tab.exact.router-link-exact-active, .tab.more.on { color: var(--accent); }
+  .tab.more { all: unset; box-sizing: border-box; display: grid; justify-items: center; gap: 2px; color: var(--text-3); font-size: 10px; padding: 2px 0; cursor: pointer; }
+  .tab.more[data-state="open"] { color: var(--text-1); }
+  .tab-ic { position: relative; display: inline-flex; }
+  .tab-bd { position: absolute; top: -4px; left: 14px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--warn); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
+  .more-pop { width: 180px; padding: 6px; }
+  .more-i { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; color: var(--text-1); text-decoration: none !important; font-size: var(--fs-md); }
+  .more-i.router-link-active { color: var(--accent); background: var(--bg-3); }
   #app > main { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
 }
 </style>
