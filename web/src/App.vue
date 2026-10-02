@@ -28,9 +28,14 @@ const nav = computed<NavItem[]>(() => [
   { to: '/settings', label: '设置', icon: SlidersHorizontal },
   { to: '/status', label: '系统', icon: Activity },
 ])
-// phone tab bar: at most 5 slots — the first 4 plus "更多" holding the rest
-const tabMain = computed(() => (nav.value.length <= 5 ? nav.value : nav.value.slice(0, 4)))
-const tabMore = computed(() => (nav.value.length <= 5 ? [] : nav.value.slice(4)))
+// phone tab bar: at most 5 slots — these 4 in this order plus "更多" holding the rest (sidebar order unchanged)
+const tabFirst = ['/', '/rules', '/trading', '/settings']
+const tabOrdered = computed(() => [
+  ...tabFirst.map(p => nav.value.find(n => n.to === p)).filter((n): n is NavItem => !!n),
+  ...nav.value.filter(n => !tabFirst.includes(n.to)),
+])
+const tabMain = computed(() => (tabOrdered.value.length <= 5 ? tabOrdered.value : tabOrdered.value.slice(0, 4)))
+const tabMore = computed(() => (tabOrdered.value.length <= 5 ? [] : tabOrdered.value.slice(4)))
 const route = useRoute()
 const moreActive = computed(() => tabMore.value.some(n => route.path === n.to || route.path.startsWith(n.to + '/')))
 const moreOpen = ref(false)
