@@ -115,3 +115,12 @@ th { color: var(--text-3); font-weight: 500; text-align: left; font-size: var(--
 .fr2, .fr3 { padding: 0 4px; border-radius: 3px; font-weight: 600; }
 .fr2.pos { background: var(--up-bg); } .fr2.neg { background: var(--down-bg); }
 .fr3 { color: var(--warn); background: var(--warn-bg); }
+
+/* pseudo full screen (composables/fullscreen.ts) where the Fullscreen API is unavailable (iPhone):
+   a fixed overlay over the whole viewport, clear of notches and the home indicator */
+.fs-pseudo {
+  position: fixed !important; inset: 0; z-index: 150; margin: 0 !important; max-width: none !important; border-radius: 0 !important;
+  overflow: auto; overscroll-behavior: contain; background: var(--bg-1);
+  padding: calc(10px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left)) !important;
+}
+:fullscreen { background: var(--bg-1); overflow: auto; }

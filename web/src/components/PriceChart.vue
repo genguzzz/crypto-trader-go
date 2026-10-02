@@ -7,10 +7,12 @@ import { baseChart, precisionFor } from './charts'
 import { Footprint, type FootBar } from './charts/footprint'
 import { LiqMapOverlay } from './charts/liqmap'
 import { C, alpha, LIQ_TIERS, liqTierColor } from '../theme'
-import { LocateFixed, Maximize2, Minimize2 } from 'lucide-vue-next'
+import { Maximize2, Minimize2 } from 'lucide-vue-next'
+import ResetViewButton from './charts/ResetViewButton.vue'
 import FilterChip from './ui/FilterChip.vue'
 import ChipGroup from './ui/ChipGroup.vue'
 import Loading from './ui/Loading.vue'
+import { useFullscreen } from '../composables/fullscreen'
 
 /** fill: take the parent's full height (workbench); otherwise fixed chart heights (stacked page). */
 const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean }>()
@@ -446,31 +448,14 @@ watch(mapTiers, v => { localStorage.setItem('ctg.liqMapTiers', JSON.stringify(v)
 // ---- full screen: native Fullscreen API where the element supports it; otherwise (iPhone Safari)
 // a fixed overlay covering the viewport. Esc / the button leaves either way.
 const root = ref<HTMLElement>()
-const full = ref(false)
-const pseudo = ref(false)
-async function toggleFull() {
-  if (full.value) {
-    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {})
-    pseudo.value = full.value = false
-    return
-  }
-  const el = root.value as any
-  if (el?.requestFullscreen) {
-    try { await el.requestFullscreen(); full.value = true; return } catch { /* fall through */ }
-  }
-  pseudo.value = full.value = true
-}
-const onFsChange = () => { if (!document.fullscreenElement && !pseudo.value) full.value = false }
-const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pseudo.value) pseudo.value = full.value = false }
-onMounted(() => { document.addEventListener('fullscreenchange', onFsChange); window.addEventListener('keydown', onKey) })
-onUnmounted(() => { document.removeEventListener('fullscreenchange', onFsChange); window.removeEventListener('keydown', onKey) })
+const { full, pseudo, toggle: toggleFull } = useFullscreen(root)
 watch(full, () => requestAnimationFrame(() => { if (chart) axisWidth.value = chart.priceScale('right').width() }))
 
 const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.c || 1).precision)
 </script>
 
 <template>
-  <div ref="root" class="panel pc" :class="{ fill: fill || full, full, pseudo }">
+  <div ref="root" class="panel pc" :class="{ fill: fill || full, full, pseudo, 'fs-pseudo': pseudo }">
     <h3>
       <span>合约 K 线 <InfoTip>
         <b>数据来源</b>：OKX 永续 1m K 线由本机录制（实时 WS + 启动回填）；进过监控池的币额外回补 7 天 1m；1H/4H 来自 1H K 线，保留 30 天。5m/15m/4H 由服务端按 UTC 对齐聚合。<br />
@@ -517,7 +502,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
       <div ref="el" class="chart" @dblclick="resetView"></div>
       <Loading overlay :show="loading" />
       <div v-if="layer === 'foot' && spacing < 20 && bars.length" class="foot-hint">横向放大（滚轮 / 双指）到足够宽才显示足迹</div>
-      <button type="button" class="reset" title="回到最新、自动缩放（PC 也可双击图表）" aria-label="重置视图" :style="{ right: axisWidth + 6 + 'px' }" @click="resetView"><LocateFixed :size="15" /></button>
+      <ResetViewButton :right="axisWidth + 6" title="回到最新、自动缩放（PC 也可双击图表）" @reset="resetView" />
       <div ref="legendEl" class="legend tnum" v-if="shown">
         <span class="muted">{{ fmtTime(shown.c.t, true) }}</span>
         <span>开 <b>{{ fmtPrice(shown.c.o) }}</b></span><span>高 <b>{{ fmtPrice(shown.c.h) }}</b></span>
@@ -574,15 +559,10 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
 .pc.fill .wrap { flex: 1; min-height: 0; }
 .pc.fill .chart, .pc.fill .wrap.tall .chart { height: 100%; }
 .pc.full { background: var(--bg-1); padding: 10px 12px; border-radius: 0; }
-.pc.pseudo { position: fixed; inset: 0; z-index: 100; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+.pc.pseudo { display: flex; } /* overlay itself: style.css .fs-pseudo */
 .fs-btn { all: unset; box-sizing: border-box; display: inline-grid; place-items: center; width: 28px; height: 24px; border-radius: 6px; color: var(--text-2); cursor: pointer; border: 1px solid var(--line-2); }
 @media (hover: hover) { .fs-btn:hover { color: var(--text-1); border-color: var(--accent); } }
 .fs-btn:focus-visible { outline: 2px solid var(--accent); }
-.reset { all: unset; box-sizing: border-box; position: absolute; bottom: 34px; z-index: 4; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px;
-  background: rgba(14, 14, 14, .85); border: 1px solid var(--line-2); color: var(--text-2); cursor: pointer; }
-@media (hover: hover) { .reset:hover { color: var(--text-1); border-color: var(--accent); } }
-.reset:active { background: var(--bg-3); }
-.reset:focus-visible { outline: 2px solid var(--accent); }
 .chart { height: 340px; }
 .wrap.tall .chart { height: 450px; }
 h3 { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
-import { LineChart, CandlestickChart, ChevronLeft, ChevronRight, Maximize2 } from 'lucide-vue-next'
+import { LineChart, CandlestickChart, ChevronLeft, ChevronRight, Maximize2, Minimize2, X } from 'lucide-vue-next'
 import { tradeApi, type AccountCandles, type Trade } from '../../tradeApi'
 import { useDesktop } from '../../composables/device'
+import { useFullscreen } from '../../composables/fullscreen'
 import EquityTradesChart from '../charts/EquityTradesChart.vue'
 import TradeCandleChart from '../charts/TradeCandleChart.vue'
 import Loading from '../ui/Loading.vue'
@@ -21,8 +22,15 @@ import { byInstrument } from './tradeMeta'
 const props = withDefaults(defineProps<{ accountId: number; points: [number, number][]; deposit: number; reloadKey?: number; height?: number }>(), { reloadKey: 0 })
 const desktop = useDesktop()
 const narrow = ref(window.innerWidth <= 900)
-const onResize = () => (narrow.value = window.innerWidth <= 900)
-const h = computed(() => props.height ?? (narrow.value ? 300 : 400))
+const vh = ref(window.innerHeight)
+const onResize = () => { narrow.value = window.innerWidth <= 900; vh.value = window.innerHeight }
+const root = ref<HTMLElement>()
+const { full, pseudo, toggle: toggleFull } = useFullscreen(root)
+watch(full, () => requestAnimationFrame(onResize))
+const h = computed(() => {
+  if (full.value) return Math.max(260, vh.value - (narrow.value ? 130 : 150))
+  return props.height ?? (narrow.value ? 300 : 400)
+})
 
 const view = ref<'equity' | 'inst'>('equity')
 const trades = shallowRef<Trade[]>([])
@@ -30,7 +38,28 @@ const loaded = ref(false)
 const err = ref('')
 const inst = ref('')
 const candles = shallowRef<AccountCandles | null>(null)
-const candleCache = new Map<string, AccountCandles>()
+const candleCache = new Map<string, AccountCandles>() // key instId|bar
+const TF: [string, number][] = [['1m', 6e4], ['5m', 3e5], ['15m', 9e5], ['1H', 3.6e6], ['4H', 1.44e7], ['1D', 8.64e7]]
+/**
+ * Candle size for showing `viewMs` of time: about one candle per 8 px of chart width, but never so
+ * fine that the whole account period (the endpoint always returns all of it) exceeds 4500 candles.
+ */
+function pickBar(viewMs: number) {
+  const pts = props.points
+  const period = pts.length > 1 ? pts[pts.length - 1][0] - pts[0][0] : viewMs
+  const want = Math.max(30, ((narrow.value ? window.innerWidth - 40 : window.innerWidth * 0.62) || 600) / 8)
+  let best = '1H', bestD = Infinity
+  for (const [k, ms] of TF) {
+    if (period * 1.25 / ms > 4500) continue
+    const d = Math.abs(Math.log(viewMs / ms / want))
+    if (d < bestD) { best = k; bestD = d }
+  }
+  return best
+}
+const barFor = (t: Trade | null) => {
+  if (!t) { const pts = props.points; return pickBar(pts.length > 1 ? pts[pts.length - 1][0] - pts[0][0] : 864e5) }
+  return pickBar(Math.max(3 * 3.6e6, ((t.closeTs || Date.now()) - t.openTs) * 2.2))
+}
 const candleBusy = ref(false)
 const candleErr = ref('')
 const selectedId = ref(0)
@@ -53,15 +82,20 @@ async function load() {
     loaded.value = true
   }
 }
+let wantKey = ''
 async function loadCandles(id: string, force = false) {
   if (!id) return
-  const hit = candleCache.get(id)
+  const sel = selected.value?.instId === id ? selected.value : null
+  const bar = barFor(sel)
+  const key = `${id}|${bar}`
+  wantKey = key // a slower response for an older request must not replace a newer one
+  const hit = candleCache.get(key)
   if (hit && !force) { candles.value = hit; return }
   candleBusy.value = true
   try {
-    const c = await tradeApi.candles(props.accountId, id)
-    candleCache.set(id, c)
-    if (inst.value === id) { candles.value = c; candleErr.value = '' }
+    const c = await tradeApi.candles(props.accountId, id, bar)
+    candleCache.set(key, c)
+    if (wantKey === key) { candles.value = c; candleErr.value = '' }
   } catch (e: any) {
     candleErr.value = e.message
   } finally {
@@ -69,10 +103,12 @@ async function loadCandles(id: string, force = false) {
   }
 }
 onMounted(() => { load(); window.addEventListener('keydown', onKey); window.addEventListener('resize', onResize) })
+/** Clear the selection (blank chart click / tap, Esc). */
+function deselect() { selectedId.value = 0; pinned.value = false; hoverIds.value = [] }
 onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('resize', onResize) })
 watch(() => props.reloadKey, () => { load(); if (view.value === 'inst' && inst.value) loadCandles(inst.value, true) })
 watch(() => props.accountId, () => { candleCache.clear(); inst.value = ''; selectedId.value = 0; load() })
-watch(inst, id => { candles.value = candleCache.get(id) ?? null; if (view.value === 'inst') loadCandles(id) })
+watch(inst, id => { if (view.value === 'inst') loadCandles(id) })
 watch(view, v => { if (v === 'inst') loadCandles(inst.value) })
 
 // ---- derived ----
@@ -112,12 +148,14 @@ async function openTrade(id: number) {
   await nextTick()
   kChart.value?.focus(t)
 }
-function openInst(id: string) {
-  inst.value = id
+/** Show one instrument over the whole period (no trade selected); the chart resets its view. */
+async function openInst(id: string) {
+  selectedId.value = 0
+  if (inst.value !== id) inst.value = id
   view.value = 'inst'
-  const first = [...trades.value].reverse().find(t => t.instId === id)
-  selectedId.value = first?.id ?? 0
-  nextTick(() => kChart.value?.fit())
+  await loadCandles(id)
+  await nextTick()
+  kChart.value?.resetView()
 }
 function step(d: number) {
   if (!trades.value.length) return
@@ -126,6 +164,7 @@ function step(d: number) {
   openTrade(trades.value[j].id)
 }
 function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && selectedId.value && root.value?.offsetParent) { deselect(); return }
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
   const t = e.target as HTMLElement
   if (/INPUT|TEXTAREA|SELECT/.test(t.tagName) || t.isContentEditable || t.closest('[role="slider"],[role="listbox"],[role="dialog"]')) return
@@ -135,6 +174,7 @@ function onKey(e: KeyboardEvent) {
 }
 function onEqHover(ids: number[], x: number, y: number) { hoverIds.value = ids; hoverAt.value = { x, y } }
 function onEqPick(ids: number[]) {
+  if (!ids.length) { deselect(); return }
   if (ids.length > 1) {
     const ts = ids.map(id => byId.value.get(id)!).filter(Boolean)
     eqChart.value?.zoomTo(Math.min(...ts.map(t => t.openTs)), Math.max(...ts.map(t => t.closeTs || t.openTs)))
@@ -145,7 +185,7 @@ function onEqPick(ids: number[]) {
   else { selectedId.value = ids[0]; pinned.value = true }
 }
 function onKHover(ids: number[], x: number, y: number) { hoverIds.value = ids.length === 1 ? ids : []; hoverAt.value = { x, y } }
-function onKPick(ids: number[]) { if (ids.length === 1) selectedId.value = ids[0]; else if (ids.length) openTrade(ids[0]) }
+function onKPick(ids: number[]) { if (!ids.length) deselect(); else if (ids.length === 1) openTrade(ids[0]); else openTrade(ids[0]) }
 const cardPos = computed(() => {
   const W = root.value?.querySelector('.chart')?.clientWidth ?? 800
   const left = hoverAt.value.x + 20 + 320 > W ? Math.max(4, hoverAt.value.x - 20 - 320) : hoverAt.value.x + 20
@@ -158,12 +198,11 @@ let sx = 0
 const onTouchStart = (e: TouchEvent) => { sx = e.touches[0].clientX }
 const onTouchEnd = (e: TouchEvent) => { const dx = e.changedTouches[0].clientX - sx; if (Math.abs(dx) > 60) step(dx < 0 ? 1 : -1) }
 
-const root = ref<HTMLElement>()
 defineExpose({ openInst, openTrade })
 </script>
 
 <template>
-  <div ref="root" class="tx">
+  <div ref="root" class="tx" :class="{ full, 'fs-pseudo': pseudo }">
     <div class="bar">
       <Segmented v-model="view" aria-label="视角" :options="[{ value: 'equity', label: '组合视角', icon: LineChart }, { value: 'inst', label: '币对视角', icon: CandlestickChart, disabled: !trades.length }]" />
       <InfoTip>
@@ -178,7 +217,10 @@ defineExpose({ openInst, openTrade })
         <span class="nv tnum">{{ navIdx >= 0 ? navIdx + 1 : '—' }}/{{ trades.length }}</span>
         <button type="button" class="ib" aria-label="下一笔" title="下一笔（→）" @click="step(1)"><ChevronRight :size="15" /></button>
       </template>
-      <button type="button" class="ib" aria-label="显示全部" title="显示全部" @click="view === 'equity' ? eqChart?.fit() : kChart?.fit()"><Maximize2 :size="14" /></button>
+      <button type="button" class="ib" :aria-label="full ? '退出全屏' : '全屏'" :title="full ? '退出全屏（Esc）' : '全屏'" @click="toggleFull">
+        <Minimize2 v-if="full" :size="14" /><Maximize2 v-else :size="14" />
+      </button>
+      <button v-if="pseudo" type="button" class="ib close" aria-label="关闭全屏" @click="toggleFull"><X :size="16" /></button>
     </div>
 
     <div v-if="view === 'inst' && insts.length" class="chips" role="tablist" aria-label="交易过的合约">
@@ -193,12 +235,12 @@ defineExpose({ openInst, openTrade })
         <EquityTradesChart v-show="view === 'equity'" ref="eqChart" :points="points" :deposit="deposit" :trades="trades" :hover-id="highlightId" :selected-id="selectedId"
           :dimmed="visible" :height="h" :small="narrow" @hover="onEqHover" @pick="onEqPick" />
         <template v-if="view === 'inst'">
-          <TradeCandleChart ref="kChart" :candles="candles" :trades="instTrades" :hover-id="highlightId" :selected-id="selectedId" :dimmed="visible" :height="h" @hover="onKHover" @pick="onKPick" />
+          <TradeCandleChart ref="kChart" :candles="candles" :trades="instTrades" :hover-id="highlightId" :selected-id="selectedId" :dimmed="visible" :height="h" :small="narrow" @hover="onKHover" @pick="onKPick" />
           <Loading overlay :show="candleBusy" />
           <p v-if="candleErr && !candles" class="cerr down">K 线读取失败：{{ candleErr }}</p>
         </template>
         <div v-if="desktop && view === 'equity' && (hoverTrade || hoverCluster)" class="hcard" :style="cardPos">
-          <TradeCard v-if="hoverTrade" :t="hoverTrade" />
+          <TradeCard v-if="hoverTrade" :t="hoverTrade" fills />
           <div v-else-if="hoverCluster" class="cl">
             <b>{{ hoverCluster.n }} 笔交易</b>
             <span class="tnum" :class="tone(hoverCluster.net)">{{ amt(hoverCluster.net, 2, true) }} USDT</span>
@@ -216,17 +258,19 @@ defineExpose({ openInst, openTrade })
 
     <!-- phone: the selected trade under the chart; swipe to step -->
     <div v-if="narrow && selected && (view === 'inst' || pinned)" class="pcard" @touchstart.passive="onTouchStart" @touchend.passive="onTouchEnd">
-      <TradeCard :t="selected" :fills="view === 'inst'" :kline="view === 'equity'" :nav="{ i: navIdx, n: trades.length }" :closable="view === 'equity'"
+      <TradeCard :t="selected" fills :kline="view === 'equity'" :nav="{ i: navIdx, n: trades.length }" :closable="view === 'equity'"
         @kline="openTrade(selected.id)" @prev="step(-1)" @next="step(1)" @close="pinned = false; selectedId = 0" />
     </div>
 
     <p v-if="err" class="down small">{{ err }}</p>
-    <TradeList v-if="trades.length" v-model:filter="filter" :trades="trades" :hover-id="highlightId" :selected-id="selectedId" @hover="id => (rowHover = id)" @select="openTrade" />
+    <TradeList v-if="trades.length && !full" v-model:filter="filter" :trades="trades" :hover-id="highlightId" :selected-id="selectedId" @hover="id => (rowHover = id)" @select="openTrade" />
   </div>
 </template>
 
 <style scoped>
-.tx { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.tx { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; align-content: start; }
+.tx.full:not(.fs-pseudo) { padding: 12px 16px; }
+.ib.close { border-color: var(--line-2); color: var(--text-1); }
 .bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .sp { flex: 1; }
 .ib { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; background: transparent; color: var(--text-2); }
