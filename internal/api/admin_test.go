@@ -14,7 +14,10 @@ func TestAdminGate(t *testing.T) {
 	}{
 		{"get open", "k", "GET", "/api/v1/trade/accounts", "", "1.2.3.4:5", "", 204},
 		{"other area open", "k", "POST", "/api/v1/rules", "", "1.2.3.4:5", "", 204},
-		{"write needs key", "k", "POST", "/api/v1/trade/accounts", "", "1.2.3.4:5", "", 401},
+		{"paper trading open", "k", "POST", "/api/v1/trade/accounts", "", "1.2.3.4:5", "", 204},
+		{"prompt answer open", "k", "POST", "/api/v1/interact/prompts/x", "", "1.2.3.4:5", "", 204},
+		{"config needs key", "k", "PUT", "/api/v1/interact/config", "", "1.2.3.4:5", "", 401},
+		{"reflect needs key", "k", "POST", "/api/v1/ai/memory/s/reflect", "", "1.2.3.4:5", "", 401},
 		{"wrong key", "k", "PUT", "/api/v1/ai/credential", "x", "1.2.3.4:5", "", 401},
 		{"right key", "k", "PUT", "/api/v1/ai/credential", "k", "1.2.3.4:5", "", 204},
 		{"no key loopback", "", "POST", "/api/v1/interact/test", "", "127.0.0.1:9", "", 204},

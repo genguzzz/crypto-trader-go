@@ -97,7 +97,7 @@ const (
 type Limits struct {
 	MaxPositions    int         `json:"maxPositions"`    // concurrent open positions (instruments)
 	MaxLeverage     float64     `json:"maxLeverage"`     // isolated leverage cap
-	RiskPct         float64     `json:"riskPct"`         // equity fraction risked per trade at strength 1 (0.01 = 1%)
+	RiskPct         float64     `json:"riskPct"`         // equity fraction risked per trade at strength 1 (0.01 = 1%, up to 5 = 500%)
 	MaxInstPct      float64     `json:"maxInstPct"`      // max margin in one instrument as equity fraction
 	DailyLossPct    float64     `json:"dailyLossPct"`    // circuit breaker: realized+unrealized loss today (UTC+8 day)
 	SlippageBp      float64     `json:"slippageBp"`      // default tolerance for market entries

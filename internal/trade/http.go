@@ -71,6 +71,17 @@ func (s *Service) Register(mux *http.ServeMux) {
 		n, err := s.ClosePositions(r.Context(), id, strings.ToUpper(strings.TrimSpace(in.InstID)))
 		reply(w, 200)(map[string]int{"closed": n}, err)
 	}))
+	mux.HandleFunc("GET "+p+"/accounts/{id}/trades", s.withID(func(w http.ResponseWriter, r *http.Request, id int64) {
+		reply(w, 200)(s.Trades(id))
+	}))
+	mux.HandleFunc("GET "+p+"/accounts/{id}/candles", s.withID(func(w http.ResponseWriter, r *http.Request, id int64) {
+		inst := r.URL.Query().Get("instId")
+		if inst == "" {
+			reply(w, 200)(nil, errBad("instId required"))
+			return
+		}
+		reply(w, 200)(s.AccountCandles(id, inst, r.URL.Query().Get("bar")))
+	}))
 	mux.HandleFunc("GET "+p+"/accounts/{id}/report", s.withID(func(w http.ResponseWriter, r *http.Request, id int64) {
 		reply(w, 200)(s.Report(id))
 	}))

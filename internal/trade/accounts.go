@@ -39,8 +39,8 @@ func validLimits(l Limits) (Limits, error) {
 		return bad("最大持仓数需在 1–100")
 	case l.MaxLeverage < 1 || l.MaxLeverage > 100:
 		return bad("最大杠杆需在 1–100")
-	case l.RiskPct <= 0 || l.RiskPct > 0.2:
-		return bad("单笔风险 riskPct 需在 (0, 0.2]")
+	case l.RiskPct < 0.01 || l.RiskPct > 5:
+		return bad("单笔风险 riskPct 需在 1%–500%（0.01–5）")
 	case l.MaxInstPct <= 0 || l.MaxInstPct > 1:
 		return bad("单合约保证金上限 maxInstPct 需在 (0, 1]")
 	case l.DailyLossPct > 1:
