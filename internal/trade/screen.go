@@ -1,0 +1,78 @@
+package trade
+
+import (
+	"math"
+	"sort"
+)
+
+// SelectScreen filters and ranks screener candidates (shared by the live adapter and the
+// replayer). Candidates carry NaN for an unscored side; the returned rows carry 0 there and
+// only finite fact-panel values.
+func SelectScreen(rows []ScreenRow, q ScreenerQuery) []ScreenRow {
+	short := q.Side == "short"
+	score := func(r ScreenRow) float64 {
+		if short {
+			return r.Short
+		}
+		return r.Long
+	}
+	var out []ScreenRow
+	for _, r := range rows {
+		if q.Rule != "" {
+			v := score(r)
+			if math.IsNaN(v) || v < q.MinScore {
+				continue
+			}
+		}
+		ok := true
+		for k, rg := range q.Filter {
+			v, have := r.Values[k]
+			if !have || !finite(v) || v < rg[0] || v > rg[1] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, r)
+		}
+	}
+	rank := func(r ScreenRow) int {
+		if r.Rank <= 0 {
+			return math.MaxInt32
+		}
+		return r.Rank
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if q.Rule != "" && score(out[i]) != score(out[j]) {
+			return score(out[i]) > score(out[j])
+		}
+		if rank(out[i]) != rank(out[j]) {
+			return rank(out[i]) < rank(out[j])
+		}
+		return out[i].InstID < out[j].InstID
+	})
+	if q.Top > 0 && len(out) > q.Top {
+		out = out[:q.Top]
+	}
+	for i := range out {
+		if math.IsNaN(out[i].Long) {
+			out[i].Long = 0
+		}
+		if math.IsNaN(out[i].Short) {
+			out[i].Short = 0
+		}
+		if out[i].Values != nil {
+			v := make(map[string]float64, len(out[i].Values))
+			for k, x := range out[i].Values {
+				if finite(x) {
+					v[k] = x
+				}
+			}
+			out[i].Values = v
+		}
+	}
+	if out == nil {
+		out = []ScreenRow{}
+	}
+	return out
+}
