@@ -7,11 +7,13 @@ import (
 	"strings"
 )
 
-// adminPrefixes are API areas whose writes move simulated money, answer trade confirmations or
-// store credentials. Until owner login (#1) exists, writes there need the owner key.
-var adminPrefixes = []string{"/api/v1/trade/", "/api/v1/interact/", "/api/v1/ai/"}
+// adminPaths are writes that store credentials or spend money (model calls). Paper trading itself
+// (accounts, instances, confirmations, proposals) needs no key. Until owner login (#1) exists,
+// these writes need the owner key; real-money trading will join this list.
+var adminPaths = []string{"/api/v1/interact/config", "/api/v1/interact/test", "/api/v1/ai/credential", "/api/v1/ai/model",
+	"/api/v1/ai/test", "/api/v1/ai/memory/"}
 
-// adminGate requires header X-CTG-Admin == key for non-GET requests under adminPrefixes.
+// adminGate requires header X-CTG-Admin == key for non-GET requests to adminPaths.
 // With no key configured, only direct loopback requests (no reverse proxy headers) may write.
 func adminGate(key string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,8 +38,8 @@ func adminGate(key string, next http.Handler) http.Handler {
 }
 
 func needsAdmin(path string) bool {
-	for _, p := range adminPrefixes {
-		if strings.HasPrefix(path, p) {
+	for _, p := range adminPaths {
+		if path == p || (strings.HasSuffix(p, "/") && strings.HasPrefix(path, p)) {
 			return true
 		}
 	}
