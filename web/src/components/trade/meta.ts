@@ -50,8 +50,9 @@ export const ledgerLabel: Record<string, string> = { deposit: '入金', fee: '�
 /** Event kinds the interaction layer can push (contract.go Event.Kind). */
 export const eventKinds: { value: string; label: string }[] = [
   { value: 'signal', label: '信号' }, { value: 'order', label: '下单' }, { value: 'fill', label: '成交' }, { value: 'cancel', label: '撤单' },
-  { value: 'stop', label: '止损' }, { value: 'target', label: '止盈' }, { value: 'liquidation', label: '强平' }, { value: 'reject', label: '风控拒绝' },
-  { value: 'breaker', label: '熔断' }, { value: 'instance', label: '实例状态' }, { value: 'ai', label: 'AI 决策' }, { value: 'daily', label: '每日汇总' },
+  { value: 'stop', label: '止损' }, { value: 'target', label: '止盈' }, { value: 'time', label: '持仓到期' }, { value: 'liquidation', label: '强平' },
+  { value: 'reject', label: '风控拒绝' }, { value: 'breaker', label: '熔断' }, { value: 'instance', label: '实例状态' }, { value: 'strategy', label: '策略消息' },
+  { value: 'ai', label: 'AI 决策' }, { value: 'daily', label: '每日汇总' },
 ]
 
 /** One-line AI availability (internal/aigate Status): label, tag tone, explanation. */
@@ -105,7 +106,7 @@ export function universeText(u: Universe | undefined, ruleName?: (id: string) =>
   if (u.screener) {
     const q = u.screener
     const r = q.rule ? (ruleName?.(q.rule) || q.rule) : '默认规则'
-    return `筛选 · ${r} ${q.side === 'short' ? '空' : '多'} 前 ${q.top}${q.minScore ? ` · ≥${q.minScore}` : ''} · 每 ${q.refresh || '1H'}`
+    return `筛选 · ${r} ${q.side === 'short' ? '空' : q.side === 'both' ? '多空' : '多'} 前 ${q.top}${q.minScore ? ` · ≥${q.minScore}` : ''} · 每 ${q.refresh || '1H'}`
   }
   const s = u.static || []
   if (!s.length) return '—'
@@ -142,10 +143,27 @@ export function parseDay(s: string) {
   return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) - 8 * 3600_000 : NaN
 }
 
-/** Strategy parameter validation against its ParamSpec. */
+/** Strategy parameter validation against its ParamSpec (internal/trade/params.go checkParam). */
 export function paramError(p: ParamSpec, v: number | undefined): string {
   if (v == null || !isFinite(v)) return '请输入数值'
+  if (p.type === 'bool') return v === 0 || v === 1 ? '' : '需为开或关'
+  if (p.type === 'choice' || p.type === 'timeframe') return Number.isInteger(v) && v >= 0 && v < (p.options?.length ?? 0) ? '' : '不是有效选项'
+  if (p.type === 'int' && !Number.isInteger(v)) return '需为整数'
   if (p.min != null && v < p.min) return `不能小于 ${p.min}`
   if (p.max != null && v > p.max) return `不能大于 ${p.max}`
   return ''
+}
+
+/** A parameter value as text (option label, 开/关, or the number). */
+export function paramText(p: ParamSpec, v: number | undefined): string {
+  if (v == null) return '—'
+  if (p.type === 'bool') return v ? '开' : '关'
+  if (p.type === 'choice' || p.type === 'timeframe') return p.labels?.[v] ?? p.options?.[v] ?? String(v)
+  return String(v)
+}
+
+/** Directions a strategy may open, from its meta (SDK 1 versions carry none: both). */
+export function directionText(m?: { canLong?: boolean; canShort?: boolean }): string {
+  if (!m || (m.canLong === undefined && m.canShort === undefined)) return '多 / 空'
+  return [m.canLong && '多', m.canShort && '空'].filter(Boolean).join(' / ') || '—'
 }

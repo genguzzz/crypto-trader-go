@@ -38,18 +38,39 @@ export interface BacktestStatus {
   state: 'idle' | 'running' | 'done' | 'failed'; progress: number; clock?: number; error?: string; startedAt?: number; finishedAt?: number
 }
 export interface ScreenerQuery {
-  rule?: string; side?: 'long' | 'short'; top: number; minScore?: number
+  rule?: string; side?: 'long' | 'short' | 'both'; top: number; minScore?: number
   filter?: Record<string, [number, number]>; refresh?: string
 }
 export interface Universe { static?: string[]; screener?: ScreenerQuery }
-export interface ParamSpec { name: string; default: number; min?: number; max?: number; step?: number; desc?: string; aiTunable?: boolean }
+/** Param types (SDK 2). Values are numbers: bool 0/1, choice / timeframe the option index. "" = float (SDK 1). */
+export type ParamType = '' | 'float' | 'int' | 'bool' | 'choice' | 'timeframe'
+export interface ParamSpec {
+  name: string; type?: ParamType; default: number; min?: number; max?: number; step?: number
+  options?: string[]; labels?: string[]; group?: string; label?: string; desc?: string; aiTunable?: boolean
+}
+/** internal/trade StrategyMeta. */
+export interface StrategyMeta {
+  canLong?: boolean; canShort?: boolean; warmup?: number; schedule?: Record<string, string>; batch?: boolean
+  builtin?: boolean; sourceId?: number; draft?: boolean
+}
 export interface StrategyVersion {
   id: string; name: string; file: string; description: string; timeframe: string; params: ParamSpec[]
-  defaultUniverse: Universe; code?: string; createdAt: number
+  defaultUniverse: Universe; meta?: StrategyMeta; code?: string; createdAt: number
+}
+/** internal/trade Source: a user strategy (draft code + last published version). */
+export interface Source { id: number; name: string; code?: string; published?: string; dirty: boolean; createdAt: number; updatedAt: number }
+export interface Diagnostic { line: number; col: number; endLine?: number; endCol?: number; severity: 'error' | 'warning'; message: string }
+export interface CheckResult { diagnostics: Diagnostic[]; strategies: StrategyVersion[] }
+/** internal/trade LogLine: one entry of an instance's run log. */
+export interface LogLine { ts: number; clock: number; level: 'info' | 'warn' | 'error'; kind: 'log' | 'notify'; msg: string; sent?: boolean }
+export interface TrialInput { code?: string; versionId?: string; sourceId?: number; params?: Record<string, number>; universe?: Universe; days?: number }
+export interface TrialResult {
+  check?: CheckResult; error?: string; from: number; to: number; strategy: string; report?: Report
+  signals: Signal[]; trades: Trade[]; logs: LogLine[]; candles?: AccountCandles; seconds: number
 }
 export interface Instance {
   id: number; accountId: number; versionId: string; name: string; params: Record<string, number>; universe: Universe
-  exec: ExecMode; state: InstanceState; stateReason?: string; configVersion: number; heartbeat: number; createdAt: number
+  exec: ExecMode; state: InstanceState; stateReason?: string; status?: string; configVersion: number; heartbeat: number; createdAt: number
 }
 export interface Signal {
   id: number; instanceId: number; accountId: number; instId: string; action: Action; strength: number
@@ -94,7 +115,7 @@ export interface Report {
 
 /** internal/trade TradeFill: one fill of a round trip. kind: open | add | reduce | close. */
 export interface TradeFill { id: number; ts: number; side: 'buy' | 'sell'; qty: number; px: number; fee: number; pnl: number; kind: 'open' | 'add' | 'reduce' | 'close'; orderType: string }
-export type ExitKind = 'signal' | 'stop' | 'target' | 'liquidation' | 'manual' | 'open'
+export type ExitKind = 'signal' | 'stop' | 'target' | 'time' | 'liquidation' | 'manual' | 'open'
 /**
  * internal/trade Trade: one round trip of an instance in an instrument, flat to flat. closeTs 0 = still
  * open. notional / margin / pnl / fees / funding / net in USDT; returnPct = net / margin.
@@ -123,6 +144,8 @@ export interface Prompt {
 /** internal/interact ConfigView. botToken is masked; sending it back masked or empty keeps it. */
 export interface InteractConfig {
   telegram: { enabled: boolean; botToken: string; configured: boolean; allowUserIds: number[]; clearToken?: boolean }
+  /** secret is masked; sending it back masked or empty keeps it. kinds empty = the global list. */
+  webhook: { enabled: boolean; url: string; secret: string; configured: boolean; clearSecret?: boolean; kinds: string[]; backlog?: number }
   kinds: string[] // empty = all kinds
   quiet: boolean
   status?: {
@@ -212,7 +235,7 @@ async function mreq<T>(path: string, method: string, body?: unknown): Promise<T>
     out = await r.json().catch(() => ({}))
     if (r.status === 401 && out?.code === 'admin_required') clearAdminKey() // wrong key: don't keep it
   }
-  if (!r.ok) throw new Error(out?.error || `HTTP ${r.status}`)
+  if (!r.ok) throw Object.assign(new Error(out?.error || `HTTP ${r.status}`), { body: out })
   return out as T
 }
 const qs = (o: Record<string, string | number | undefined>) => {
@@ -247,10 +270,21 @@ export const tradeApi = {
   strategies: async () => normStrategies(await req<unknown>(`${T}/strategies`)),
   strategy: (versionId: string) => req<StrategyVersion>(`${T}/strategies/${encodeURIComponent(versionId)}`),
   reloadStrategies: () => wreq<unknown>(`${T}/strategies/reload`, 'POST', {}),
+  // user strategies (writes run code: owner key)
+  sources: async () => arr<Source>(await req<unknown>(`${T}/sources`)),
+  source: (id: number) => req<Source>(`${T}/sources/${id}`),
+  createSource: (x: { code?: string; fromVersion?: string }) => mreq<Source>(`${T}/sources`, 'POST', x),
+  saveSource: (id: number, code: string) => mreq<Source>(`${T}/sources/${id}`, 'PUT', { code }),
+  deleteSource: (id: number) => mreq<unknown>(`${T}/sources/${id}`, 'DELETE'),
+  /** On a failed check the thrown error carries body.check. */
+  publishSource: (id: number) => mreq<{ version?: StrategyVersion; check: CheckResult }>(`${T}/sources/${id}/publish`, 'POST', {}),
+  check: (code: string) => mreq<CheckResult>(`${T}/check`, 'POST', { code }),
+  trial: (x: TrialInput) => mreq<TrialResult>(`${T}/trial`, 'POST', x),
+  runLog: async (instanceId: number) => arr<LogLine>(await req<unknown>(`${T}/instances/${instanceId}/logs`)),
   // instances
   instances: async (accountId: number) => arr<Instance>(await req<unknown>(`${T}/accounts/${accountId}/instances`), 'instances'),
   createInstance: (accountId: number, x: NewInstance) => wreq<Instance>(`${T}/accounts/${accountId}/instances`, 'POST', x),
-  patchInstance: (id: number, p: Partial<Pick<Instance, 'params' | 'universe' | 'exec'>>) => wreq<Instance>(`${T}/instances/${id}`, 'PATCH', p),
+  patchInstance: (id: number, p: Partial<Pick<Instance, 'params' | 'universe' | 'exec' | 'versionId'>>) => wreq<Instance>(`${T}/instances/${id}`, 'PATCH', p),
   instanceAction: (id: number, a: InstanceAction) => wreq<Instance>(`${T}/instances/${id}/${a}`, 'POST', {}),
 }
 

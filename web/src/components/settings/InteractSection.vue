@@ -16,11 +16,12 @@ import { eventKinds } from '../trade/meta'
  */
 const cfg = ref<InteractConfig | null>(null)
 const loadErr = ref('')
-const form = reactive({ enabled: false, token: '', users: '', kinds: [] as string[], quiet: false })
+const form = reactive({ enabled: false, token: '', users: '', kinds: [] as string[], quiet: false, whOn: false, whUrl: '', whSecret: '', whKinds: [] as string[] })
 const busy = ref('')
 const res = ref<{ ok: boolean; t: string } | null>(null)
 
 const parseUsers = (s: string) => s.split(/[\s,，]+/).filter(Boolean).map(Number)
+const urlErr = computed(() => (form.whUrl.trim() && !/^https?:\/\/\S+$/.test(form.whUrl.trim()) ? '需为 http(s):// 开头的地址' : form.whOn && !form.whUrl.trim() ? '启用前需填写地址' : ''))
 const usersErr = computed(() => (parseUsers(form.users).some(n => !Number.isInteger(n) || n <= 0) ? '用户 ID 是正整数，用逗号分隔' : ''))
 const kindOpts = computed(() => (cfg.value?.allKinds?.length ? cfg.value.allKinds.map(k => ({ value: k.kind, label: k.label })) : eventKinds))
 const allKeys = () => kindOpts.value.map(k => k.value)
@@ -31,6 +32,10 @@ function reset(c: InteractConfig) {
   form.users = (c.telegram.allowUserIds || []).join(', ')
   form.kinds = c.kinds?.length ? [...c.kinds] : allKeys() // empty = all
   form.quiet = c.quiet
+  form.whOn = !!c.webhook?.enabled
+  form.whUrl = c.webhook?.url || ''
+  form.whSecret = ''
+  form.whKinds = c.webhook?.kinds?.length ? [...c.webhook.kinds] : allKeys()
 }
 async function load(first = false) {
   try {
@@ -54,11 +59,13 @@ const changed = computed(() => {
   return {
     enabled: form.enabled !== c.telegram.enabled, token: !!form.token, quiet: form.quiet !== c.quiet,
     users: parseUsers(form.users).join() !== (c.telegram.allowUserIds || []).join(), kinds: !sameSet(form.kinds, savedKinds.value),
+    whOn: form.whOn !== !!c.webhook?.enabled, whUrl: form.whUrl.trim() !== (c.webhook?.url || ''), whSecret: !!form.whSecret,
+    whKinds: !sameSet(form.whKinds, c.webhook?.kinds?.length ? c.webhook.kinds : allKeys()),
   } as Record<string, boolean>
 })
 const dirty = computed(() => Object.values(changed.value).some(Boolean))
 async function save() {
-  if (!cfg.value || usersErr.value) return false
+  if (!cfg.value || usersErr.value || urlErr.value) return false
   busy.value = 'save'
   res.value = null
   try {
@@ -66,6 +73,8 @@ async function save() {
     reset(await interactApi.saveConfig({
       telegram: { enabled: form.enabled, botToken: form.token, configured: cfg.value.telegram.configured, allowUserIds: parseUsers(form.users) },
       kinds: all ? [] : form.kinds, quiet: form.quiet,
+      webhook: { enabled: form.whOn, url: form.whUrl.trim(), secret: form.whSecret, configured: !!cfg.value.webhook?.configured,
+        kinds: sameSet(form.whKinds, allKeys()) ? [] : form.whKinds },
     }))
     res.value = { ok: true, t: '已保存' }
     return true
@@ -82,7 +91,7 @@ async function test() {
   res.value = null
   try {
     const r = await interactApi.test()
-    const bad = Object.entries(r.channels || {}).filter(([, v]) => v !== 'ok').map(([k, v]) => `${k === 'telegram' ? 'Telegram' : k}：${v}`)
+    const bad = Object.entries(r.channels || {}).filter(([, v]) => v !== 'ok' && v !== '未启用').map(([k, v]) => `${k === 'telegram' ? 'Telegram' : 'Webhook'}：${v}`)
     res.value = r.ok ? { ok: true, t: '测试消息已发送，随后会收到一条测试确认（也会出现在“待确认”）' } : { ok: false, t: bad.join('；') || r.error || '发送失败' }
   } catch (e: any) {
     res.value = { ok: false, t: e.message }
@@ -145,11 +154,26 @@ const botState = computed(() => {
       <SettingRow label="静音" desc="除确认、止损、强平、熔断外不响铃" :changed="changed.quiet">
         <Switch v-model="form.quiet" aria-label="静音" />
       </SettingRow>
+      <SettingRow label="启用 Webhook" :changed="changed.whOn">
+        <template #desc>把事件以 JSON POST 到你的地址（策略的 ctx.notify 也走这里）<template v-if="cfg.webhook?.backlog"> · 待发 {{ cfg.webhook.backlog }}</template> ·
+          <RouterLink to="/help/strategy/notify">格式与验签</RouterLink></template>
+        <Switch v-model="form.whOn" aria-label="启用 Webhook" />
+      </SettingRow>
+      <SettingRow label="Webhook 地址" for-id="ix-wh" :error="urlErr" :changed="changed.whUrl">
+        <input id="ix-wh" v-model="form.whUrl" class="w" type="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/hook" />
+      </SettingRow>
+      <SettingRow label="签名密钥" desc="请求头 X-CTG-Signature = sha256=HMAC(密钥, 请求体)；留空不签名" for-id="ix-whs" :changed="changed.whSecret">
+        <input id="ix-whs" v-model="form.whSecret" class="w" type="password" autocomplete="off" spellcheck="false" :placeholder="cfg.webhook?.configured ? `已保存 ${cfg.webhook.secret}，留空不变` : '可选'" />
+      </SettingRow>
+      <SettingRow label="Webhook 推送的事件" :changed="changed.whKinds" :error="form.whKinds.length ? '' : '至少选择一种'">
+        <template #desc>可以和 Telegram 不同，例如只推「策略消息」 · <button type="button" class="link" @click="form.whKinds = allKeys()">全选</button></template>
+        <ChipGroup v-model="form.whKinds" :options="kindOpts" aria-label="Webhook 推送的事件" class="kinds" />
+      </SettingRow>
     </template>
     <template #footer>
       <div class="acts">
-        <button type="button" class="primary" :disabled="!!busy || !dirty || !!usersErr || !form.kinds.length" @click="save">{{ busy === 'save' ? '保存中…' : '保存' }}</button>
-        <button type="button" :disabled="!!busy || (!cfg?.telegram.configured && !form.token)" @click="test">{{ busy === 'test' ? '发送中…' : '发送测试' }}</button>
+        <button type="button" class="primary" :disabled="!!busy || !dirty || !!usersErr || !!urlErr || !form.kinds.length || !form.whKinds.length" @click="save">{{ busy === 'save' ? '保存中…' : '保存' }}</button>
+        <button type="button" :disabled="!!busy || (!cfg?.telegram.configured && !form.token && !form.whUrl)" @click="test">{{ busy === 'test' ? '发送中…' : '发送测试' }}</button>
         <span v-if="res" class="res" :class="res.ok ? 'up' : 'down'">{{ res.t }}</span>
       </div>
     </template>

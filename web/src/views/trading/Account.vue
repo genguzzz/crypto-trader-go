@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronLeft, ArrowDownToLine, SlidersHorizontal, XCircle, Archive, ArchiveRestore, Plus, FileBarChart } from 'lucide-vue-next'
-import { tradeApi, type AccountDetail, type Fill, type Instance, type InstanceAction, type LedgerEntry, type Order, type Position, type Signal } from '../../tradeApi'
+import { tradeApi, type AccountDetail, type Fill, type Instance, type InstanceAction, type LedgerEntry, type Order, type Position, type Signal, type StrategyVersion } from '../../tradeApi'
 import { useTradeLive } from '../../composables/tradeLive'
 import { time, price } from '../../fmt'
 import TradeExplorer from '../../components/trade/TradeExplorer.vue'
@@ -97,6 +97,18 @@ async function run<T>(f: () => Promise<T>, ok?: string) {
 }
 const closeOne = (p: Position) => { if (confirm(`按市价平掉 ${p.instId} ${p.posSide === 'long' ? '多' : '空'}仓 ${qty(p.qty)} 张？`)) run(() => tradeApi.close(aid.value, p.instId), '已提交平仓') }
 const closeAll = () => { if (confirm(`按市价平掉全部 ${positions.value.length} 个持仓？`)) run(() => tradeApi.close(aid.value), '已提交全部平仓') }
+// newest version of each strategy, to offer upgrades on the instance cards
+const latest = ref<Record<string, StrategyVersion>>({})
+const versionName = ref<Record<string, string>>({})
+tradeApi.strategies().then(es => {
+  latest.value = Object.fromEntries(es.map(e => [e.name, e.latest]))
+  versionName.value = Object.fromEntries(es.flatMap(e => e.versions.map(v => [v.id, e.name])))
+}).catch(() => {})
+const newer = (i: Instance) => { const n = versionName.value[i.versionId]; const v = n ? latest.value[n] : undefined; return v && v.id !== i.versionId ? v : undefined }
+const upgrade = (i: Instance, v: StrategyVersion) => {
+  if (!confirm(`把「${i.name}」换成 ${v.name} 的最新版本 ${v.id.slice(0, 8)}？\n参数尽量保留（新版本不接受的值恢复默认），运行中的实例会带着保存的状态重启。`)) return
+  run(() => tradeApi.patchInstance(i.id, { versionId: v.id }), '已升级')
+}
 const act = (i: Instance, x: InstanceAction) => {
   if (x === 'stop' && !confirm(`停止「${i.name}」？已有持仓保留，可以手动平仓。`)) return
   run(() => tradeApi.instanceAction(i.id, x))
@@ -224,7 +236,8 @@ function onInstSaved() { instOpen.value = false; load() }
               <span class="sp"></span>
               <button v-if="!isBacktest && !a.archived" type="button" class="sm" @click="openInst(null)"><Plus :size="13" />添加</button>
             </h3>
-            <InstanceCard v-for="i in insts || []" :key="i.id" :inst="i" :busy="busy" :readonly="isBacktest || a.archived" @act="x => act(i, x)" @edit="openInst(i)" />
+            <InstanceCard v-for="i in insts || []" :key="i.id" :inst="i" :busy="busy" :readonly="isBacktest || a.archived" :newer="newer(i)"
+              @act="x => act(i, x)" @edit="openInst(i)" @upgrade="v => upgrade(i, v)" />
             <p v-if="insts && !insts.length" class="muted small">还没有策略。点“添加”把策略挂到这个账户。</p>
           </div>
           <div class="panel">
