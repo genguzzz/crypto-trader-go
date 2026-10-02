@@ -172,6 +172,9 @@ type Instrument struct {
 	CtType    string
 	CtVal     float64
 	TickSz    float64
+	LotSz     float64 // order size step (contracts)
+	MinSz     float64 // minimum order size (contracts)
+	MaxLever  float64 // maximum leverage (lever)
 	RuleType  string
 	Category  string // instCategory: 1 crypto, 3 stock/ETF, 4 commodity
 	ListTime  int64
@@ -236,7 +239,8 @@ func (c *REST) Instruments(ctx context.Context, instType string) ([]Instrument, 
 	out := make([]Instrument, 0, len(raw))
 	for _, m := range raw {
 		out = append(out, Instrument{InstID: s(m, "instId"), InstType: s(m, "instType"), State: s(m, "state"),
-			SettleCcy: s(m, "settleCcy"), CtType: s(m, "ctType"), CtVal: f(s(m, "ctVal")), TickSz: f(s(m, "tickSz")), RuleType: s(m, "ruleType"),
+			SettleCcy: s(m, "settleCcy"), CtType: s(m, "ctType"), CtVal: f(s(m, "ctVal")), TickSz: f(s(m, "tickSz")),
+			LotSz: f(s(m, "lotSz")), MinSz: f(s(m, "minSz")), MaxLever: f(s(m, "lever")), RuleType: s(m, "ruleType"),
 			Category: s(m, "instCategory"), ListTime: i64(s(m, "listTime")), BaseCcy: s(m, "baseCcy"),
 			QuoteCcy: s(m, "quoteCcy"), Uly: s(m, "uly")})
 	}

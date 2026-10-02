@@ -111,6 +111,7 @@ type Engine struct {
 	catalog  map[string]okx.Instrument // every live USDT-margined linear swap (search)
 	tickers  map[string]okx.Ticker     // latest SWAP tickers (30s REST)
 	views    map[string]int64          // detail last opened (retention tier, adhoc streaming)
+	keep     map[string]bool           // held by the paper-trading layer: stream with tickers (tradeapi.go)
 	lastPool map[string]int64          // last decision minute in the active pool
 	lastMin  int64
 	removed  map[string]Removed
@@ -680,6 +681,9 @@ func (e *Engine) updateSubscriptions() {
 	snap := e.snap.Load()
 	tick := map[string]bool{}
 	for id := range e.watch {
+		tick[id] = true
+	}
+	for id := range e.keep {
 		tick[id] = true
 	}
 	for id, t := range e.views {
