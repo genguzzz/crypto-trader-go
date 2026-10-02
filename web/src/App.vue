@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
-import { Radar, FlaskConical, BellRing, ChartCandlestick, SlidersHorizontal, Activity, Code2, Ellipsis } from 'lucide-vue-next'
+import { Radar, FlaskConical, BellRing, ChartCandlestick, SlidersHorizontal, Activity, Code2, Ellipsis, BookOpen } from 'lucide-vue-next'
 import { store } from './store'
 import LayoutMenu from './components/LayoutMenu.vue'
 import AdminKeyModal from './components/AdminKeyModal.vue'
@@ -26,6 +26,7 @@ const nav = computed<NavItem[]>(() => [
   { to: '/trading', label: '交易', icon: ChartCandlestick, badge: store.openPrompts },
   ...(devTab.value ? [{ to: '/dev', label: 'Dev', icon: Code2 }] : []),
   { to: '/settings', label: '设置', icon: SlidersHorizontal },
+  { to: '/help', label: '帮助', icon: BookOpen },
   { to: '/status', label: '系统', icon: Activity },
 ])
 // phone tab bar: at most 5 slots — these 4 in this order plus "更多" holding the rest (sidebar order unchanged)
@@ -132,8 +133,12 @@ const pulse = computed(() =>
 .nav { display: flex; gap: 2px; }
 .nav-i {
   display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 11px; border-radius: 8px; color: var(--text-3);
-  font-weight: 500; text-decoration: none !important; transition: color .12s, background .12s;
+  font-weight: 500; text-decoration: none !important; transition: color .12s, background .12s; white-space: nowrap;
 }
+.word { white-space: nowrap; }
+/* narrower desktops: the market pulse goes first, then the nav packs tighter */
+@media (max-width: 1500px) { .pp .pr { display: none; } }
+@media (max-width: 1320px) { .pulse { display: none; } .nav-i { padding: 0 9px; } }
 @media (hover: hover) { .nav-i:hover { color: var(--text-1); background: rgba(255, 255, 255, .04); } }
 .nav-i .ni { transition: color .12s; }
 .nav-bd { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--warn); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }

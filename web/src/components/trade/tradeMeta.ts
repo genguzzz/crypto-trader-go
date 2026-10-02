@@ -6,6 +6,7 @@ export const exitKindLabel: Record<string, Lbl> = {
   signal: { t: '信号平仓', c: '' },
   stop: { t: '止损', c: 'warn' },
   target: { t: '止盈', c: 'good' },
+  time: { t: '持仓到期', c: '' },
   liquidation: { t: '强平', c: 'bad' },
   manual: { t: '手动', c: '' },
   open: { t: '持仓中', c: 'info' },

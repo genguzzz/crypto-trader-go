@@ -71,7 +71,7 @@ const sc = computed(() => u.value.screener!)
       <label class="f"><span>评分规则</span>
         <USelect :model-value="sc.rule || ''" :options="ruleOptions()" aria-label="筛选规则" @update:model-value="v => (sc.rule = String(v))" /></label>
       <label class="f"><span>方向</span>
-        <Segmented :model-value="sc.side || 'long'" size="sm" aria-label="方向" :options="[{ value: 'long', label: '多头分', tone: 'up' }, { value: 'short', label: '空头分', tone: 'down' }]" @update:model-value="v => (sc.side = v as 'long' | 'short')" /></label>
+        <Segmented :model-value="sc.side || 'long'" size="sm" aria-label="方向" :options="[{ value: 'long', label: '多头分', tone: 'up' }, { value: 'short', label: '空头分', tone: 'down' }, { value: 'both', label: '较强一侧', title: '多空两侧里分数更高的一侧' }]" @update:model-value="v => (sc.side = v as 'long' | 'short' | 'both')" /></label>
       <label class="f"><span>取前 N</span><NumInput v-model="sc.top" unit="个" :min="1" :max="100" :step="1" /></label>
       <label class="f"><span>最低分（可选）</span><NumInput :model-value="sc.minScore ?? NaN" unit="分" :min="0" :max="100" @update:model-value="v => (sc.minScore = isFinite(v) ? v : undefined)" /></label>
       <label class="f"><span>重新筛选</span>

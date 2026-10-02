@@ -9,6 +9,17 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@lezer/highlight": "^1.2.5",
+    "@replit/codemirror-vim": "^6.4.0",
+    "codemirror": "^6.0.2",
     "lightweight-charts": "^5.2.1",
     "lucide-vue-next": "^0.577.0",
     "reka-ui": "^2.10.5",
@@ -16,9 +27,14 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@shikijs/markdown-it": "^4.5.0",
+    "@types/markdown-it": "^14.2.0",
     "@vitejs/plugin-vue": "^6.0.9",
+    "markdown-it": "^15.0.2",
     "playwright-core": "^1.63.0",
+    "shiki": "^4.5.0",
     "typescript": "~5.9",
+    "unplugin-vue-markdown": "^32.1.1",
     "vite": "^6.4.3",
     "vue-tsc": "^3.3.11"
   }
