@@ -71,9 +71,23 @@ Parallel development in several worktrees (separate ports and database copies) i
 | `-storage-cap-mb` | 2048 | first-run default storage cap; afterwards Settings → Data storage wins. Per-instrument tiered retention is described in [architecture §3](architecture.md#3-key-algorithms-summary) |
 | `-web` | true | false serves the API only |
 | `CTG_PROXY` / `-doh` | — / off | networks without direct OKX access: outbound HTTP proxy (credentials allowed), DNS-over-HTTPS |
+| `CTG_RUN_DIR` | `data/run` (`/data/run` in compose) | Unix sockets `strategy.sock` / `ai.sock` shared with the sidecars |
+| `CTG_ADMIN_KEY` | — | owner key required (header `X-CTG-Admin`) for writes under `/api/v1/trade|interact|ai`; unset = only direct loopback requests may write. Lives in `ctg.env` |
+| `CTG_SECRET_KEY` | — | at-rest key for the AI credential (else stored plain, noted on the AI page). Lives in `ctg.env` |
 | `GOMEMLIMIT` | 1536MiB in compose | resident heap is ~180 MB (with the full perpetual catalog and caches); container `mem_limit: 2g`. The limit must stay above the resident heap or the GC spins: 180MiB once caused ~20 GCs per second and 1.4 cores of constant CPU |
 
 The full universe at 1m is ~60 MB/day; the retention job runs every 30 minutes and keeps the database under the storage cap (per-table usage and effective retention on the System page). Freed space is reused inside the file; the file itself doesn't shrink.
+
+## Trading sidecars
+
+Paper trading adds two containers next to `ctg` (see [trading design](trading-design.md) §6):
+
+| Container | Image | Network | Notes |
+|---|---|---|---|
+| `ctg-strategy` | `strategies/Dockerfile` (python + numpy) | none | supervisor + one process per strategy instance; `strategies/` is bind-mounted read-only, so a new strategy file only needs `POST /api/v1/trade/strategies/reload` |
+| `ctg-ai` | `ai/Dockerfile` (python + Claude Agent SDK) | host | AI review worker; `CTG_AI_PROXY=http://127.0.0.1:17080` is mandatory and the worker never connects directly. The proxy is a local HTTP inbound on the server routed to the owner's Claude exit (set up outside this repo) |
+
+`deploy/deploy.sh` uploads `strategies/` and `ai/` with the compose file and rebuilds an image only when its Dockerfile or requirements change. Telegram (dedicated bot, owner allowlist) and the AI credential are configured in Settings, not in env.
 
 ## Troubleshooting
 

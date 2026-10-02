@@ -8,7 +8,7 @@ Planned work lives in GitHub issues, tracked by the pinned **[Roadmap issue #6](
 |---|---|---|
 | P1 | [#1 Authentication and access control](https://github.com/genguzzz/crypto-trader-go/issues/1) | needs design |
 | P1 | [#2 Monitoring: complete alert conditions, delivery and noise control](https://github.com/genguzzz/crypto-trader-go/issues/2) | needs design |
-| P2 | [#3 Strategy system with backtesting and paper trading](https://github.com/genguzzz/crypto-trader-go/issues/3) | needs design |
+| P2 | [#3 Strategy system with backtesting and paper trading](https://github.com/genguzzz/crypto-trader-go/issues/3) | first release on the test server ([design](trading-design.md)) |
 | P2 | [#4 Agent access: documented API and MCP server](https://github.com/genguzzz/crypto-trader-go/issues/4) | shipped (key-authenticated); owner UI login still depends on #1 |
 | P3 | [#5 Internationalization: English and Chinese UI](https://github.com/genguzzz/crypto-trader-go/issues/5) | ready |
 
@@ -39,6 +39,7 @@ The backlog of smaller, not yet filed items is listed in the Roadmap issue. Issu
 | 2026-09-29 | English documentation, contribution conventions, worktree + pull request workflow, issue-based roadmap |
 | 2026-09-29 | Agent access: API keys and short-lived tokens (hashed, shown once), per-key token-bucket limits with endpoint costs and a server-wide ceiling, read-only REST API (`/api/open/v1`, OpenAPI document) and MCP server (`/mcp`) from one endpoint registry; Dev tab (keys, docs, tester, request log) and Settings → Developer switches |
 | 2026-09-29 | Liquidation map closer to CoinGlass: 5m steps with per-minute OI (hourly only where data is broken), bars stacked by leverage tier (ordinal red/green ramps) with tier filter and 1/7-day look-back, per-tier crosshair readout; map and liquidation bars refresh every 10 s on an open detail page |
+| 2026-10-02 | Paper trading (#3): Python strategy SDK and runner (static or screener universes, Pine-like `ta`), Go order layer with risk, sizing, OCO stops/targets and a simulated broker (live order book / bar model), backtest accounts sharing the same code, two-way Telegram interaction with confirmations and commands (dedicated bot, owner only), optional AI review via the Claude Agent SDK with audit, memory and parameter proposals, trading UI; owner key for trading writes until #1 |
 
 ## Rules
 
