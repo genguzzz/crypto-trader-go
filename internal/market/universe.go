@@ -452,3 +452,6 @@ func (e *Engine) broadcastPrices() {
 	e.mu.RUnlock()
 	e.broadcast(Event{Type: "prices", Data: px})
 }
+
+// Publish sends an event from another package (trading, interaction) to every SSE subscriber.
+func (e *Engine) Publish(typ string, data any) { e.broadcast(Event{Type: typ, Data: data}) }

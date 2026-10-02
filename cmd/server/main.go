@@ -1,5 +1,6 @@
 // Command server runs the recorder + scanner: OKX public data → SQLite → fact panel, rules,
-// track records → HTTP/SSE + embedded web UI. Read-only public data; no credentials, no orders.
+// track records → HTTP/SSE + embedded web UI, plus simulated (paper) trading. Public data only;
+// never places real orders.
 package main
 
 import (
@@ -17,13 +18,18 @@ import (
 	"syscall"
 	"time"
 
+	"crypto-trader-go/internal/aigate"
 	"crypto-trader-go/internal/alerts"
 	"crypto-trader-go/internal/api"
 	"crypto-trader-go/internal/devapi"
+	"crypto-trader-go/internal/interact"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/okx"
 	"crypto-trader-go/internal/refdata"
 	"crypto-trader-go/internal/store"
+	"crypto-trader-go/internal/strategyhost"
+	"crypto-trader-go/internal/trade"
+	"crypto-trader-go/internal/trade/mdlive"
 	"crypto-trader-go/web"
 )
 
@@ -89,6 +95,51 @@ func main() {
 		log.Fatal(err)
 	}
 	go dev.Run(ctx)
+
+	// Paper trading: order layer + strategy runtime + interaction layer + optional AI review.
+	tsvc, err := trade.New(st, mdlive.New(eng), trade.Options{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	host := strategyhost.New(strategyhost.Options{})
+	go func() {
+		if err := host.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("strategy host: %v", err)
+		}
+	}()
+	hub, err := interact.New(st, okx.HTTPClient(), interact.Options{
+		Commands: trade.Commands{S: tsvc},
+		OnChange: func() { eng.Publish("interact", struct{}{}) },
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	go hub.Run(ctx)
+	gate, err := aigate.New(st, aigate.Options{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	gate.SetApplyParams(func(instanceID int64, params map[string]float64) error {
+		_, err := tsvc.UpdateInstance(instanceID, trade.InstancePatch{Params: params})
+		return err
+	})
+	gate.SetOnProposal(func(p aigate.Proposal) {
+		hub.Notify(trade.Event{Kind: "ai", AccountID: p.AccountID, Title: "AI 调参申请（需批准）",
+			Lines: []string{p.Strategy + "：" + p.Rationale}, Ts: time.Now().UnixMilli()})
+	})
+	go func() {
+		if err := gate.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("ai gate: %v", err)
+		}
+	}()
+	tsvc.SetRunner(host)
+	tsvc.SetInteractor(hub)
+	tsvc.SetReviewer(gate)
+	tsvc.SetOnChange(func(acct int64, kind string) {
+		eng.Publish("trade", map[string]any{"accountId": acct, "kind": kind})
+	})
+	eng.OnConfirmed(tsvc.OnMinute)
+	go tsvc.Run(ctx)
 	var dist fs.FS
 	if *serveWeb {
 		if dist, err = fs.Sub(web.Dist, "dist"); err != nil {
@@ -96,7 +147,9 @@ func main() {
 		}
 	}
 	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al, Dev: dev,
-		Icons: &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()}}).Handler(), ReadHeaderTimeout: 10 * time.Second}
+		Icons:    &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()},
+		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register},
+		AdminKey: os.Getenv("CTG_ADMIN_KEY")}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
