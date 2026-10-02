@@ -1,4 +1,4 @@
-import type { Account, Action, ConfirmMode, ExecMode, InstanceState, Limits, Mode, ParamSpec, OrderState, OrderType, SignalOutcome, Universe } from '../../tradeApi'
+import type { Account, Action, AiStatus, ConfirmMode, ExecMode, InstanceState, Limits, Mode, ParamSpec, OrderState, OrderType, SignalOutcome, Universe } from '../../tradeApi'
 
 /** Tag class (style.css .tag variants) + Chinese label for every enum shown in the trading pages. */
 export interface Lbl { t: string; c: '' | 'good' | 'warn' | 'bad' | 'info' }
@@ -54,12 +54,29 @@ export const eventKinds: { value: string; label: string }[] = [
   { value: 'breaker', label: '熔断' }, { value: 'instance', label: '实例状态' }, { value: 'ai', label: 'AI 决策' }, { value: 'daily', label: '每日汇总' },
 ]
 
+/** One-line AI availability (internal/aigate Status): label, tag tone, explanation. */
+export function aiState(s: AiStatus): { t: string; c: Lbl['c']; d: string } {
+  if (s.workerOnline && !s.proxyOk) return { t: '代理不可用', c: 'bad', d: `AI 只经代理访问 Anthropic，代理恢复前 AI 审核暂停（信号按跳过处理），不会直连${s.proxyError ? '。' + s.proxyError : ''}` }
+  if (!s.configured) return { t: '未授权', c: 'warn', d: '还没有 AI 凭证，AI 审核的信号会被跳过' }
+  if (!s.workerOnline) return { t: 'AI 进程离线', c: 'bad', d: 'AI 审核进程未连接，AI 审核的信号按跳过处理' }
+  if (s.credentialError) return { t: '凭证失效', c: 'bad', d: s.credentialError }
+  if (!s.workerReady) return { t: '未就绪', c: 'warn', d: 'AI 进程已连接但尚未就绪，信号暂按跳过处理' }
+  if (s.lastError) return { t: '最近调用失败', c: 'warn', d: s.lastError }
+  return { t: '正常', c: 'good', d: '' }
+}
+
 /** Overall account status for cards and headers. */
-export function accountStatus(a: Account, running?: number): Lbl {
+export function accountStatus(a: Account, running?: number, paused?: number): Lbl {
   if (a.archived) return { t: '已归档', c: '' }
   if (a.halted) return { t: '熔断', c: 'bad' }
-  if (a.mode === 'backtest') return { t: '回测', c: '' }
-  if (running === 0) return { t: '未运行', c: '' }
+  if (a.mode === 'backtest') {
+    const b = a.backtest
+    if (b?.state === 'running') return { t: `回测中 ${Math.round((b.progress || 0) * 100)}%`, c: 'warn' }
+    if (b?.state === 'failed') return { t: b.error === '已取消' ? '已取消' : '回测失败', c: 'bad' }
+    if (b?.state === 'done') return { t: '回测完成', c: 'info' }
+    return { t: '未运行', c: '' }
+  }
+  if (running === 0) return paused ? { t: '已暂停', c: 'warn' } : { t: '未运行', c: '' }
   return { t: '运行中', c: 'good' }
 }
 
@@ -105,15 +122,16 @@ export function day(ms?: number) {
 export function limitErrors(l: Limits): Record<string, string> {
   const e: Record<string, string> = {}
   const between = (k: string, v: number, lo: number, hi: number, msg: string) => { if (!isFinite(v) || v < lo || v > hi) e[k] = msg }
-  if (!Number.isInteger(l.maxPositions) || l.maxPositions < 1 || l.maxPositions > 50) e.maxPositions = '请输入 1–50 的整数'
+  // ranges mirror internal/trade/accounts.go validLimits
+  if (!Number.isInteger(l.maxPositions) || l.maxPositions < 1 || l.maxPositions > 100) e.maxPositions = '请输入 1–100 的整数'
   between('maxLeverage', l.maxLeverage, 1, 100, '请输入 1–100')
-  between('riskPct', l.riskPct, 0.0001, 0.1, '请输入 0.01%–10%')
+  between('riskPct', l.riskPct, 0.0001, 0.2, '请输入 0.01%–20%')
   between('maxInstPct', l.maxInstPct, 0.01, 1, '请输入 1%–100%')
-  between('dailyLossPct', l.dailyLossPct, 0.001, 1, '请输入 0.1%–100%')
-  between('slippageBp', l.slippageBp, 0, 500, '请输入 0–500 bp')
+  between('dailyLossPct', l.dailyLossPct, 0, 1, '请输入 0–100%（0 = 不熔断）')
+  between('slippageBp', l.slippageBp, 0.1, 500, '请输入 0.1–500 bp')
   if (!Number.isInteger(l.cooldownMin) || l.cooldownMin < 0 || l.cooldownMin > 10080) e.cooldownMin = '请输入 0–10080 的整数'
   between('takerFeeBp', l.takerFeeBp, 0, 100, '请输入 0–100 bp')
-  between('makerFeeBp', l.makerFeeBp, -10, 100, '请输入 -10–100 bp')
+  between('makerFeeBp', l.makerFeeBp, 0, 100, '请输入 0–100 bp')
   if (l.confirm !== 'off' && (!Number.isInteger(l.confirmTimeoutS) || l.confirmTimeoutS < 10 || l.confirmTimeoutS > 3600)) e.confirmTimeoutS = '请输入 10–3600 秒'
   return e
 }

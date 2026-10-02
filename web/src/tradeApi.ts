@@ -30,7 +30,12 @@ export const defaultLimits = (): Limits => ({
 export interface Account {
   id: number; name: string; mode: Mode; deposit: number; limits: Limits; archived: boolean; createdAt: number
   from?: number; to?: number
+  backtest?: BacktestStatus // backtest accounts: state of the last run
   equity: number; cash: number; dayPnl: number; halted: boolean; openCount: number; instances: number
+}
+/** internal/trade BacktestStatus */
+export interface BacktestStatus {
+  state: 'idle' | 'running' | 'done' | 'failed'; progress: number; clock?: number; error?: string; startedAt?: number; finishedAt?: number
 }
 export interface ScreenerQuery {
   rule?: string; side?: 'long' | 'short'; top: number; minScore?: number
@@ -67,17 +72,27 @@ export interface Position {
 }
 export interface LedgerEntry { id: number; accountId: number; kind: 'deposit' | 'fee' | 'funding' | 'pnl' | 'liquidation' | string; amount: number; instId?: string; refId?: number; ts: number }
 
-/** GET trade/accounts/{id}: "account + positions + open orders". ASSUMPTION: {account, positions, orders}. */
+/** GET trade/accounts/{id} (internal/trade AccountDetail). */
 export interface AccountDetail { account: Account; positions: Position[]; orders: Order[] }
 
-/** ASSUMPTION: per-instrument row of the report (contract names only `byInst[]`). */
-export interface ReportInst { instId: string; trades: number; net: number; gross?: number; winRate?: number; fees?: number; funding?: number }
+/** internal/trade InstReport: pnl = realized − fees + funding. */
+export interface ReportInst { instId: string; trades: number; wins: number; pnl: number; fees: number; funding: number; turnover: number }
+/**
+ * internal/trade Report. USDT amounts; ratios as fractions. net = equity − deposits (incl. unrealized);
+ * fees paid (positive); funding signed (positive = received). sharpe / winRate / profitFactor are
+ * null when not measurable (too few days / no trades / no losers).
+ */
 export interface Report {
-  gross: number; net: number; maxDrawdown: number; sharpe: number; winRate: number; profitFactor: number; turnover: number
-  fees: number; funding: number; trades: number; byInst: ReportInst[]; signals: { ordered: number; rejected: number; skipped: number }
+  accountId: number; deposit: number; equity: number; gross: number; net: number; netPct: number; realized: number; unrealized: number
+  maxDrawdown: number; sharpe: number | null; sharpeBasis: string; winRate: number | null; profitFactor: number | null
+  turnover: number; fees: number; funding: number; liquidations: number; trades: number; openTrades: number
+  byInst: ReportInst[] | null
+  signals: Record<string, number> | null // ordered, rejected, skipped, recorded, pending
+  outcomes: Record<string, number> | null // per SignalOutcome
+  from?: number; to?: number
 }
 
-/** GET trade/strategies: "latest version per name + versions list". ASSUMPTION: {name, latest, versions}. */
+/** GET trade/strategies: latest version per name + version history (newest first, without code). */
 export interface StrategyEntry { name: string; latest: StrategyVersion; versions: StrategyVersion[] }
 
 // ---------- interaction (contract.go Event / Prompt) ----------
@@ -100,25 +115,43 @@ export interface InteractConfig {
   allKinds?: { kind: string; label: string }[]
 }
 
-// ---------- AI ----------
+// ---------- AI (internal/aigate) ----------
 export interface AiStatus {
-  configured: boolean; kind?: 'api_key' | 'oauth_token'; masked?: string; workerOnline: boolean
-  lastCallAt?: number; lastError?: string; costToday: number
+  configured: boolean; kind?: 'api_key' | 'oauth_token'; masked?: string
+  storage?: 'encrypted' | 'plain'; storageNote?: string; updatedAt?: number; credentialError?: string
+  model: string
+  workerOnline: boolean; workerReady: boolean
+  proxyOk: boolean; proxyError?: string // the worker reaches Anthropic only through the proxy; never direct
+  worker?: { version: string; sdk?: string; cli?: string; ready: boolean; proxyOk: boolean; proxyError?: string; connectedAt: number }
+  available: boolean // configured && worker online && ready
+  lastCallAt?: number; lastError?: string
+  costToday: number; callsToday: number; pendingProposals: number
 }
-export interface Decision {
-  id: number; action: 'execute' | 'skip'; sizeScale: number; stopLoss?: number; takeProfit?: number; confidence: number
-  rationale: string; paramChange?: Record<string, number>; model: string; costUsd: number; latencyMs: number
+/** The model's answer as stored (worker payload: trade.Decision without id). */
+export interface DecisionBody {
+  action?: string; sizeScale?: number; stopLoss?: number; takeProfit?: number; confidence?: number
+  rationale?: string; paramChange?: Record<string, number>
 }
-/** ASSUMPTION: a decision as listed by GET ai/decisions, with the signal context and the engine's verdict. */
-export interface DecisionRecord extends Decision {
-  ts: number; signalId: number; accountId: number; instanceId: number; instId: string; signalAction: Action
-  outcome?: SignalOutcome; outcomeReason?: string
+/** internal/aigate DecisionRecord (audit row). kind: review | test | reflect. */
+export interface DecisionRecord {
+  id: number; ts: number; kind: 'review' | 'test' | 'reflect' | string
+  accountId: number; instanceId: number; signalId: number; strategy: string; instId: string; signalAction: string
+  requestSha256: string; memoryVersion: number; promptVersion: string; model: string; action: string
+  decision: DecisionBody | null; meta?: unknown; costUsd: number; latencyMs: number; error?: string
+  outcomes?: { ts: number; result: string }[]
+  request?: unknown // only from GET ai/decisions/{id}
 }
-/** ASSUMPTION: parameter change proposal (from Decision.paramChange). */
+/** internal/aigate Proposal: params = proposed values of the changed parameters, current = their values then. */
 export interface Proposal {
-  id: number; ts: number; accountId: number; instanceId: number; instanceName?: string; decisionId?: number
-  current: Record<string, number>; proposed: Record<string, number>; rationale: string
-  state: 'open' | 'approved' | 'rejected'
+  id: number; ts: number; decisionId: number; accountId: number; instanceId: number; strategy: string
+  params: Record<string, number>; current: Record<string, number>; rationale: string
+  state: 'pending' | 'approved' | 'rejected'; decidedAt?: number; note?: string
+}
+export interface AiTestResult { ok: boolean; model?: string; reply?: string; costUsd: number; latencyMs: number; error?: string }
+/** internal/aigate MemoryDoc: the strategy experience document distilled from past decisions. */
+export interface MemoryDoc {
+  strategy: string; version: number; ts: number; doc: string; source: string; throughDecision: number; decisions: number
+  model?: string; costUsd: number; auditId?: number
 }
 
 // ---------- normalisers (tolerate small shape differences) ----------
@@ -183,7 +216,8 @@ export const tradeApi = {
   signals: async (id: number, limit = 100, before?: number) => arr<Signal>(await req<unknown>(`${T}/accounts/${id}/signals${qs({ limit, before })}`)),
   ledger: async (id: number, limit = 100, before?: number) => arr<LedgerEntry>(await req<unknown>(`${T}/accounts/${id}/ledger${qs({ limit, before })}`)),
   close: (id: number, instId?: string) => mreq<unknown>(`${T}/accounts/${id}/close`, 'POST', instId ? { instId } : {}),
-  runBacktest: (id: number) => mreq<unknown>(`${T}/backtests/${id}/run`, 'POST', {}),
+  runBacktest: (id: number) => mreq<Account>(`${T}/backtests/${id}/run`, 'POST', {}),
+  cancelBacktest: (id: number) => mreq<Account>(`${T}/backtests/${id}/cancel`, 'POST', {}),
   report: (id: number) => req<Report>(`${T}/accounts/${id}/report`),
   // strategies
   strategies: async () => normStrategies(await req<unknown>(`${T}/strategies`)),
@@ -197,7 +231,8 @@ export const tradeApi = {
 }
 
 export const interactApi = {
-  prompts: async (state = 'open') => arr<Prompt>(await req<unknown>(`/api/v1/interact/prompts${qs({ state })}`), 'prompts'),
+  /** state: open | all (internal/interact web.go); newest first for `all`. */
+  prompts: async (state: 'open' | 'all' = 'open', limit?: number) => arr<Prompt>(await req<unknown>(`/api/v1/interact/prompts${qs({ state, limit })}`), 'prompts'),
   answer: (id: string, choice: string) => mreq<unknown>(`/api/v1/interact/prompts/${encodeURIComponent(id)}`, 'POST', { choice }),
   config: () => req<InteractConfig>('/api/v1/interact/config'),
   saveConfig: (c: InteractConfig) => mreq<InteractConfig>('/api/v1/interact/config', 'PUT', c),
@@ -207,9 +242,15 @@ export const interactApi = {
 export const aiApi = {
   status: () => req<AiStatus>('/api/v1/ai/status'),
   setCredential: (kind: 'api_key' | 'oauth_token', value: string) => mreq<AiStatus>('/api/v1/ai/credential', 'PUT', { kind, value }),
-  revoke: () => mreq<unknown>('/api/v1/ai/credential', 'DELETE'),
-  test: () => mreq<{ ok: boolean; error?: string; latencyMs?: number; model?: string }>('/api/v1/ai/test', 'POST', {}),
-  decisions: async (accountId?: number, limit = 100) => arr<DecisionRecord>(await req<unknown>(`/api/v1/ai/decisions${qs({ accountId, limit })}`), 'decisions'),
-  proposals: async () => arr<Proposal>(await req<unknown>('/api/v1/ai/proposals'), 'proposals'),
+  revoke: () => mreq<AiStatus>('/api/v1/ai/credential', 'DELETE'),
+  setModel: (model: string) => mreq<AiStatus>('/api/v1/ai/model', 'PUT', { model }),
+  test: () => mreq<AiTestResult>('/api/v1/ai/test', 'POST', {}),
+  decisions: async (q: { accountId?: number; instanceId?: number; kind?: string; strategy?: string; limit?: number; before?: number } = {}) =>
+    arr<DecisionRecord>(await req<unknown>(`/api/v1/ai/decisions${qs({ ...q, accountId: q.accountId || undefined })}`)),
+  decision: (id: number) => req<DecisionRecord>(`/api/v1/ai/decisions/${id}`),
+  proposals: async (state?: 'pending' | 'approved' | 'rejected', limit?: number) => arr<Proposal>(await req<unknown>(`/api/v1/ai/proposals${qs({ state, limit })}`)),
   decide: (id: number, approve: boolean) => mreq<Proposal>(`/api/v1/ai/proposals/${id}`, 'POST', { approve }),
+  memory: (strategy: string, version?: number) =>
+    req<{ strategy: string; current: MemoryDoc | null; versions: MemoryDoc[] | null }>(`/api/v1/ai/memory/${encodeURIComponent(strategy)}${qs({ version })}`),
+  reflect: (strategy: string) => mreq<MemoryDoc>(`/api/v1/ai/memory/${encodeURIComponent(strategy)}/reflect`, 'POST', {}),
 }

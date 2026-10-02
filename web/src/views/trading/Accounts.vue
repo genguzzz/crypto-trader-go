@@ -10,6 +10,7 @@ import { amt, tone } from '../../components/trade/meta'
 
 const accounts = ref<Account[] | null>(null)
 const running = ref<Record<number, number>>({})
+const paused = ref<Record<number, number>>({})
 const error = ref('')
 const showArchived = ref(false)
 
@@ -20,10 +21,16 @@ async function load() {
     error.value = ''
     // running-instance counts for live accounts (a handful of small requests)
     const live = list.filter(a => a.mode === 'live' && !a.archived)
-    const counts = await Promise.all(live.map(a => tradeApi.instances(a.id).then(xs => xs.filter(i => i.state === 'running').length).catch(() => undefined)))
-    const m: Record<number, number> = {}
-    live.forEach((a, i) => { if (counts[i] != null) m[a.id] = counts[i]! })
+    const lists = await Promise.all(live.map(a => tradeApi.instances(a.id).catch(() => undefined)))
+    const m: Record<number, number> = {}, pz: Record<number, number> = {}
+    live.forEach((a, i) => {
+      const xs = lists[i]
+      if (!xs) return
+      m[a.id] = xs.filter(x => x.state === 'running').length
+      pz[a.id] = xs.filter(x => x.state === 'paused' || x.state === 'faulted').length
+    })
     running.value = m
+    paused.value = pz
   } catch (e: any) {
     error.value = e.message
   }
@@ -74,7 +81,7 @@ const sum = computed(() => {
 
       <section v-if="live.length">
         <h2>实时模拟 <span class="muted">{{ live.length }}</span></h2>
-        <div class="grid"><AccountCard v-for="a in live" :key="a.id" :a="a" :running="running[a.id]" /></div>
+        <div class="grid"><AccountCard v-for="a in live" :key="a.id" :a="a" :running="running[a.id]" :paused="paused[a.id]" /></div>
       </section>
       <section v-if="backtests.length">
         <h2>历史回测 <span class="muted">{{ backtests.length }}</span></h2>

@@ -99,7 +99,7 @@ const botState = computed(() => {
   const s = cfg.value?.status
   if (!cfg.value?.telegram.configured) return { t: '未配置', c: '' }
   switch (s?.state) {
-    case 'ok': return { t: s.bot ? '@' + s.bot : '运行中', c: 'good' }
+    case 'ok': return { t: s.bot ? '@' + s.bot.replace(/^@/, '') : '运行中', c: 'good' }
     case 'error': return { t: '出错', c: 'bad' }
     case 'starting': return { t: '启动中', c: 'warn' }
     case 'disabled': return { t: '未启用', c: '' }
