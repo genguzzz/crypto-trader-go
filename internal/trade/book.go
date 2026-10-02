@@ -17,14 +17,25 @@ type posKey struct {
 // posState is a position plus the bookkeeping the broker needs.
 type posState struct {
 	Position
-	FundedTo int64  `json:"fundedTo"`        // last funding settlement handled (ms)
-	Group    string `json:"group,omitempty"` // OCO group of its current stop/target
+	FundedTo int64   `json:"fundedTo"`         // last funding settlement handled (ms)
+	Group    string  `json:"group,omitempty"`  // OCO group of its current stop/target
+	Trail    float64 `json:"trail,omitempty"`  // trailing stop distance (price units), 0 = fixed stop
+	Best     float64 `json:"best,omitempty"`   // best price since entry (trailing reference)
+	Expire   int64   `json:"expire,omitempty"` // close at this time (ms), 0 = no time limit
 }
 
-// groupSpec is the stop/target to attach once an entry order fills.
+// groupSpec is the stop/target (and trailing / time limit) to attach once an entry order fills.
 type groupSpec struct {
 	stop, target float64
+	trail        float64
+	limitMs      int64
 	signal       Signal
+}
+
+// reopenSpec is the opening half of a reverse signal, sent when its closing order fills.
+type reopenSpec struct {
+	signal Signal
+	scale  float64
 }
 
 // book is one account's runtime state. Every mutation happens under mu and is written to the
@@ -43,8 +54,11 @@ type book struct {
 	pos       map[posKey]*posState
 	orders    map[int64]*Order // open orders (waiting_trigger, live, partially_filled)
 	groups    map[string]groupSpec
-	lastClose map[string]int64 // instrument → last time a position in it was fully closed
-	pending   map[posKey]int64 // (instance, instrument) → signal waiting for AI / confirmation / processing
+	lastClose map[string]int64     // instrument → last time a position in it was fully closed
+	pending   map[posKey]int64     // (instance, instrument) → signal waiting for AI / confirmation / processing
+	reopen    map[int64]reopenSpec // closing order id → open to send once it fills (reverse)
+	reversing int64                // signal whose reverse is filling inside execute (live)
+	revNote   string               // what its reopen did, for the signal's own outcome
 	marks     map[string]float64
 	day       dayState
 
@@ -61,6 +75,7 @@ func (b *book) setMarket(md MarketData) { b.mdp.Store(&mdBox{md}) }
 func newBook(s *Service, a Account, md MarketData) *book {
 	b := &book{s: s, acc: a, barModel: a.Mode == ModeBacktest, pos: map[posKey]*posState{}, orders: map[int64]*Order{},
 		groups: map[string]groupSpec{}, lastClose: map[string]int64{}, pending: map[posKey]int64{}, marks: map[string]float64{},
+		reopen: map[int64]reopenSpec{},
 	}
 	b.setMarket(md)
 	b.name.Store(a.Name)
@@ -144,6 +159,21 @@ func (b *book) restore() error {
 }
 
 // ---------- derived values (caller holds mu) ----------
+
+// sortedPosKeys lists open positions by instance, then instrument (caller holds b.mu).
+func (b *book) sortedPosKeys() []posKey {
+	keys := make([]posKey, 0, len(b.pos))
+	for k := range b.pos {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].id != keys[j].id {
+			return keys[i].id < keys[j].id
+		}
+		return keys[i].inst < keys[j].inst
+	})
+	return keys
+}
 
 func dir(posSide string) float64 {
 	if posSide == "short" {

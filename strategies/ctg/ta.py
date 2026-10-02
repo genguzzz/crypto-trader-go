@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
-__all__ = ["sma", "ema", "rma", "rsi", "atr", "tr", "macd", "bbands", "bb", "crossover", "crossunder",
+__all__ = ["sma", "ema", "rma", "rsi", "atr", "tr", "macd", "bbands", "bb", "crossover", "crossunder", "cross",
            "highest", "lowest", "stdev", "change"]
 
 
@@ -165,3 +165,8 @@ def crossunder(a, b) -> np.ndarray:
         with np.errstate(invalid="ignore"):
             out[1:] = (a[1:] < b[1:]) & (a[:-1] >= b[:-1])
     return out
+
+
+def cross(a, b) -> np.ndarray:
+    """True where a crosses b in either direction."""
+    return crossover(a, b) | crossunder(a, b)

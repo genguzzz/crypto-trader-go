@@ -47,6 +47,7 @@ type session struct {
 	sink   trade.SignalSink
 	token  string
 	prefix string
+	tf     string // the instance's bar timeframe
 
 	attached chan struct{} // closed after an authenticated hello
 	exit     chan struct{} // closed by finish
@@ -62,8 +63,8 @@ type session struct {
 	stopSeq     int64
 	stopped     bool // stop acknowledged
 	evCtx       context.Context
-	evInst      string // instrument of the bar in flight
-	evClose     float64
+	evCloses    map[string]float64 // close of each bar in flight (signal reference price)
+	status      string
 	state       []byte
 	handlerErrs int
 	err         error
@@ -79,7 +80,7 @@ func newSession(h *Host, inst trade.Instance, ver trade.StrategyVersion, mode tr
 		st = append([]byte(nil), state...)
 	}
 	return &session{h: h, inst: inst, ver: ver, mode: mode, md: md, sink: sink, token: token,
-		prefix:   fmt.Sprintf("strategy %d %s", inst.ID, ver.Name),
+		prefix: fmt.Sprintf("strategy %d %s", inst.ID, ver.Name), tf: trade.InstanceTimeframe(inst, ver),
 		attached: make(chan struct{}), exit: make(chan struct{}), connDead: make(chan struct{}),
 		doneCh: make(chan doneMsg, 1), waitSeq: -1, stopSeq: -1, state: st}
 }
@@ -107,8 +108,24 @@ func (s *session) isAttached() bool {
 
 // ---------- trade.Session ----------
 
-func (s *session) Bar(ctx context.Context, instID, tf string, b trade.Bar) error {
-	return s.event(ctx, "bar", map[string]any{"instId": instID, "tf": tf, "bar": barJSON(b), "_close": b.C})
+func (s *session) Bars(ctx context.Context, tf string, bars []trade.InstBar) error {
+	items := make([]map[string]any, len(bars))
+	closes := make(map[string]float64, len(bars))
+	for i, x := range bars {
+		items[i] = map[string]any{"instId": x.InstID, "bar": barJSON(x.Bar)}
+		closes[x.InstID] = x.Bar.C
+	}
+	return s.event(ctx, "bars", map[string]any{"tf": tf, "bars": items, "_closes": closes})
+}
+
+func (s *session) Timer(ctx context.Context, name string) error {
+	return s.event(ctx, "timer", map[string]any{"name": name})
+}
+
+func (s *session) Status() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status
 }
 
 func (s *session) Universe(ctx context.Context, added, removed, current []string) error {
@@ -175,15 +192,16 @@ func (s *session) event(ctx context.Context, typ string, fields map[string]any) 
 		return err
 	}
 	msg := map[string]any{}
-	var barClose float64
+	var closes map[string]float64
 	for k, v := range fields {
-		if k == "_close" {
-			barClose = v.(float64)
+		if k == "_closes" {
+			closes = v.(map[string]float64)
 			continue
 		}
 		msg[k] = v
 	}
-	evCtx, cancel := context.WithTimeout(ctx, s.h.opts.EventTimeout)
+	// a batch of bars gets the per-event budget plus a little per instrument
+	evCtx, cancel := context.WithTimeout(ctx, s.h.opts.EventTimeout+time.Duration(len(closes))*s.h.opts.EventTimeout/10)
 	defer cancel()
 
 	s.mu.Lock()
@@ -193,15 +211,12 @@ func (s *session) event(ctx context.Context, typ string, fields map[string]any) 
 	if typ == "stop" {
 		s.stopSeq = seq
 	}
-	s.evCtx = evCtx
-	if typ == "bar" {
-		s.evInst, s.evClose = msg["instId"].(string), barClose
-	}
+	s.evCtx, s.evCloses = evCtx, closes
 	w := s.w
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		s.waitSeq, s.evCtx, s.evInst, s.evClose = -1, nil, "", 0
+		s.waitSeq, s.evCtx, s.evCloses = -1, nil, nil
 		s.mu.Unlock()
 	}()
 
@@ -370,6 +385,16 @@ func (s *session) readLoop() {
 			s.saveState(m.Data)
 		case "log":
 			s.h.log.Printf("%s: [%s] %s", s.prefix, m.Level, truncate(m.Msg, 2000))
+			s.sink.Log(s.inst.ID, m.Level, m.Msg)
+		case "notify":
+			var n notifyMsg
+			if json.Unmarshal(line, &n) == nil {
+				s.sink.Notify(s.inst.ID, n.Level, n.Text, n.Data)
+			}
+		case "status":
+			s.mu.Lock()
+			s.status = truncate(m.Msg, 300)
+			s.mu.Unlock()
 		default:
 			s.h.log.Printf("%s: unknown message %q", s.prefix, m.Type)
 		}
@@ -436,11 +461,12 @@ func (s *session) submit(sm signalMsg) (int64, error) {
 		InstanceID: s.inst.ID, AccountID: s.inst.AccountID, InstID: sm.InstID, Action: sm.Action,
 		Strength: sm.Strength, StopLoss: sm.StopLoss, TakeProfit: sm.TakeProfit, MaxSlippageBp: sm.MaxSlippageBp,
 		Leverage: sm.Leverage, ReduceFrac: sm.ReduceFrac, TTLms: sm.TTLms, Reason: sm.Reason,
+		Reverse: sm.Reverse, TrailDist: sm.TrailDist, TimeLimitMs: sm.TimeLimitMs,
 		Ts: s.md.Now(), RecvTs: time.Now().UnixMilli(), ConfigVersion: s.inst.ConfigVersion,
 	}
 	s.mu.Lock()
-	if s.evInst == sm.InstID {
-		sig.Price = s.evClose
+	if c, ok := s.evCloses[sm.InstID]; ok {
+		sig.Price = c
 	}
 	s.mu.Unlock()
 	ctx, cancel := s.callCtx()
@@ -456,6 +482,7 @@ func (s *session) query(method string, raw json.RawMessage) (any, error) {
 		TF     string `json:"tf"`
 		N      int    `json:"n"`
 		Rule   string `json:"rule"`
+		Field  string `json:"field"`
 	}
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -463,9 +490,17 @@ func (s *session) query(method string, raw json.RawMessage) (any, error) {
 		}
 	}
 	switch method {
+	case "series":
+		if a.TF == "" {
+			a.TF = s.tf
+		}
+		if a.N <= 0 {
+			a.N = 100
+		}
+		return s.sink.Series(s.inst.ID, a.InstID, a.Field, a.TF, a.N)
 	case "bars":
 		if a.TF == "" {
-			a.TF = s.ver.Timeframe
+			a.TF = s.tf
 		}
 		if a.N <= 0 {
 			a.N = 100

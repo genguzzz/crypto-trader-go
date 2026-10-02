@@ -19,6 +19,8 @@ var tfMillis = map[string]int64{"1m": minuteMs, "5m": 5 * minuteMs, "15m": 15 * 
 // TFMillis returns the length of a strategy timeframe.
 func TFMillis(tf string) (int64, bool) { v, ok := tfMillis[tf]; return v, ok }
 
+func validTF(tf string) bool { _, ok := tfMillis[tf]; return ok }
+
 func refreshMillis(s string) (int64, error) {
 	if s == "" {
 		return hourMs, nil

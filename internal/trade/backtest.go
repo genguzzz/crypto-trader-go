@@ -49,8 +49,8 @@ func (s *Service) RunBacktest(ctx context.Context, accountID int64) error {
 		if err != nil {
 			return err
 		}
-		if _, ok := TFMillis(v.Timeframe); !ok {
-			return errBad(fmt.Sprintf("策略 %s 的周期 %q 不受支持", v.Name, v.Timeframe))
+		if tf := InstanceTimeframe(in, v); !validTF(tf) {
+			return errBad(fmt.Sprintf("策略 %s 的周期 %q 不受支持", v.Name, tf))
 		}
 		vers[v.ID] = v
 	}
@@ -127,6 +127,7 @@ func (s *Service) resetBacktest(b *book) error {
 	b.balance, b.deposit = dep, dep
 	b.pos, b.orders, b.groups = map[posKey]*posState{}, map[int64]*Order{}, map[string]groupSpec{}
 	b.lastClose, b.pending, b.marks = map[string]int64{}, map[posKey]int64{}, map[string]float64{}
+	b.reopen = map[int64]reopenSpec{}
 	b.day = dayState{key: dayKey(from), start: dep}
 	b.eqBuf = nil
 	b.mu.Unlock()
@@ -200,7 +201,7 @@ func (s *Service) runBacktest(ctx context.Context, b *book, run *btRun, insts []
 	}
 	base := hourMs
 	for _, in := range insts {
-		if step, _ := TFMillis(vers[in.VersionID].Timeframe); step < hourMs {
+		if step := minStep(in, vers[in.VersionID]); step < hourMs {
 			base = minuteMs
 		}
 	}
@@ -279,6 +280,7 @@ func (s *Service) runBacktest(ctx context.Context, b *book, run *btRun, insts []
 			b.settleFunding(T, T, 0)
 		}
 		b.checkBreaker(T)
+		b.expire(T)
 		b.eqBuf = append(b.eqBuf, [2]float64{float64(T), b.equity()})
 		if len(b.eqBuf) >= 2000 {
 			s.flushEquity(b)
@@ -297,21 +299,10 @@ func (s *Service) runBacktest(ctx context.Context, b *book, run *btRun, insts []
 				fail(err)
 				return
 			}
-			step, _ := TFMillis(ri.ver.Timeframe)
-			if T%step != 0 {
-				continue
-			}
-			for _, id := range ri.currentUniverse() {
-				bars, err := rp.Bars(id, ri.ver.Timeframe, 1)
-				if err != nil || len(bars) == 0 || bars[len(bars)-1].Ts != T-step {
-					continue
-				}
-				bar, inst, tf := bars[len(bars)-1], id, ri.ver.Timeframe
-				ri.push(sessCall{"bar", func(ctx context.Context, x Session) error { return x.Bar(ctx, inst, tf, bar) }})
-				if err := drain(ri); err != nil {
-					fail(err)
-					return
-				}
+			s.queueBars(ri, T)
+			if err := drain(ri); err != nil {
+				fail(err)
+				return
 			}
 		}
 		if time.Since(lastReport) > time.Second {

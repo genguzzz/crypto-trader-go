@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS trade_accounts(id INTEGER PRIMARY KEY AUTOINCREMENT, 
 CREATE TABLE IF NOT EXISTS trade_strategy_versions(id TEXT PRIMARY KEY, name TEXT NOT NULL, file TEXT NOT NULL,
   description TEXT NOT NULL, timeframe TEXT NOT NULL, params TEXT NOT NULL, universe TEXT NOT NULL, code TEXT NOT NULL,
   created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS trade_strategy_sources(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+  code TEXT NOT NULL, published TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS trade_instances(id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL,
   version_id TEXT NOT NULL, name TEXT NOT NULL, params TEXT NOT NULL, universe TEXT NOT NULL, exec TEXT NOT NULL,
   state TEXT NOT NULL, state_reason TEXT NOT NULL DEFAULT '', config_version INTEGER NOT NULL, heartbeat INTEGER NOT NULL DEFAULT 0,
@@ -43,3 +45,9 @@ CREATE INDEX IF NOT EXISTS trade_ledger_acct ON trade_ledger(account_id, id);
 CREATE TABLE IF NOT EXISTS trade_equity(account_id INTEGER NOT NULL, ts INTEGER NOT NULL, equity REAL NOT NULL,
   PRIMARY KEY(account_id, ts)) WITHOUT ROWID;
 `
+
+// migrations add columns to tables created by earlier releases (CREATE TABLE IF NOT EXISTS keeps
+// their old shape).
+var migrations = []struct{ table, column, def string }{
+	{"trade_strategy_versions", "meta", "TEXT NOT NULL DEFAULT '{}'"},
+}

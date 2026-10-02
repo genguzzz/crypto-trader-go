@@ -33,19 +33,32 @@ func (s *Service) ReloadStrategies(ctx context.Context) (int, error) {
 		if v.ID == "" { // the runner disambiguates several classes sharing one file
 			v.ID = VersionID(v.Code)
 		}
-		res, err := s.db.Exec(`INSERT OR IGNORE INTO trade_strategy_versions VALUES(?,?,?,?,?,?,?,?,?)`,
-			v.ID, v.Name, v.File, v.Description, v.Timeframe, mustJSON(v.Params), mustJSON(v.DefaultUniverse), v.Code, now)
+		v.Meta.Builtin = true
+		n, err := s.insertVersion(v, now)
 		if err != nil {
 			return added, err
 		}
-		if n, _ := res.RowsAffected(); n > 0 {
-			added++
-		}
+		added += n
 	}
 	if added > 0 {
 		s.changed(0, "strategy")
 	}
 	return added, nil
+}
+
+// insertVersion stores a version; an existing id (same code) only refreshes its meta, which older
+// releases did not record. It returns 1 when the version is new.
+func (s *Service) insertVersion(v StrategyVersion, now int64) (int, error) {
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO trade_strategy_versions(`+versionCols+`) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		v.ID, v.Name, v.File, v.Description, v.Timeframe, mustJSON(v.Params), mustJSON(v.DefaultUniverse), v.Code, now, mustJSON(v.Meta))
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return 1, nil
+	}
+	_, err = s.db.Exec(`UPDATE trade_strategy_versions SET meta=? WHERE id=?`, mustJSON(v.Meta), v.ID)
+	return 0, err
 }
 
 // StrategyEntry is one strategy name: its latest version and the version history (newest first).
@@ -69,6 +82,9 @@ func (s *Service) Strategies() ([]StrategyEntry, error) {
 			return nil, err
 		}
 		v.Code = ""
+		if v.Meta.Draft {
+			continue
+		}
 		if n := len(out); n == 0 || out[n-1].Name != v.Name {
 			out = append(out, StrategyEntry{Name: v.Name, Latest: v})
 		}

@@ -23,15 +23,16 @@ Each Go package creates its own tables (`CREATE TABLE IF NOT EXISTS` in its cons
 
 Socket: `$CTG_RUN_DIR/strategy.sock` (default `data/run/strategy.sock`; in Docker `/run/ctg/strategy.sock` shared by a volume). One connection per strategy instance process. Every message is one JSON object per line. Go → Python messages carry `seq`; Python must answer each event with `{"type":"done","seq":N}` (lockstep). Queries may be sent at any time between receiving an event and sending `done`; they are answered synchronously with matching `qid`.
 
-Handshake (Python → Go first line): `{"type":"hello","instance":12,"token":"<per-instance token>","sdk":"1"}`. Go answers `{"type":"init","seq":0,"instance":{...Instance},"strategy":{...StrategyVersion without code},"state":{...saved ctx.state},"now":ms,"mode":"live|backtest"}`; Python replies `done` after `on_start`.
+Handshake (Python → Go first line): `{"type":"hello","instance":12,"token":"<per-instance token>","sdk":"2"}`. Go answers `{"type":"init","seq":0,"instance":{...Instance},"strategy":{...StrategyVersion without code},"state":{...saved ctx.state},"now":ms,"mode":"live|backtest","timeframe":"4H"}` (`timeframe` = the instance's, a `Timeframe` param overrides the class default); Python replies `done` after `on_start`.
 
 Go → Python events:
 
 | type | fields |
 |---|---|
-| `bar` | `instId`, `tf`, `bar` {ts,o,h,l,c,vol,volq}, `now` — one per instrument in the universe per confirmed bar of the instance timeframe |
+| `bars` | `tf`, `bars` [{instId, bar {ts,o,h,l,c,vol,volq}}], `now` — one per bar time with every universe instrument whose bar of the instance timeframe closed (gaps left out); the SDK calls `on_bars` once or `on_bar` per instrument. Budget: 5 s + 0.5 s per instrument |
+| `timer` | `name` — a timer from the class `schedule` ({name: "15m"}) is due (UTC-aligned) |
 | `universe` | `added` [], `removed` [], `current` [] |
-| `fill` | `fill` {Fill} |
+| `fill` | `fill` {Fill + `kind` (fill/stop/target/time/liquidation) + `closed` (flattened the position → `on_position_closed`)} |
 | `signal_result` | `signalId`, `outcome`, `reason` |
 | `funding` | `instId`, `rate`, `amount` |
 | `stop` | — (process should exit after `done`) |
@@ -40,38 +41,43 @@ Python → Go:
 
 | type | fields | answer |
 |---|---|---|
-| `signal` | Signal fields (`instId`, `action`, `strength`, `stopLoss`, `takeProfit`, `maxSlippageBp`, `leverage`, `reduceFrac`, `ttlMs`, `reason`) | `{"type":"signal_ack","qid","id"}` or `error` |
+| `signal` | Signal fields (`instId`, `action`, `strength`, `stopLoss`, `takeProfit`, `maxSlippageBp`, `leverage`, `reduceFrac`, `ttlMs`, `reverse`, `trailDist`, `timeLimitMs`, `reason`) | `{"type":"signal_ack","qid","id"}` or `error` |
 | `query` | `qid`, `method`, `args` | `{"type":"result","qid","data"}` or `{"type":"error","qid","error"}` |
 | `state` | `data` (JSON object ≤ 64 KB) | none (persisted) |
-| `log` | `level`, `msg` | none |
+| `log` | `level`, `msg` | none (server log + the instance's run log, `GET /trade/instances/{id}/logs`) |
+| `notify` | `level`, `text`, `data` | none (live accounts: event kind `strategy` to Telegram / webhook; 30/h per instance, same text once per 10 min; otherwise run log only) |
+| `status` | `msg` — the strategy's `status()` line, sent after an event when it changed | none (shown on the instance) |
 | `done` | `seq` | — |
 
-Query methods: `bars {instId, tf, n}` → [[ts,o,h,l,c,vol,volq]...] oldest first · `factors {instId}` → map · `screener {ScreenerQuery}` → [ScreenRow] · `score {rule, instId}` → {long, short} · `position {instId}` → Position|null · `positions {}` · `account {}` · `spec {instId}`.
+Query methods: `bars {instId, tf, n}` → [[ts,o,h,l,c,vol,volq]...] oldest first · `factors {instId}` → map · `screener {ScreenerQuery}` → [ScreenRow] · `score {rule, instId}` → {long, short} · `position {instId}` → Position|null · `positions {}` · `account {}` · `spec {instId}` · `series {instId, field, tf, n}` → [{ts, v}] for oi / funding / buy / sell / delta, as of the instance clock.
 
 Timeouts: an event not acknowledged within 5 s → kill the process, instance `faulted`; supervisor restarts it up to 3 times (state restored), then `stopped`. Python exceptions inside a handler are logged and the event is acknowledged; 3 consecutive → `paused`.
 
-The supervisor (`strategies/runner.py`) polls `GET` over the same socket: `{"type":"supervise"}` connection receives `{"type":"spawn","instance":12,"token":"...","file":"library/majors_trend.py","class":"MajorsTrend"}` and `{"type":"kill","instance":12}` commands, and reports `{"type":"exited","instance":12,"code":1,"stderr":"tail"}`. One subprocess per instance (memory limit via `resource.setrlimit`, 256 MB).
+The supervisor (`strategies/runner.py`) polls `GET` over the same socket: `{"type":"supervise"}` connection receives `{"type":"spawn","instance":12,"token":"...","file":"library/majors_trend.py","class":"MajorsTrend"}` and `{"type":"kill","instance":12}` commands, and reports `{"type":"exited","instance":12,"code":1,"stderr":"tail"}`. `{"type":"check","id","code"}` runs `ctg.check` on editor code in a throwaway process → `{"type":"check_result","id","result":{diagnostics, strategies}}`. One subprocess per instance (memory limit via `resource.setrlimit`, 256 MB).
 
 Backtest: the replayer spawns the instance like a live one (mode `backtest`); events are sent as fast as `done` comes back.
 
-### Python SDK surface (`from ctg import Strategy, Param, Screener, Signal, ta`)
+### Python SDK surface (SDK 2; full reference in `strategies/README.md` and the in-app help `/help/strategy`)
 
 ```python
 class MajorsTrend(Strategy):
     name = "majors-trend"; description = "..."
-    universe = ["BTC-USDT-SWAP", "ETH-USDT-SWAP"]   # or Screener(rule="...", side="long", top=20, refresh="1H")
-    timeframe = "4H"
-    fast = Param(20, min=5, max=100, desc="...", ai_tunable=True)
-    def on_start(self, ctx): ...
-    def on_bar(self, ctx, bar): return Signal.open_long(bar.inst, stop_loss=..., take_profit=..., reason="...")
-    def on_universe_change(self, ctx, added, removed): ...
-    def on_fill(self, ctx, fill): ...
-    def on_signal_result(self, ctx, result): ...
+    universe = ["BTC-USDT-SWAP", "ETH-USDT-SWAP"]   # or Screener(rule="...", side="long|short|both", top=20, refresh="1H")
+    timeframe = Timeframe("4H")                     # or a plain "4H"
+    can_long = can_short = True; warmup = 150; schedule = {"report": "1H"}
+    fast = Int(20, min=5, max=100, group="信号", label="快线", desc="...", ai_tunable=True)   # also Float, Bool, Choice
+    def on_bar(self, ctx, bar): return Signal.open(bar.inst, "long", stop_loss="2atr", trailing_stop="1.5atr", time_limit="6h")
+    def on_bars(self, ctx, bars): ...               # {inst: Bar} once per bar time (cross-sectional)
+    def on_timer(self, ctx, name): ...
+    def on_position_closed(self, ctx, trade): ...
+    def status(self, ctx): return "one line for the instance card"
 ```
 
-`on_bar` may return a Signal, a list of Signals or None. `stop_loss` / `take_profit` accept a price or a string `"2atr"` (SDK resolves with ATR(14) on the strategy timeframe). `ctx.bars(inst, tf, n)` returns a small columnar object (`.o .h .l .c .vol .ts` numpy arrays). `ctx.state` is a dict persisted after each event. `ta` mirrors Pine names (`ema sma rsi atr macd bbands crossover crossunder highest lowest`) implemented with numpy only (no TA-Lib dependency).
+Handlers return a Signal, a list or None. Levels take a price, `"<k>atr"` or `"<k>%"`; `sig.reversed()` closes the instance's opposite position and opens in one step (the new side is checked first; exempt from the re-entry cooldown). Param values travel as numbers (bool 0/1, choice/timeframe the option index). `ctx`: `bars series factors screener rank score position(s) account spec state submit log notify`. `ctg.portfolio`: `Watchlist`, `pick`. `ta` mirrors Pine names with numpy only.
 
-Strategy discovery: Go scans `strategies/library/*.py` metadata through the supervisor (`{"type":"describe"}` → list of {file, class, name, description, timeframe, params, universe, code}) at start and on `POST /api/v1/trade/strategies/reload`; each distinct code hash becomes a `StrategyVersion`.
+Strategy discovery: Go scans `strategies/library/*.py` metadata through the supervisor (`{"type":"describe"}` → list of {file, class, name, description, timeframe, params, universe, meta, code}) at start and on `POST /api/v1/trade/strategies/reload`; each distinct code hash becomes a `StrategyVersion` (built-in, read-only in the editor).
+
+User strategies (`trade_strategy_sources`, `internal/trade/sources.go`): drafts edited in the web editor (autosave + `POST /trade/check`), `POST /trade/sources/{id}/publish` checks and stores an immutable version (`meta.sourceId`); `POST /trade/trial` replays code or a version over the last 1–60 days in a hidden throwaway backtest account (≤ 90 s) and returns signals, trades, run log, report and candles. Writes that run code need the owner key (`internal/api/admin.go`).
 
 ## 3. Order layer rules
 

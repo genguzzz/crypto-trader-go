@@ -60,6 +60,7 @@ type Service struct {
 	lastMin  int64
 
 	events chan Event
+	logs   *runLog
 }
 
 var _ SignalSink = (*Service)(nil)
@@ -70,11 +71,15 @@ func New(st *store.Store, md MarketData, opts Options) (*Service, error) {
 	if _, err := st.DB.Exec(schema); err != nil {
 		return nil, fmt.Errorf("trade schema: %w", err)
 	}
+	if err := migrate(st.DB); err != nil {
+		return nil, fmt.Errorf("trade schema: %w", err)
+	}
 	s := &Service{st: st, db: st.DB, md: md, opts: opts, books: map[int64]*book{}, insts: map[int64]*instRT{},
-		kept: map[string]bool{}, ctx: context.Background(), events: make(chan Event, 256)}
+		kept: map[string]bool{}, ctx: context.Background(), events: make(chan Event, 256), logs: newRunLog()}
 	if err := s.loadBooks(); err != nil {
 		return nil, err
 	}
+	s.dropTrialAccounts()
 	go s.notifier()
 	return s, nil
 }

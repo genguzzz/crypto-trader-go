@@ -231,18 +231,44 @@ func (s *Service) saveState(id int64, data []byte, now int64) error {
 
 // ---------- strategy versions ----------
 
-const versionCols = `id, name, file, description, timeframe, params, universe, code, created_at`
+const versionCols = `id, name, file, description, timeframe, params, universe, code, created_at, meta`
 
 func scanVersion(sc interface{ Scan(...any) error }) (StrategyVersion, error) {
 	var v StrategyVersion
-	var params, uni string
-	err := sc.Scan(&v.ID, &v.Name, &v.File, &v.Description, &v.Timeframe, &params, &uni, &v.Code, &v.CreatedAt)
+	var params, uni, meta string
+	err := sc.Scan(&v.ID, &v.Name, &v.File, &v.Description, &v.Timeframe, &params, &uni, &v.Code, &v.CreatedAt, &meta)
 	if err != nil {
 		return v, err
 	}
 	json.Unmarshal([]byte(params), &v.Params)
 	json.Unmarshal([]byte(uni), &v.DefaultUniverse)
+	json.Unmarshal([]byte(meta), &v.Meta)
 	return v, nil
+}
+
+// migrate adds the columns listed in migrations when a table lacks them.
+func migrate(db *sql.DB) error {
+	for _, m := range migrations {
+		rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, m.table)
+		if err != nil {
+			return err
+		}
+		have := false
+		for rows.Next() {
+			var n string
+			if rows.Scan(&n) == nil && n == m.column {
+				have = true
+			}
+		}
+		rows.Close()
+		if have {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE ` + m.table + ` ADD COLUMN ` + m.column + ` ` + m.def); err != nil {
+			return fmt.Errorf("add %s.%s: %w", m.table, m.column, err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) version(id string) (StrategyVersion, error) {

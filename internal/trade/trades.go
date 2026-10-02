@@ -28,7 +28,7 @@ type Trade struct {
 	Funding     float64     `json:"funding"` // signed, as booked
 	Net         float64     `json:"net"`
 	ReturnPct   float64     `json:"returnPct"` // net / margin
-	ExitKind    string      `json:"exitKind"`  // signal | stop | target | liquidation | manual | open
+	ExitKind    string      `json:"exitKind"`  // signal | stop | target | time | liquidation | manual | open
 	OpenReason  string      `json:"openReason,omitempty"`
 	CloseReason string      `json:"closeReason,omitempty"`
 	StopLoss    float64     `json:"stopLoss,omitempty"`
@@ -55,6 +55,7 @@ type fillJoin struct {
 	reduce              bool
 	otype               string
 	lever, stop, target float64
+	oreason             string
 	signalID            int64
 	reason              string
 	aiID                int64
@@ -69,7 +70,7 @@ func (s *Service) Trades(accountID int64) ([]Trade, error) {
 	rows, err := s.db.Query(`SELECT f.id, f.order_id, f.instance_id, f.inst_id, f.side, f.pos_side, f.qty, f.px, f.ct_val, f.fee,
 		f.realized_pnl, f.liquidation, f.reduce, f.ts, IFNULL(o.type,''), IFNULL(o.leverage,0), IFNULL(o.signal_id,0),
 		IFNULL(json_extract(sg.body,'$.reason'),''), IFNULL(sg.ai_decision_id,0), IFNULL(sg.action,''),
-		IFNULL(json_extract(sg.body,'$.stopLoss'),0), IFNULL(json_extract(sg.body,'$.takeProfit'),0)
+		IFNULL(json_extract(sg.body,'$.stopLoss'),0), IFNULL(json_extract(sg.body,'$.takeProfit'),0), IFNULL(o.reason,'')
 		FROM trade_fills f LEFT JOIN trade_orders o ON o.id=f.order_id LEFT JOIN trade_signals sg ON sg.id=o.signal_id AND o.signal_id>0
 		WHERE f.account_id=? ORDER BY f.ts, f.id`, accountID)
 	if err != nil {
@@ -80,7 +81,7 @@ func (s *Service) Trades(accountID int64) ([]Trade, error) {
 		var j fillJoin
 		var liq, red int
 		if err := rows.Scan(&j.f.ID, &j.f.OrderID, &j.f.InstanceID, &j.f.InstID, &j.f.Side, &j.f.PosSide, &j.f.Qty, &j.f.Px, &j.ct, &j.f.Fee,
-			&j.f.RealizedPnl, &liq, &red, &j.f.Ts, &j.otype, &j.lever, &j.signalID, &j.reason, &j.aiID, &j.action, &j.stop, &j.target); err != nil {
+			&j.f.RealizedPnl, &liq, &red, &j.f.Ts, &j.otype, &j.lever, &j.signalID, &j.reason, &j.aiID, &j.action, &j.stop, &j.target, &j.oreason); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -137,6 +138,8 @@ func (s *Service) Trades(accountID int64) ([]Trade, error) {
 					t.ExitKind = "stop"
 				case j.otype == string(OrdTarget):
 					t.ExitKind = "target"
+				case j.oreason == reasonExpired:
+					t.ExitKind = "time"
 				case j.signalID > 0:
 					t.ExitKind = "signal"
 				default:

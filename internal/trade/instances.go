@@ -37,8 +37,9 @@ type instRT struct {
 }
 
 type sessCall struct {
-	name string
-	fn   func(context.Context, Session) error
+	name    string
+	fn      func(context.Context, Session) error
+	timeout time.Duration // 0 = Options.SessionTimeout (a batch of bars gets more)
 }
 
 func newInstRT(s *Service, b *book, inst Instance, ver StrategyVersion) *instRT {
@@ -56,6 +57,15 @@ func (ri *instRT) session() Session {
 	defer ri.mu.Unlock()
 	return ri.sess
 }
+
+func (ri *instRT) status() string {
+	if sess := ri.session(); sess != nil {
+		return sess.Status()
+	}
+	return ""
+}
+
+func (ri *instRT) timeframe() string { return InstanceTimeframe(ri.instance(), ri.ver) }
 
 func (ri *instRT) currentUniverse() []string {
 	ri.mu.Lock()
@@ -89,7 +99,7 @@ func (ri *instRT) pop() (sessCall, bool) {
 // (never inline: the strategy may be waiting for our answer to its own query or signal).
 func (s *Service) enqueue(instanceID int64, name string, fn func(context.Context, Session) error) {
 	if ri := s.instRT(instanceID); ri != nil {
-		ri.push(sessCall{name, fn})
+		ri.push(sessCall{name: name, fn: fn})
 	}
 }
 
@@ -105,35 +115,14 @@ type InstanceInput struct {
 }
 
 type InstancePatch struct {
-	Name     *string            `json:"name"`
-	Params   map[string]float64 `json:"params"`
-	Universe *Universe          `json:"universe"`
-	Exec     *ExecMode          `json:"exec"`
+	VersionID *string            `json:"versionId"` // another version of the same strategy (upgrade / downgrade)
+	Name      *string            `json:"name"`
+	Params    map[string]float64 `json:"params"`
+	Universe  *Universe          `json:"universe"`
+	Exec      *ExecMode          `json:"exec"`
 }
 
 var instIDRe = regexp.MustCompile(`^[A-Z0-9]{1,20}-USDT-SWAP$`)
-
-func validParams(specs []ParamSpec, in map[string]float64) (map[string]float64, error) {
-	out := map[string]float64{}
-	known := map[string]bool{}
-	for _, p := range specs {
-		known[p.Name] = true
-		v, ok := in[p.Name]
-		if !ok {
-			v = p.Default
-		}
-		if !finite(v) || (p.Min != nil && v < *p.Min) || (p.Max != nil && v > *p.Max) {
-			return nil, errBad(fmt.Sprintf("参数 %s=%v 超出范围", p.Name, v))
-		}
-		out[p.Name] = v
-	}
-	for k := range in {
-		if !known[k] {
-			return nil, errBad(fmt.Sprintf("未知参数 %q", k))
-		}
-	}
-	return out, nil
-}
 
 func (s *Service) validUniverse(u Universe) (Universe, error) {
 	if (len(u.Static) == 0) == (u.Screener == nil) {
@@ -142,8 +131,8 @@ func (s *Service) validUniverse(u Universe) (Universe, error) {
 	if u.Screener != nil {
 		q := *u.Screener
 		q.Side = strings.ToLower(q.Side)
-		if q.Side != "" && q.Side != "long" && q.Side != "short" {
-			return u, errBad("筛选方向需为 long / short")
+		if q.Side != "" && q.Side != "long" && q.Side != "short" && q.Side != "both" {
+			return u, errBad("筛选方向需为 long / short / both")
 		}
 		if q.Top < 1 || q.Top > 50 {
 			return u, errBad("筛选数量 top 需在 1–50")
@@ -273,6 +262,27 @@ func (s *Service) UpdateInstance(id int64, p InstancePatch) (Instance, error) {
 		return inst, err
 	}
 	next := inst
+	newVer := p.VersionID != nil && *p.VersionID != inst.VersionID
+	if newVer {
+		nv, err := s.version(*p.VersionID)
+		if err != nil {
+			return inst, err
+		}
+		if nv.Name != ver.Name {
+			return inst, errBad(fmt.Sprintf("只能换成同一策略（%s）的其他版本", ver.Name))
+		}
+		// keep the values the new version still accepts; new or changed params start at their default
+		kept := map[string]float64{}
+		for _, sp := range nv.Params {
+			if v, ok := inst.Params[sp.Name]; ok && checkParam(sp, v) == nil {
+				kept[sp.Name] = v
+			}
+		}
+		ver, next.VersionID, next.Params = nv, nv.ID, kept
+		if next.Params, err = validParams(ver.Params, next.Params); err != nil {
+			return inst, err
+		}
+	}
 	if p.Name != nil {
 		n := strings.TrimSpace(*p.Name)
 		if n == "" || utf8.RuneCountInString(n) > 40 {
@@ -302,14 +312,14 @@ func (s *Service) UpdateInstance(id int64, p InstancePatch) (Instance, error) {
 			return inst, err
 		}
 	}
-	config := p.Params != nil || p.Universe != nil || p.Exec != nil
+	config := newVer || p.Params != nil || p.Universe != nil || p.Exec != nil
 	if config {
 		next.ConfigVersion++
 	}
 	now := time.Now().UnixMilli()
 	err = s.tx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`UPDATE trade_instances SET name=?, params=?, universe=?, exec=?, config_version=? WHERE id=?`,
-			next.Name, mustJSON(next.Params), mustJSON(next.Universe), next.Exec, next.ConfigVersion, id); err != nil {
+		if _, err := tx.Exec(`UPDATE trade_instances SET version_id=?, name=?, params=?, universe=?, exec=?, config_version=? WHERE id=?`,
+			next.VersionID, next.Name, mustJSON(next.Params), mustJSON(next.Universe), next.Exec, next.ConfigVersion, id); err != nil {
 			return err
 		}
 		if config {
@@ -321,7 +331,7 @@ func (s *Service) UpdateInstance(id int64, p InstancePatch) (Instance, error) {
 		return inst, err
 	}
 	if ri := s.instRT(id); ri != nil {
-		if p.Params != nil || p.Universe != nil {
+		if newVer || p.Params != nil || p.Universe != nil {
 			paused := ri.isPaused()
 			s.stopWorker(ri)
 			next.State = StRunning
@@ -358,6 +368,7 @@ func (s *Service) Instances(accountID int64) ([]Instance, error) {
 		if ri := s.instRT(xs[i].ID); ri != nil {
 			in := ri.instance()
 			xs[i].Heartbeat = max(xs[i].Heartbeat, in.Heartbeat)
+			xs[i].Status = ri.status()
 		}
 	}
 	if xs == nil {
@@ -373,6 +384,7 @@ func (s *Service) instanceView(id int64) (Instance, error) {
 	}
 	if ri := s.instRT(id); ri != nil {
 		in.Heartbeat = max(in.Heartbeat, ri.instance().Heartbeat)
+		in.Status = ri.status()
 	}
 	return in, nil
 }
@@ -411,8 +423,8 @@ func (s *Service) InstanceAction(id int64, action string) (Instance, error) {
 		if err != nil {
 			return inst, err
 		}
-		if _, ok := TFMillis(ver.Timeframe); !ok {
-			return inst, errBad("策略周期 " + ver.Timeframe + " 不受支持")
+		if tf := InstanceTimeframe(inst, ver); !validTF(tf) {
+			return inst, errBad("策略周期 " + tf + " 不受支持")
 		}
 		inst.State, inst.StateReason = StRunning, ""
 		s.setInstanceState(id, StRunning, "")
@@ -487,6 +499,9 @@ func (s *Service) setRTState(ri *instRT, st InstanceState, reason string) {
 	}
 }
 
+// healthyRun is how long a session must run for its next fault to count as the first.
+const healthyRun = 10 * time.Minute
+
 // runLive keeps one live instance's strategy process running: start (waiting while the runner
 // is offline), deliver queued events in order, restart up to 3 times after faults with the saved
 // state, then give up (stopped).
@@ -520,7 +535,11 @@ func (s *Service) runLive(ctx context.Context, ri *instRT) {
 			s.setRTState(ri, st, "")
 			s.refreshUniverse(ri, s.md.Now(), true)
 			s.updateKeep()
+			began := time.Now()
 			err = s.pump(ctx, ri, sess)
+			if time.Since(began) > healthyRun {
+				faults = 0 // a fault after a long healthy run starts the count again
+			}
 			ri.mu.Lock()
 			ri.sess = nil
 			ri.mu.Unlock()
@@ -587,7 +606,8 @@ func (s *Service) pump(ctx context.Context, ri *instRT, sess Session) error {
 // call runs one session event; faults (timeout, dead process) end the session, other errors are
 // logged and the event is dropped.
 func (s *Service) call(ctx context.Context, ri *instRT, sess Session, c sessCall) error {
-	cctx, cancel := context.WithTimeout(ctx, s.opts.SessionTimeout)
+	d := max(s.opts.SessionTimeout, c.timeout)
+	cctx, cancel := context.WithTimeout(ctx, d)
 	err := c.fn(cctx, sess)
 	cancel()
 	if err != nil {
@@ -690,7 +710,7 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	ri.universe = cur
 	ri.mu.Unlock()
 	cp := append([]string{}, cur...)
-	ri.push(sessCall{"universe", func(ctx context.Context, x Session) error { return x.Universe(ctx, added, removed, cp) }})
+	ri.push(sessCall{name: "universe", fn: func(ctx context.Context, x Session) error { return x.Universe(ctx, added, removed, cp) }})
 	return nil
 }
 

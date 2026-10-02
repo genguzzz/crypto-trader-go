@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 )
 
 // DepthQuoter is optionally implemented by live MarketData: a quote that includes order-book depth
@@ -199,6 +200,7 @@ func (b *book) afterFill(o *Order, f Fill, closes bool, kind string) {
 			b.cancel(b.s.db, x, "持仓已平", now)
 		}
 		b.s.recordAIOutcome(o.InstanceID, o.InstID, f, kind)
+		defer b.s.reopenAfter(b, o, f) // after this fill is reported, so the strategy sees close then open
 	case o.ReduceOnly:
 		p := b.pos[k]
 		for _, x := range b.ordersFor(k, isProtect) {
@@ -212,6 +214,7 @@ func (b *book) afterFill(o *Order, f Fill, closes bool, kind string) {
 		b.protect(o, now)
 	}
 	b.notifyFill(o, f, kind)
+	f.Kind, f.Closed = kind, closes
 	b.s.enqueue(o.InstanceID, "fill", func(ctx context.Context, s Session) error { return s.Fill(ctx, f) })
 	b.s.changed(b.acc.ID, "fill")
 }
@@ -225,6 +228,7 @@ func (b *book) protect(entry *Order, now int64) {
 		return
 	}
 	stop, target := p.StopLoss, p.TakeProfit
+	np := *p
 	if g, ok := b.groups[entry.OCOGroup]; ok {
 		if g.stop > 0 {
 			stop = g.stop
@@ -232,6 +236,15 @@ func (b *book) protect(entry *Order, now int64) {
 		if g.target > 0 {
 			target = g.target
 		}
+		if g.trail > 0 {
+			np.Trail = g.trail
+		}
+		if g.limitMs > 0 && np.Expire == 0 {
+			np.Expire = p.OpenedAt + g.limitMs
+		}
+	}
+	if np.Trail > 0 && np.Best == 0 {
+		np.Best = p.EntryPx
 	}
 	if entry.State == OsFilled || entry.State == OsCancelled {
 		delete(b.groups, entry.OCOGroup)
@@ -240,7 +253,6 @@ func (b *book) protect(entry *Order, now int64) {
 		b.cancel(b.s.db, x, "被新的止损/止盈替换", now)
 	}
 	side := sideOf(p.PosSide, false)
-	np := *p
 	np.StopLoss, np.TakeProfit, np.Group = 0, 0, entry.OCOGroup
 	for _, x := range []struct {
 		t  OrderType
@@ -263,6 +275,7 @@ func (b *book) protect(entry *Order, now int64) {
 	if savePosition(b.s.db, &np) == nil {
 		b.pos[k] = &np
 	}
+	b.trailStop(k, np.Best, np.Best, now) // a trailing distance tighter than the stop applies at once
 }
 
 // ---------- live execution ----------
@@ -387,9 +400,89 @@ func (b *book) onQuote(inst string, q Quote, now int64) {
 		}
 		if p.LiqPx > 0 && ((long && mark <= p.LiqPx) || (!long && mark >= p.LiqPx)) {
 			b.liquidate(k, p.LiqPx, now)
+			continue
+		}
+		b.trailStop(k, last, last, now)
+	}
+}
+
+// trailStop moves a trailing stop behind the best price seen in [lo, hi] (caller holds b.mu).
+// The stop only ever tightens; a position without a stop order gets one.
+func (b *book) trailStop(k posKey, lo, hi float64, now int64) {
+	p := b.pos[k]
+	if p == nil || p.Trail <= 0 {
+		return
+	}
+	long := p.PosSide == "long"
+	np := *p
+	if long {
+		np.Best = math.Max(np.Best, hi)
+	} else if np.Best <= 0 || lo < np.Best {
+		np.Best = lo
+	}
+	spec, _ := b.market().Spec(k.id)
+	want := roundTick(np.Best-dir(p.PosSide)*p.Trail, spec.TickSz)
+	var stop *Order
+	for _, o := range b.ordersFor(k, isProtect) {
+		if o.Type == OrdStop {
+			stop = o
+			break
+		}
+	}
+	moved := false
+	switch {
+	case want <= 0:
+	case stop == nil:
+		o := &Order{InstanceID: k.inst, InstID: k.id, Side: sideOf(p.PosSide, false), PosSide: p.PosSide, Type: OrdStop, Qty: p.Qty,
+			TriggerPx: want, ReduceOnly: true, OCOGroup: p.Group, Leverage: p.Leverage, State: OsTrigger, Reason: "追踪止损", CreatedAt: now}
+		moved = b.addOrder(b.s.db, o) == nil
+	case (long && want > stop.TriggerPx) || (!long && want < stop.TriggerPx):
+		stop.TriggerPx, stop.UpdatedAt, stop.Reason = want, now, "追踪止损"
+		moved = updateOrder(b.s.db, *stop) == nil
+	}
+	if moved {
+		np.StopLoss = want
+	}
+	if moved || np.Best != p.Best {
+		if savePosition(b.s.db, &np) == nil {
+			b.pos[k] = &np
+		}
+		if moved {
+			b.s.changed(b.acc.ID, "order")
 		}
 	}
 }
+
+// expire market-closes positions whose time limit passed (caller holds b.mu). Live orders fill
+// against the current quote; backtest orders at the next bar open.
+func (b *book) expire(now int64) {
+	for _, k := range b.sortedPosKeys() {
+		p := b.pos[k]
+		if p.Expire <= 0 || now < p.Expire {
+			continue
+		}
+		if len(b.ordersFor(k, func(o *Order) bool { return o.ReduceOnly && o.Type == OrdMarket })) > 0 {
+			continue
+		}
+		o := &Order{InstanceID: k.inst, InstID: k.id, Side: sideOf(p.PosSide, false), PosSide: p.PosSide, Type: OrdMarket, Qty: p.Qty,
+			ReduceOnly: true, Leverage: p.Leverage, State: OsLive, Reason: reasonExpired, CreatedAt: now}
+		if b.addOrder(b.s.db, o) != nil {
+			continue
+		}
+		b.s.changed(b.acc.ID, "order")
+		if !b.barModel {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			q, err := b.market().Quote(ctx, k.id)
+			cancel()
+			if err == nil {
+				b.execLive(o, q, false, "time", now)
+			}
+		}
+	}
+}
+
+// reasonExpired marks the closing order of a position whose time limit passed.
+const reasonExpired = "持仓到期"
 
 // needsDepth reports whether a quote would trigger a stop or target (execution then fetches depth).
 func (b *book) needsDepth(inst string, last float64) bool {
@@ -517,7 +610,11 @@ func (b *book) processBar(inst string, bar Bar) {
 			b.cancel(b.s.db, o, "成交失败："+err.Error(), bar.Ts)
 			continue
 		}
-		b.afterFill(o, f, closes, "fill")
+		kind := "fill"
+		if o.Reason == reasonExpired {
+			kind = "time"
+		}
+		b.afterFill(o, f, closes, kind)
 	}
 	for _, o := range b.instOrders(inst, func(o *Order) bool { return o.Type == OrdLimit }) {
 		switch {
@@ -563,7 +660,9 @@ func (b *book) processBar(inst string, bar Bar) {
 		}
 		if liq > 0 && ((long && bar.L <= liq) || (!long && bar.H >= liq)) {
 			b.liquidate(k, liq, bar.Ts)
+			continue
 		}
+		b.trailStop(k, bar.L, bar.H, bar.Ts) // moves from the next bar on: the path inside this one is unknown
 	}
 	b.marks[inst] = bar.C
 }

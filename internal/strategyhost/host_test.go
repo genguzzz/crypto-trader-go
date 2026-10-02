@@ -67,6 +67,11 @@ func (f *fakeSink) Position(instanceID int64, instID string) (trade.Position, bo
 	return trade.Position{}, false
 }
 func (f *fakeSink) Positions(int64) []trade.Position { return nil }
+func (f *fakeSink) Series(int64, string, string, string, int) ([]trade.SeriesPoint, error) {
+	return []trade.SeriesPoint{{Ts: 1, V: 2}}, nil
+}
+func (f *fakeSink) Notify(int64, string, string, map[string]any) {}
+func (f *fakeSink) Log(int64, string, string)                    {}
 func (f *fakeSink) AccountView(int64) (trade.Account, bool) {
 	return trade.Account{ID: 1, Equity: 1000}, true
 }
@@ -264,7 +269,7 @@ func TestSessionRoundTrip(t *testing.T) {
 				fail("init leaks code")
 			}
 			_ = c.send(map[string]any{"type": "state", "data": map[string]any{"n": 2}})
-		case "bar":
+		case "bars":
 			r, err := c.call(map[string]any{"type": "query", "method": "bars", "args": map[string]any{"instId": "BTC-USDT-SWAP", "n": 3}})
 			if err != nil || len(r["data"].([]any)) != 3 {
 				fail("bars: %v %v", r, err)
@@ -306,7 +311,12 @@ func TestSessionRoundTrip(t *testing.T) {
 			if r["type"] != "error" {
 				fail("bad action: %v", r)
 			}
+			r, _ = c.call(map[string]any{"type": "query", "method": "series", "args": map[string]any{"instId": "BTC-USDT-SWAP", "field": "oi"}})
+			if rows := r["data"].([]any); len(rows) != 1 || rows[0].(map[string]any)["v"] != 2.0 {
+				fail("series: %v", r)
+			}
 			_ = c.send(map[string]any{"type": "log", "level": "info", "msg": "hi"})
+			_ = c.send(map[string]any{"type": "status", "msg": "waiting for a cross"})
 		}
 		return true
 	})
@@ -330,11 +340,14 @@ func TestSessionRoundTrip(t *testing.T) {
 		t.Fatal("second start of the same instance accepted")
 	}
 
-	if err := s.Bar(context.Background(), "BTC-USDT-SWAP", "4H", trade.Bar{Ts: 1, C: 123.5}); err != nil {
+	if err := s.Bars(context.Background(), "4H", []trade.InstBar{{InstID: "BTC-USDT-SWAP", Bar: trade.Bar{Ts: 1, C: 123.5}}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(sink.sigs) != 1 {
 		t.Fatalf("signals: %v", sink.sigs)
+	}
+	if st := s.Status(); st != "waiting for a cross" {
+		t.Fatalf("status: %q", st)
 	}
 	sig := sink.sigs[0]
 	if sig.InstanceID != 7 || sig.AccountID != 3 || sig.Price != 123.5 || sig.Strength != 1 || sig.StopLoss != 95.5 ||
@@ -363,12 +376,12 @@ func TestSessionRoundTrip(t *testing.T) {
 	if s.Err() != nil {
 		t.Fatalf("err after stop: %v", s.Err())
 	}
-	if err := s.Bar(ctx, "A", "4H", trade.Bar{}); !errors.Is(err, trade.ErrFaulted) {
+	if err := s.Bars(ctx, "4H", []trade.InstBar{{InstID: "A", Bar: trade.Bar{}}}); !errors.Is(err, trade.ErrFaulted) {
 		t.Fatalf("bar after stop: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	want := "init bar universe fill signal_result funding stop"
+	want := "init bars universe fill signal_result funding stop"
 	if strings.Join(got, " ") != want {
 		t.Fatalf("events %v", got)
 	}
@@ -405,14 +418,14 @@ func TestDescribe(t *testing.T) {
 
 func TestEventTimeoutKills(t *testing.T) {
 	h, path := newHost(t, Options{EventTimeout: 150 * time.Millisecond})
-	sp := startSup(t, path, func(c *client, ev map[string]any) bool { return ev["type"] != "bar" })
+	sp := startSup(t, path, func(c *client, ev map[string]any) bool { return ev["type"] != "bars" })
 	waitFor(t, h.Available)
 	s, err := h.Start(context.Background(), inst, ver, trade.ModeLive, nil, fakeMD{}, &fakeSink{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	err = s.Bar(context.Background(), "BTC-USDT-SWAP", "4H", trade.Bar{})
+	err = s.Bars(context.Background(), "4H", []trade.InstBar{{InstID: "BTC-USDT-SWAP", Bar: trade.Bar{}}})
 	if !errors.Is(err, trade.ErrFaulted) || time.Since(start) > 2*time.Second {
 		t.Fatalf("bar: %v after %s", err, time.Since(start))
 	}
@@ -438,7 +451,7 @@ func TestProcessExitReportsStderr(t *testing.T) {
 	h, path := newHost(t, Options{})
 	var sp *fakeSup
 	sp = startSup(t, path, func(c *client, ev map[string]any) bool {
-		if ev["type"] == "bar" {
+		if ev["type"] == "bars" {
 			c.w.close()
 			_ = sp.c.send(map[string]any{"type": "exited", "instance": 7, "code": 1, "stderr": "Traceback: boom"})
 			return false
@@ -450,7 +463,7 @@ func TestProcessExitReportsStderr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = s.Bar(context.Background(), "BTC-USDT-SWAP", "4H", trade.Bar{})
+	err = s.Bars(context.Background(), "4H", []trade.InstBar{{InstID: "BTC-USDT-SWAP", Bar: trade.Bar{}}})
 	if !errors.Is(err, trade.ErrFaulted) || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("bar: %v", err)
 	}
@@ -512,7 +525,7 @@ func TestHandlerErrorsAreCounted(t *testing.T) {
 	var fails atomic.Bool
 	fails.Store(true)
 	startSup(t, path, func(c *client, ev map[string]any) bool {
-		if ev["type"] == "bar" && fails.Load() {
+		if ev["type"] == "bars" && fails.Load() {
 			_ = c.send(map[string]any{"type": "done", "seq": ev["seq"], "error": "ZeroDivisionError"})
 			return false
 		}
@@ -526,12 +539,12 @@ func TestHandlerErrorsAreCounted(t *testing.T) {
 	ctx := context.Background()
 	for i := 1; i <= 2; i++ {
 		var he *HandlerError
-		if err := s.Bar(ctx, "A", "4H", trade.Bar{}); !errors.As(err, &he) || he.Consecutive != i || errors.Is(err, trade.ErrFaulted) {
+		if err := s.Bars(ctx, "4H", []trade.InstBar{{InstID: "A", Bar: trade.Bar{}}}); !errors.As(err, &he) || he.Consecutive != i || errors.Is(err, trade.ErrFaulted) {
 			t.Fatalf("bar %d: %v", i, err)
 		}
 	}
 	fails.Store(false)
-	if err := s.Bar(ctx, "A", "4H", trade.Bar{}); err != nil {
+	if err := s.Bars(ctx, "4H", []trade.InstBar{{InstID: "A", Bar: trade.Bar{}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Stop(ctx); err != nil {
@@ -542,7 +555,7 @@ func TestHandlerErrorsAreCounted(t *testing.T) {
 func TestOversizedLineFaults(t *testing.T) {
 	h, path := newHost(t, Options{ExitGrace: 50 * time.Millisecond})
 	startSup(t, path, func(c *client, ev map[string]any) bool {
-		if ev["type"] == "bar" {
+		if ev["type"] == "bars" {
 			_ = c.send(map[string]any{"type": "log", "msg": string(bytes.Repeat([]byte("x"), maxLine+10))})
 			return false
 		}
@@ -553,7 +566,7 @@ func TestOversizedLineFaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Bar(context.Background(), "A", "4H", trade.Bar{}); !errors.Is(err, trade.ErrFaulted) {
+	if err := s.Bars(context.Background(), "4H", []trade.InstBar{{InstID: "A", Bar: trade.Bar{}}}); !errors.Is(err, trade.ErrFaulted) {
 		t.Fatalf("bar: %v", err)
 	}
 	<-s.Done()

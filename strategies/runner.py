@@ -84,6 +84,8 @@ class Supervisor:
                 t = msg.get("type")
                 if t == "describe":
                     threading.Thread(target=self.describe, args=(msg.get("id"),), daemon=True).start()
+                elif t == "check":
+                    threading.Thread(target=self.check, args=(msg.get("id"), msg.get("code") or ""), daemon=True).start()
                 elif t == "spawn":
                     self.spawn(msg)
                 elif t == "kill":
@@ -107,6 +109,21 @@ class Supervisor:
         except Exception as e:  # report instead of dying: describe runs user code
             strategies = [{"file": "library", "error": f"describe failed: {e}"}]
         self.send({"type": "describe_result", "id": req_id, "strategies": strategies})
+
+    def check(self, req_id, code: str) -> None:
+        """Checks editor code in a throwaway process (ctg.check)."""
+        try:
+            p = subprocess.run([sys.executable, "-m", "ctg.check"], cwd=ROOT, env=child_env({}), input=code.encode(),
+                               capture_output=True, timeout=DESCRIBE_TIMEOUT)
+            if p.returncode != 0:
+                raise RuntimeError(p.stderr.decode(errors="replace")[-STDERR_TAIL:])
+            result = json.loads(p.stdout)
+        except subprocess.TimeoutExpired:
+            result = {"diagnostics": [{"line": 1, "col": 0, "severity": "error",
+                                       "message": f"check timed out after {DESCRIBE_TIMEOUT}s (code runs at import?)"}]}
+        except Exception as e:
+            result = {"diagnostics": [{"line": 1, "col": 0, "severity": "error", "message": f"check failed: {e}"}]}
+        self.send({"type": "check_result", "id": req_id, "result": result})
 
     def spawn(self, msg: dict) -> None:
         instance, token = int(msg.get("instance") or 0), str(msg.get("token") or "")

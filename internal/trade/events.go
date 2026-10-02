@@ -69,6 +69,8 @@ func (b *book) notifyFill(o *Order, f Fill, kind string) {
 		title = "止盈触发 · 平" + sideName(o.PosSide)
 	case "liquidation":
 		title = "强平 · " + sideName(o.PosSide) + "单"
+	case "time":
+		title = "持仓到期 · 平" + sideName(o.PosSide)
 	default:
 		if o.ReduceOnly {
 			title = "平" + sideName(o.PosSide) + "成交"

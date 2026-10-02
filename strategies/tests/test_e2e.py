@@ -41,6 +41,8 @@ class FakeHost:
         self.bars = bars
         self.signals = []
         self.logs = []
+        self.notes = []
+        self.statuses = []
         self.states = []
         self.position = None
         self.conns = []
@@ -63,6 +65,10 @@ class FakeHost:
                 return m
             if t == "log":
                 self.logs.append(m)
+            elif t == "notify":
+                self.notes.append(m)
+            elif t == "status":
+                self.statuses.append(m["msg"])
             elif t == "state":
                 self.states.append(m["data"])
             elif t == "signal":
@@ -97,7 +103,7 @@ def env(path, **extra):
 def init_msg(params, state=None):
     return {"type": "init", "seq": 0, "now": 0, "mode": "backtest", "state": state or {},
             "instance": {"id": 12, "accountId": 1, "params": params,
-                         "universe": {"static": ["BTC-USDT-SWAP"]}},
+                         "universe": {"static": ["BTC-USDT-SWAP"]}}, "timeframe": "4H",
             "strategy": {"name": "x", "timeframe": "4H"}}
 
 
@@ -115,18 +121,19 @@ class InstanceTest(unittest.TestCase):
         p = self.start(host, CTG_FILE="library/majors_trend.py", CTG_CLASS="MajorsTrend")
         conn = host.accept()
         hello = conn.recv()
-        self.assertEqual(hello, {"type": "hello", "instance": 12, "token": TOKEN, "sdk": "1"})
+        self.assertEqual(hello, {"type": "hello", "instance": 12, "token": TOKEN, "sdk": "2"})
 
-        done = host.event(conn, init_msg({"fast": 5, "slow": 20}))
+        done = host.event(conn, init_msg({"fast": 5, "slow": 20, "entry": 1, "notify": 1}))  # entry 1 = cross
         self.assertNotIn("error", done)
-        self.assertIn("started fast=5 slow=20", host.logs[0]["msg"])
-        self.assertEqual(host.states[-1], {"reenter": {}})
+        self.assertIn("EMA5/20", host.logs[0]["msg"])
 
         last = bars[-1]
         bar = {"ts": last[0], "o": last[1], "h": last[2], "l": last[3], "c": last[4], "vol": 10, "volq": 1}
-        done = host.event(conn, {"type": "bar", "seq": 1, "now": last[0] + H, "instId": "BTC-USDT-SWAP",
-                                 "tf": "4H", "bar": bar})
+        done = host.event(conn, {"type": "bars", "seq": 1, "now": last[0] + H, "tf": "4H",
+                                 "bars": [{"instId": "BTC-USDT-SWAP", "bar": bar}]})
         self.assertNotIn("error", done)
+        self.assertTrue(any(n["text"].startswith("BTC 开多") for n in host.notes))
+        self.assertIn("BTC 快线在上", host.statuses[-1])
         self.assertEqual(len(host.signals), 1)
         s = host.signals[0]
         a = np.array(bars, dtype=float)
@@ -153,11 +160,11 @@ class InstanceTest(unittest.TestCase):
         conn.recv()
         host.event(conn, init_msg({}))
         bar = {"ts": 5, "o": 1, "h": 1, "l": 1, "c": 2, "vol": None, "volq": None}
-        done = host.event(conn, {"type": "bar", "seq": 1, "now": 1, "instId": "X", "tf": "1H", "bar": bar})
+        done = host.event(conn, {"type": "bars", "seq": 1, "now": 1, "tf": "1H", "bars": [{"instId": "X", "bar": bar}]})
         self.assertIn("ZeroDivisionError: boom", done["error"])
         self.assertTrue(any("Traceback" in m["msg"] for m in host.logs))
         bar["c"] = 1
-        done = host.event(conn, {"type": "bar", "seq": 2, "now": 1, "instId": "X", "tf": "1H", "bar": bar})
+        done = host.event(conn, {"type": "bars", "seq": 2, "now": 1, "tf": "1H", "bars": [{"instId": "X", "bar": bar}]})
         self.assertNotIn("error", done)
         self.assertEqual(host.states[-1], {"ok": 5})
         conn.close()  # host gone → the process exits on EOF
@@ -214,8 +221,10 @@ class DescribeTest(unittest.TestCase):
         mt = got["majors-trend"]
         self.assertEqual(mt["universe"], {"static": ["BTC-USDT-SWAP", "ETH-USDT-SWAP"]})
         self.assertEqual(mt["timeframe"], "4H")
-        self.assertTrue(all(p["aiTunable"] for p in mt["params"]))
-        self.assertEqual(got["pool-reversal"]["timeframe"], "1H")
+        self.assertEqual({p["name"] for p in mt["params"] if p.get("aiTunable")}, {"fast", "slow", "stop_atr", "target_atr"})
+        self.assertEqual(got["pool-reversal"]["timeframe"], "15m")
+        self.assertEqual(got["pool-reversal"]["meta"], {"canLong": True, "canShort": True, "warmup": 60, "batch": True})
+        self.assertFalse(got["demo-pulse"]["meta"]["canShort"])
 
 
 if __name__ == "__main__":

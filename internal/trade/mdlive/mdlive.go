@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"crypto-trader-go/internal/market"
@@ -130,6 +131,9 @@ func (m *MD) Screener(q trade.ScreenerQuery) ([]trade.ScreenRow, error) {
 		}
 		x := trade.ScreenRow{InstID: r.InstID, Rank: r.Rank, Last: r.Last, Long: math.NaN(), Short: math.NaN(), Values: r.Values}
 		if sc, ok := r.Scores[q.Rule]; ok {
+			if strings.HasPrefix(sc.Gate, "BLOCKED") {
+				continue // the rule's cost gate (e.g. spread) rules the instrument out
+			}
 			if sc.Long.Score != nil {
 				x.Long = *sc.Long.Score
 			}
@@ -143,7 +147,7 @@ func (m *MD) Screener(q trade.ScreenerQuery) ([]trade.ScreenRow, error) {
 }
 
 // Score returns a rule's scores of the last confirmed snapshot (active pool and watchlist rows);
-// an unscored side is 0.
+// an unscored side is NaN.
 func (m *MD) Score(rule, id string) (float64, float64, bool) {
 	r, ok := m.row(id)
 	if !ok {
@@ -153,7 +157,7 @@ func (m *MD) Score(rule, id string) (float64, float64, bool) {
 	if !ok || (sc.Long.Score == nil && sc.Short.Score == nil) {
 		return 0, 0, false
 	}
-	var l, s float64
+	l, s := math.NaN(), math.NaN()
 	if sc.Long.Score != nil {
 		l = *sc.Long.Score
 	}

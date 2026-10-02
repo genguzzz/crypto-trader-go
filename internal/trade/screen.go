@@ -9,10 +9,14 @@ import (
 // replayer). Candidates carry NaN for an unscored side; the returned rows carry 0 there and
 // only finite fact-panel values.
 func SelectScreen(rows []ScreenRow, q ScreenerQuery) []ScreenRow {
-	short := q.Side == "short"
 	score := func(r ScreenRow) float64 {
-		if short {
+		switch q.Side {
+		case "short":
 			return r.Short
+		case "both": // the stronger side; an unscored side does not count
+			if math.IsNaN(r.Long) || r.Short > r.Long {
+				return r.Short
+			}
 		}
 		return r.Long
 	}
