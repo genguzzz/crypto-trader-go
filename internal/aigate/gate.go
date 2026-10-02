@@ -224,7 +224,7 @@ func (g *Gate) SetModel(model string) (Status, error) {
 		model = g.opts.Model
 	}
 	if !modelRe.MatchString(model) {
-		return Status{}, errors.New("invalid model name")
+		return Status{}, errors.New("模型名称无效")
 	}
 	if err := g.st.PutSetting(modelSetting, model); err != nil {
 		return Status{}, err
@@ -747,9 +747,9 @@ func (g *Gate) Test(ctx context.Context) TestResult {
 	g.mu.Unlock()
 	switch {
 	case !configured:
-		return TestResult{Error: "no credential configured"}
+		return TestResult{Error: "尚未配置 AI 凭证"}
 	case !online:
-		return TestResult{Error: "AI worker is not connected"}
+		return TestResult{Error: "AI worker 未连接"}
 	case !ready && proxyErr != "":
 		return TestResult{Error: "AI worker is not ready: " + proxyErr}
 	case !ready:

@@ -307,7 +307,7 @@ func TestWorkerReconnect(t *testing.T) {
 	go func() { _, err := e.g.Review(context.Background(), sampleRequest()); errc <- err }()
 	w1.recv()
 	w2 := e.dial(t, true)
-	if err := <-errc; err == nil || !strings.Contains(err.Error(), "disconnected") {
+	if err := <-errc; err == nil || !strings.Contains(err.Error(), "已断开") {
 		t.Fatalf("in-flight call on replaced worker: %v", err)
 	}
 	if _, err := w1.tryRecv(time.Second); err == nil {
@@ -643,7 +643,7 @@ func TestReflectAndMemory(t *testing.T) {
 
 func TestTestCall(t *testing.T) {
 	e := newEnv(t, Options{})
-	if r := e.g.Test(context.Background()); r.OK || r.Error != "no credential configured" {
+	if r := e.g.Test(context.Background()); r.OK || r.Error != "尚未配置 AI 凭证" {
 		t.Fatalf("%+v", r)
 	}
 	e.g.SetCredential(KindAPIKey, testKey)

@@ -50,17 +50,17 @@ func validateCredential(kind, value string) (credential, error) {
 	switch kind {
 	case KindAPIKey, KindOAuthToken:
 	default:
-		return credential{}, fmt.Errorf("kind must be %q or %q", KindAPIKey, KindOAuthToken)
+		return credential{}, fmt.Errorf("凭证类型只能是 %q 或 %q", KindAPIKey, KindOAuthToken)
 	}
 	if !credRe.MatchString(value) {
-		return credential{}, errors.New("value must be 20–512 characters of letters, digits, '-', '_' or '.'")
+		return credential{}, errors.New("凭证需为 20–512 位字母、数字或 - _ .")
 	}
 	// Catch the obvious mix-up (the prefixes are public, not secret).
 	if kind == KindAPIKey && strings.HasPrefix(value, "sk-ant-oat") {
-		return credential{}, errors.New("this looks like an OAuth token from `claude setup-token`; choose kind oauth_token")
+		return credential{}, errors.New("这看起来是 `claude setup-token` 生成的订阅 token，请把类型选为“订阅 token”")
 	}
 	if kind == KindOAuthToken && strings.HasPrefix(value, "sk-ant-api") {
-		return credential{}, errors.New("this looks like an API key; choose kind api_key")
+		return credential{}, errors.New("这看起来是 API key，请把类型选为“API key”")
 	}
 	return credential{Kind: kind, Value: value}, nil
 }
