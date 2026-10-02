@@ -6,6 +6,7 @@ import { C, alpha } from '../../theme'
 import { chartTime, time } from '../../fmt'
 import type { Trade } from '../../tradeApi'
 import { EquityTradeMarks } from './tradeMarks'
+import ResetViewButton from './ResetViewButton.vue'
 import { amt, pct, tone } from '../trade/meta'
 
 /**
@@ -61,6 +62,7 @@ function render() {
   if (props.deposit) base = eq.createPriceLine({ price: props.deposit, color: C.text, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '入金' })
   marks.setData(d.ts, d.vs, props.trades, chartTime)
   if (!fitted && d.ts.length) { chart.timeScale().fitContent(); fitted = true }
+  requestAnimationFrame(() => { if (chart) axisW.value = chart.priceScale('right').width() })
 }
 
 let hoverKey = ''
@@ -79,7 +81,7 @@ function onMove(p: MouseEventParams<Time>) {
 }
 function onClick(p: MouseEventParams<Time>) {
   const h = p.point ? marks.hit(p.point.x, p.point.y) : null
-  if (h) emit('pick', h.ids)
+  emit('pick', h ? h.ids : []) // blank chart area clears the selection
 }
 
 /** Zoom the time axis to [fromMs, toMs] with some padding (cluster click). */
@@ -97,13 +99,21 @@ function idxLogical(t: number) {
   while (lo <= hi) { const m = (lo + hi) >> 1; if (xs[m] <= t) { r = m; lo = m + 1 } else hi = m - 1 }
   return r
 }
-function fit() { chart?.timeScale().fitContent() }
+/** Whole period, prices auto-scaled (the ◎ button). */
+function fit() {
+  if (!chart) return
+  chart.panes().forEach((_, i) => chart!.priceScale('right', i).applyOptions({ autoScale: true }))
+  chart.timeScale().fitContent()
+}
+const axisW = ref(60)
 defineExpose({ zoomTo, fit })
 
 onMounted(() => {
   chart = baseChart(el.value!, {
     rightPriceScale: { borderColor: C.border, scaleMargins: { top: 0.16, bottom: 0.1 } },
     trackingMode: { exitMode: TrackingModeExitMode.OnTouchEnd },
+    // fitContent must be able to show the whole period even on a 330 px phone plot (default min 0.5 px/bar)
+    timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: false, minBarSpacing: 0.05 },
     crosshair: { mode: 0, vertLine: { color: alpha('ink', 0.35), labelBackgroundColor: C.label }, horzLine: { color: alpha('ink', 0.2), labelBackgroundColor: C.label } },
   })
   eq = chart.addSeries(LineSeries, { color: C.lime, lineWidth: 2, priceFormat: { type: 'price', precision: 2, minMove: 0.01 }, lastValueVisible: true, priceLineVisible: false, crosshairMarkerRadius: 4 })
@@ -126,8 +136,7 @@ watch(() => props.dimmed, d => marks.setDimmed(d ?? null))
 </script>
 
 <template>
-  <div class="etc" :style="{ height: height + 'px' }">
-    <div ref="el" class="cv"></div>
+  <div class="etc" :class="{ small }" :style="{ height: height + 'px' }">
     <div v-if="legend" class="lg" :class="{ live: legend.live }">
       <span class="tm tnum">{{ time(legend.t, true) }}</span>
       <span class="it"><i>权益</i><b class="tnum">{{ amt(legend.v) }}</b></span>
@@ -135,13 +144,17 @@ watch(() => props.dimmed, d => marks.setDimmed(d ?? null))
       <span class="it"><i>回撤</i><b class="tnum" :class="legend.dd < 0 ? 'down' : ''">{{ pct(legend.dd, 2) }}</b></span>
       <span class="it"><i>持仓</i><b class="tnum">{{ legend.open }}</b></span>
     </div>
+    <div class="cvw"><div ref="el" class="cv"></div><ResetViewButton :right="axisW + 6" :bottom="34" title="复位：整个区间、自动缩放" @reset="fit" /></div>
     <slot />
   </div>
 </template>
 
 <style scoped>
-.etc { position: relative; width: 100%; min-width: 0; }
+.etc { position: relative; width: 100%; min-width: 0; display: flex; flex-direction: column; }
+.cvw { position: relative; flex: 1; min-height: 0; }
 .cv { position: absolute; inset: 0; }
+/* phones: the legend sits above the plot so it never covers the top row of bubbles */
+.small .lg { position: static; max-width: none; margin: 0 0 4px; padding: 2px 4px; background: none; gap: 0 10px; }
 .lg {
   position: absolute; left: 8px; top: 6px; z-index: 3; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; max-width: calc(100% - 80px);
   padding: 4px 8px; border-radius: 6px; background: rgba(14, 14, 14, .82); font-size: var(--fs-xs); color: var(--text-3); pointer-events: none;

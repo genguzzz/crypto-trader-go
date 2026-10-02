@@ -35,6 +35,8 @@ async function hits(page) {
   })
 }
 const wait = (page, ms = 500) => page.waitForTimeout(ms)
+/** Id of a round trip with adds and partial closes (≥ 6 fills), if the account has one. */
+const complexId = page => page.evaluate(async id => (await (await fetch(`/api/v1/trade/accounts/${id}/trades`)).json()).find(t => t.fills.length >= 6)?.id ?? 0, rid)
 let failed = false
 const browser = await chromium.launch({ executablePath: findChrome() })
 
@@ -76,14 +78,14 @@ const want = n => !process.env.ONLY || n.includes(process.env.ONLY)
     await page.mouse.click(clusterHit.x, clusterHit.y); await wait(page, 700)
     await page.mouse.move(5, 5); await wait(page, 300)
     await shot(page, 'equity-cluster-zoomed-desktop')
-    await page.locator('button[aria-label="显示全部"]').click(); await wait(page)
+    await page.locator('.etc button[aria-label="重置视图"]').click(); await wait(page)
   }
   // filter: losses only → other nodes fade
   if (want('filter')) {
-    await page.getByRole('radio', { name: '亏损' }).first().click().catch(() => {})
+    await page.locator('.tl .seg-i', { hasText: '亏损' }).click()
     await wait(page, 500)
     await shot(page, 'equity-filter-loss-desktop')
-    await page.getByRole('radio', { name: '全部' }).nth(1).click().catch(() => {})
+    await page.locator('.tl .seg-i', { hasText: '全部' }).nth(1).click()
     await wait(page, 300)
   }
   // click a bubble → 币对视角
@@ -99,11 +101,31 @@ const want = n => !process.env.ONLY || n.includes(process.env.ONLY)
     const k1 = kh.find(h => h.n === 1)
     if (k1 && want('kline')) { await page.mouse.move(k1.x, k1.y); await wait(page, 300); await shot(page, 'kline-hover-desktop') }
   }
+  // blank chart click clears the selection
+  if (want('deselect')) {
+    const box2 = await page.locator('.tcc .cv').first().boundingBox()
+    if (box2) { await page.mouse.click(box2.x + 30, box2.y + 30); await wait(page, 500); await page.mouse.move(5, 5); await shot(page, 'kline-deselect-desktop') }
+  }
   // instrument chip with most trades
   if (want('chips')) {
     await page.locator('.chip2').nth(2).click().catch(() => {}); await wait(page, 1200)
     await page.mouse.move(5, 5)
     await shot(page, 'kline-inst-switch-desktop')
+  }
+  // a trade with 2 adds and 2 partial reduces: hover its row in 组合视角, then open it
+  const cid = await complexId(page)
+  if (cid && want('complex')) {
+    await page.locator('.tx .bar .seg-i', { hasText: '组合视角' }).click(); await wait(page, 800)
+    const row = page.locator(`tr[data-id="${cid}"]`)
+    await row.scrollIntoViewIfNeeded()
+    await row.hover(); await wait(page, 400)
+    await page.evaluate(() => document.querySelector('.tx')?.scrollIntoView({ block: 'start' }))
+    await wait(page, 300)
+    await shot(page, 'complex-equity-desktop')
+    await row.click(); await wait(page, 1500)
+    await page.evaluate(() => document.querySelector('.tx')?.scrollIntoView({ block: 'start' }))
+    await page.mouse.move(5, 5); await wait(page, 300)
+    await shot(page, 'complex-kline-desktop')
   }
   await page.close()
 
@@ -130,6 +152,8 @@ const want = n => !process.env.ONLY || n.includes(process.env.ONLY)
 // ---------------- phone ----------------
 {
   const ctx = await browser.newContext({ viewport: { width: 400, height: 860 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
+  // like iPhone Safari: no element Fullscreen API → the CSS pseudo full screen must take over
+  await ctx.addInitScript(() => { Element.prototype.requestFullscreen = undefined; Element.prototype.webkitRequestFullscreen = undefined })
   const page = await ctx.newPage()
   page.on('pageerror', e => { failed = true; console.log('pageerror', e.message) })
   await page.goto(`${base}/trading/backtests/${rid}`)
@@ -137,17 +161,44 @@ const want = n => !process.env.ONLY || n.includes(process.env.ONLY)
   if (want('report-phone')) await shot(page, 'report-phone', true)
   await page.evaluate(() => document.querySelector('.tx')?.scrollIntoView({ block: 'start' }))
   await wait(page)
-  const hs = (await hits(page)).filter(h => h.n === 1)
+  let hs = (await hits(page)).filter(h => h.n === 1)
+  if (!hs.length) { // dense: tap a group first, it zooms in and splits
+    const g = (await hits(page)).sort((a, b) => a.n - b.n)[0]
+    if (g) { await page.touchscreen.tap(g.x, g.y); await wait(page, 800); if (want('zoom')) await shot(page, 'equity-group-zoomed-phone') }
+    hs = (await hits(page)).filter(h => h.n === 1)
+  }
   const one = hs[Math.floor(hs.length / 2)]
   if (one) {
     await page.touchscreen.tap(one.x, one.y); await wait(page, 600)
     if (want('tap')) await shot(page, 'equity-tap-phone')
+    // tap blank chart area → selection and pinned card cleared
+    const cb = await page.locator('.etc .cv').first().boundingBox()
+    if (cb && want('deselect')) {
+      await page.touchscreen.tap(cb.x + cb.width * 0.12, cb.y + 12); await wait(page, 500) // blank plot area (not the attribution logo)
+      await shot(page, 'equity-deselect-phone')
+      await page.touchscreen.tap(one.x, one.y); await wait(page, 600)
+    }
     await page.getByRole('button', { name: '在 K 线中查看' }).click().catch(() => {}); await wait(page, 1500)
     await page.evaluate(() => document.querySelector('.tx')?.scrollIntoView({ block: 'start' }))
     await wait(page, 300)
     if (want('kline')) await shot(page, 'kline-phone')
     await page.evaluate(() => window.scrollBy(0, 360)); await wait(page, 300)
     if (want('kline')) await shot(page, 'kline-card-phone')
+  }
+  // full screen (pseudo on this iPhone-like context), then close it with ✕
+  if (want('fullscreen')) {
+    await page.locator('.tx .bar button[aria-label="全屏"]').click(); await wait(page, 900)
+    await shot(page, 'fullscreen-phone')
+    await page.locator('.tx button[aria-label="关闭全屏"]').click(); await wait(page, 500)
+  }
+  // the scaled trade on the phone: open it from the list
+  const cid = await complexId(page)
+  if (cid && want('complex')) {
+    const row = page.locator(`tr[data-id="${cid}"]`)
+    await row.scrollIntoViewIfNeeded(); await row.tap(); await wait(page, 1500)
+    await page.evaluate(() => document.querySelector('.tx')?.scrollIntoView({ block: 'start' }))
+    await wait(page, 300)
+    await shot(page, 'complex-kline-phone', true)
   }
   // tab bar with 更多 open
   if (want('more')) {

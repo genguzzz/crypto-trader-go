@@ -72,7 +72,7 @@ const sideColor = (long: boolean) => (long ? C.up : C.down)
 
 /** Bubble radius (px): area ∝ notional, 7–16 px (phones a bit smaller). */
 export function radiusFor(notional: number, max: number, small = false) {
-  const lo = small ? 6 : 7, hi = small ? 13 : 16
+  const lo = small ? 3.6 : 5.5, hi = small ? 8 : 12
   return max > 0 ? lo + (hi - lo) * Math.sqrt(Math.max(0, notional) / max) : lo
 }
 
@@ -112,10 +112,10 @@ function bubble(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, 
   ctx.setLineDash(s.dashed ? [2.5, 2] : [])
   ctx.stroke(); ctx.setLineDash([])
   const corner = (glyph: string, color: string, bg: string, dx: number) => {
-    const br = Math.max(5.5, r * 0.42), bx = x + dx * r * 0.72, by = y + r * 0.72
+    const br = Math.max(r < 7 ? 3.2 : 4.2, r * 0.4), bx = x + dx * r * 0.72, by = y + r * 0.72
     ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fillStyle = bg; ctx.fill()
-    ctx.lineWidth = 1.5; ctx.strokeStyle = '#0e0e0e'; ctx.stroke()
-    ctx.fillStyle = color; ctx.font = `700 ${br * 1.25}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    ctx.lineWidth = 1; ctx.strokeStyle = '#0e0e0e'; ctx.stroke()
+    ctx.fillStyle = color; ctx.font = `700 ${br * 1.2}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
     ctx.fillText(glyph, bx, by + 0.5)
   }
   if (s.badge) corner(s.badge.g, s.badge.c, s.badge.bg, 1)
@@ -216,11 +216,6 @@ export class EquityTradeMarks extends Marks {
     const x = this.x(ts), y = this.series?.priceToCoordinate(this.valueAt(ts))
     return x == null || y == null ? null : { x, y }
   }
-  private entry(t: Trade) {
-    const ts = sec(t.openTs, this.toChart)
-    const x = this.x(ts), y = this.series?.priceToCoordinate(this.valueAt(ts))
-    return x == null || y == null ? null : { x, y }
-  }
 
   protected drawBg(target: CanvasRenderingTarget2D) {
     const t = this.trades.find(x => x.id === (this.hover || this.selected))
@@ -247,7 +242,7 @@ export class EquityTradeMarks extends Marks {
         if (!a || a.x < -40 || a.x > W + 40) continue
         sides[isOpen(t) || tradeWin(t) ? 'up' : 'dn'].push({ id: t.id, x: a.x, y: a.y, r: radiusFor(t.notional, this.maxN, this.small), ax: a.x, ay: a.y })
       }
-      const COL = this.small ? 26 : 32
+      const COL = this.small ? 18 : 26
       const place = (ay: number, r: number, up: boolean) => {
         let y = up ? ay - r - 8 : ay + r + 8
         if (y - r < 2) y = ay + r + 8 // keep inside the pane
@@ -279,7 +274,7 @@ export class EquityTradeMarks extends Marks {
           const ids = vis.map(n => n.id)
           const cx = vis.reduce((s2, n) => s2 + n.x, 0) / vis.length
           const ay = vis.reduce((s2, n) => s2 + (n.ay ?? 0), 0) / vis.length
-          const r = Math.min(this.small ? 14 : 17, (this.small ? 9 : 10) + 1.6 * Math.log2(vis.length))
+          const r = Math.min(this.small ? 9 : 13, (this.small ? 5.5 : 8) + (this.small ? 0.9 : 1.3) * Math.log2(vis.length))
           const cy = place(ay, r, side === 'up')
           const dim = this.dimmed != null && !ids.some(id => this.dimmed!.has(id))
           const ring = side === 'up' ? C.up : C.down
@@ -289,39 +284,50 @@ export class EquityTradeMarks extends Marks {
             const off = (top.length - 1 - k) * 3
             bubble(ctx, cx + off, cy - off, r, byId.get(n.id)!.instId, { ring, ringW: 2, dim })
           })
-          const label = String(vis.length), bw = Math.max(15, 6 + label.length * 6.5)
+          const fs = this.small ? 8 : 9.5, bh = this.small ? 11 : 13
+          const label = String(vis.length), bw = Math.max(bh, 5 + label.length * fs * 0.62)
           ctx.save()
           if (dim) ctx.globalAlpha = 0.28
           ctx.fillStyle = C.lime
-          roundRect(ctx, cx + r * 0.35, cy - r - 5, bw, 14, 7); ctx.fill()
+          roundRect(ctx, cx + r * 0.35, cy - r - 4, bw, bh, bh / 2); ctx.fill()
           ctx.lineWidth = 1.5; ctx.strokeStyle = '#0e0e0e'; ctx.stroke()
-          ctx.fillStyle = '#000'; ctx.font = '700 10px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-          ctx.fillText(label, cx + r * 0.35 + bw / 2, cy - r + 2.5)
+          ctx.fillStyle = '#000'; ctx.font = `700 ${fs}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+          ctx.fillText(label, cx + r * 0.35 + bw / 2, cy - r - 4 + bh / 2 + 0.5)
           ctx.restore()
           hits.push({ x: cx, y: cy, r: r + 4, ids })
         }
       }
-      // highlighted trades: entry bubble + connector + exit on top
+      // highlighted trades: every fill (open → adds → partial reduces → close) as its own node on the
+      // curve, sized by the fill's notional and linked in time order; the final node carries the coin
       for (const id of hl) {
         const t = byId.get(id)
         if (!t) continue
-        const a = this.anchor(t), e = this.entry(t)
-        if (!a) continue
-        const r = radiusFor(t.notional, this.maxN, this.small)
         const up = isOpen(t) || tradeWin(t)
-        let y = up ? a.y - r - 8 : a.y + r + 8
-        if (y - r < 2) y = a.y + r + 8
-        if (y + r > H - 2) y = a.y - r - 8
-        const n = { id, x: a.x, y, r, ax: a.x, ay: a.y }
-        if (e && !isOpen(t)) {
-          const er = r * 0.85
-          const ey = e.y - er - 8 < 2 ? e.y + er + 8 : e.y - er - 8
-          ctx.save(); ctx.setLineDash([4, 3]); ctx.lineWidth = 1.5; ctx.strokeStyle = alpha('lime', 0.8)
-          ctx.beginPath(); ctx.moveTo(e.x, ey); ctx.lineTo(n.x, n.y); ctx.stroke(); ctx.restore()
-          this.stem(ctx, { id, x: e.x, y: ey, r: er, ax: e.x, ay: e.y }, sideColor(t.posSide === 'long'), false)
-          bubble(ctx, e.x, ey, er, t.instId, { ring: sideColor(t.posSide === 'long'), ringW: 2, dashed: true, arrow: t.posSide === 'long' ? 'up' : 'down', glow: false })
-          hits.push({ x: e.x, y: ey, r: er, ids: [id] })
+        const fills = [...t.fills].sort((a, b) => a.ts - b.ts || a.id - b.id)
+        const pts: { x: number; y: number; r: number; ax: number; ay: number; f: Trade['fills'][number] | null }[] = []
+        for (const f of fills) {
+          const ts = sec(f.ts, this.toChart), x = this.x(ts), ay = this.series!.priceToCoordinate(this.valueAt(ts))
+          if (x == null || ay == null) continue
+          const r = radiusFor(f.qty * t.ctVal * f.px, this.maxN, this.small) * 0.85
+          pts.push({ x, y: place(ay, r, up), r, ax: x, ay, f })
         }
+        // the coin bubble sits at the close (or at the entry while the trade is open)
+        const a = this.anchor(t)
+        if (!a) continue
+        const R = radiusFor(t.notional, this.maxN, this.small)
+        const last = { x: a.x, y: place(a.y, R, up), r: R, ax: a.x, ay: a.y, f: null }
+        const chain = isOpen(t) ? [...pts, last] : [...pts.filter(q => q.f?.kind !== 'close'), last]
+        ctx.save(); ctx.setLineDash([4, 3]); ctx.lineWidth = 1.5; ctx.strokeStyle = alpha('lime', 0.85)
+        ctx.beginPath(); chain.forEach((q, k) => (k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.stroke(); ctx.restore()
+        for (const q of chain) {
+          if (!q.f) continue
+          const opening = q.f.kind === 'open' || q.f.kind === 'add'
+          const col = opening ? sideColor(t.posSide === 'long') : resultColor(t)
+          this.stem(ctx, { id, x: q.x, y: q.y, r: q.r, ax: q.ax, ay: q.ay }, col, false)
+          bubble(ctx, q.x, q.y, q.r, t.instId, { ring: col, ringW: 1.8, dashed: opening, icon: false, arrow: q.f.side === 'buy' ? 'up' : 'down', fill: opening ? alpha(t.posSide === 'long' ? 'up' : 'down', 0.2) : '#141414' })
+          hits.push({ x: q.x, y: q.y, r: q.r, ids: [id] })
+        }
+        const n = { id, x: last.x, y: last.y, r: R, ax: last.ax, ay: last.ay }
         this.stem(ctx, n, resultColor(t), false)
         this.exitBubble(ctx, t, n, true)
         hits.push({ x: n.x, y: n.y, r: n.r, ids: [id] })
@@ -402,18 +408,17 @@ export class CandleTradeMarks extends Marks {
           const x = this.x(this.toChart(f.ts)), y = s.priceToCoordinate(f.px)
           if (x == null || y == null || x < -30 || x > W + 30) continue
           const exit = f.kind === 'close' || f.kind === 'reduce'
-          const r = radiusFor(f.qty * t.ctVal * f.px, this.maxN, true) * (exit ? 1 : 0.9)
+          const r = radiusFor(f.qty * t.ctVal * f.px, this.maxN, this.small) * (exit ? 1 : 0.9)
           nodes.push({ id: t.id, x, y, r, t, f, exit })
         }
       }
       const hl = new Set([this.hover, this.selected].filter(Boolean))
-      // connector for highlighted trades: entry fill → exit fill
+      // connector for highlighted trades: every fill in time order (open → adds → reduces → close)
       for (const id of hl) {
-        const ns = nodes.filter(n => n.id === id)
-        const a = ns.find(n => !n.exit), b = [...ns].reverse().find(n => n.exit)
-        if (a && b) {
+        const ns = nodes.filter(n => n.id === id).sort((a, b) => a.f.ts - b.f.ts || a.f.id - b.f.id)
+        if (ns.length > 1) {
           ctx.save(); ctx.setLineDash([4, 3]); ctx.lineWidth = 1.5; ctx.strokeStyle = alpha('lime', 0.85)
-          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.restore()
+          ctx.beginPath(); ns.forEach((n, k) => (k ? ctx.lineTo(n.x, n.y) : ctx.moveTo(n.x, n.y))); ctx.stroke(); ctx.restore()
         }
       }
       const hits: Hit[] = []

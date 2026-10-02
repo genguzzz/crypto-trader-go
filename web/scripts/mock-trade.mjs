@@ -330,7 +330,7 @@ function genTrades(acc, insts, n, from, to, opts = {}) {
   for (let k = 0; k < n * 40 && trades.length < n; k++) {
     const instId = insts[k % insts.length], b = bars[instId]
     const gap = (span / per) * (0.15 + rnd() * 1.1)
-    const openTs = Math.floor(((cursor[instId] ?? from) + gap * (cursor[instId] ? 0.75 : rnd() * 0.5)) / HOUR) * HOUR
+    const openTs = Math.floor(((cursor[instId] ?? from) + gap * (cursor[instId] ? 1.25 : rnd() * 0.5)) / HOUR) * HOUR
     if (openTs >= to - HOUR) continue
     const hold = Math.max(1, Math.round((opts.hold || 18) * (0.2 + rnd() * 1.8)))
     const openIdx = Math.floor((openTs - b[0][0]) / HOUR)
@@ -372,6 +372,7 @@ function genTrades(acc, insts, n, from, to, opts = {}) {
   trades.sort((a, b2) => a.openTs - b2.openTs)
   trades.forEach((t, i) => (t.id = 100 * acc.id + i + 1))
   db.trades[acc.id] = trades
+  if (opts.complex) makeComplex(trades, bars)
   // hourly equity consistent with the trades
   const eq = []
   const closes = trades.filter(t => t.closeTs).sort((a, b2) => a.closeTs - b2.closeTs)
@@ -389,19 +390,49 @@ function genTrades(acc, insts, n, from, to, opts = {}) {
   }
   db.equity[acc.id] = eq
 }
+/**
+ * Turn the longest closed trade into a scaled one: open, 2 adds, 2 partial reduces, final close —
+ * the round trip stays one trade until the position is flat (internal/trade trades.go).
+ */
+function makeComplex(trades, bars) {
+  const t = trades.filter(x => x.closeTs && x.exitKind !== 'liquidation').sort((a, b) => (b.closeTs - b.openTs) - (a.closeTs - a.openTs))[0]
+  if (!t) return
+  const b = bars[t.instId], at = ts => Math.max(0, Math.min(b.length - 1, Math.floor((ts - b[0][0]) / HOUR)))
+  const i0 = at(t.openTs), i1 = Math.min(b.length - 1, Math.max(at(t.closeTs), i0 + 10))
+  const idx = [i0, i0 + 1, i0 + 2, Math.round(i0 + (i1 - i0) * 0.55), Math.round(i0 + (i1 - i0) * 0.75), i1]
+  const q = t.qty, ct = t.ctVal, dir = t.posSide === 'long' ? 1 : -1
+  const buy = t.posSide === 'long' ? 'buy' : 'sell', sell = t.posSide === 'long' ? 'sell' : 'buy'
+  const plan = [['open', buy, q], ['add', buy, q * 0.5], ['add', buy, q * 0.5], ['reduce', sell, q * 0.5], ['reduce', sell, q * 0.5], ['close', sell, q]]
+  let pos = 0, cost = 0, pnl = 0, fees = 0, fid = t.fills[0].id
+  t.fills = plan.map(([kind, side, qq], k) => {
+    const px = b[idx[k]][4], fee = qq * ct * px * 0.0005
+    fees += fee
+    let fp = 0
+    if (kind === 'open' || kind === 'add') { cost += qq * px; pos += qq } else { const avg = cost / pos; fp = dir * (px - avg) * qq * ct; pnl += fp; cost -= avg * qq; pos -= qq }
+    return { id: fid + k, ts: b[idx[k]][0], side, qty: +qq.toFixed(4), px, fee: +fee.toFixed(4), pnl: +fp.toFixed(4), kind, orderType: kind === 'reduce' ? 'limit' : 'market' }
+  })
+  const opens = t.fills.filter(f => f.kind === 'open' || f.kind === 'add'), exits = t.fills.filter(f => f.kind === 'reduce' || f.kind === 'close')
+  const vw = xs => xs.reduce((s2, f) => s2 + f.px * f.qty, 0) / xs.reduce((s2, f) => s2 + f.qty, 0)
+  t.closeTs = b[i1][0]
+  t.qty = +(q * 2).toFixed(4)
+  t.entryPx = vw(opens); t.exitPx = vw(exits)
+  t.notional = +(t.qty * ct * t.entryPx).toFixed(2); t.margin = +(t.notional / t.leverage).toFixed(2)
+  t.pnl = +pnl.toFixed(4); t.fees = +fees.toFixed(4); t.net = +(pnl - fees + t.funding).toFixed(4); t.returnPct = +(t.net / t.margin).toFixed(4)
+  t.exitKind = 'signal'; t.openReason = '分批建仓：开仓后两次加仓'; t.closeReason = '两次减仓锁定利润后信号平仓'
+}
 {
   const byAcc = id => db.accounts.find(a => a.id === id)
   const a1 = byAcc(1), a2 = byAcc(2), a3 = byAcc(3)
   genTrades(a1, ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP'], 24, T0 - 21 * DAY, T0, { size: 2500, openLast: true, instanceId: 21 })
   genTrades(a2, ['DOGE-USDT-SWAP', 'SUI-USDT-SWAP', 'PEPE-USDT-SWAP', 'LINK-USDT-SWAP', 'AVAX-USDT-SWAP'], 18, T0 - 9 * DAY, T0, { size: 600, ai: true, openLast: true, instanceId: 23, hold: 8 })
-  genTrades(a3, ['BTC-USDT-SWAP', 'ETH-USDT-SWAP'], 32, a3.from, a3.to, { size: 3000, hold: 40, instanceId: 24 })
+  genTrades(a3, ['BTC-USDT-SWAP', 'ETH-USDT-SWAP'], 32, a3.from, a3.to, { size: 3000, hold: 40, instanceId: 24, complex: true })
   // dense fixture: a 1H pool strategy over 90 days, 253 round trips on 8 instruments
   const from = T0 - 92 * DAY, to = T0 - 2 * DAY
   const a5 = addAccount({ id: 5, name: '池子反转 · 回测（253 笔）', mode: 'backtest', deposit: 20000, from, to, createdAt: T0 - DAY })
   addInstance(5, '3c4d5e6f7a8b', { state: 'done', heartbeat: T0 - DAY, name: 'pool-reversal', universe: { screener: { rule: 'trend-oi-confirm', side: 'long', top: 10, refresh: '1H' } } })
   a5.backtest = { state: 'done', progress: 1, clock: to, startedAt: T0 - DAY, finishedAt: T0 - DAY + 95_000 }
   genTrades(a5, ['SOL-USDT-SWAP', 'DOGE-USDT-SWAP', 'SUI-USDT-SWAP', 'ARB-USDT-SWAP', 'WIF-USDT-SWAP', 'ORDI-USDT-SWAP', 'TIA-USDT-SWAP', 'FIL-USDT-SWAP'], 253, from, to,
-    { size: 1800, hold: 6, longBias: 0.75, instanceId: 25, reasons: ['残差反转：1H 超跌 2.1σ，多头分 82', '残差反转：1H 超跌 1.8σ，多头分 77', '残差反转：1H 超跌 2.6σ，多头分 91'] })
+    { size: 1800, hold: 6, longBias: 0.75, instanceId: 25, complex: true, reasons: ['残差反转：1H 超跌 2.1σ，多头分 82', '残差反转：1H 超跌 1.8σ，多头分 77', '残差反转：1H 超跌 2.6σ，多头分 91'] })
   for (const a of db.accounts) refreshDerived(a)
 }
 
@@ -520,7 +551,8 @@ async function mockApi(req, res, url) {
     if (!inst) return send(res, 400, { error: 'instId required' })
     if (!rows) return ok(res, { instId: inst, bar: '1H', from: 0, to: 0, rows: [] })
     const span = rows[rows.length - 1][0] - rows[0][0]
-    const bar = q.get('bar') || (span / HOUR <= 1500 ? '1H' : '4H')
+    let bar = q.get('bar') || (span / HOUR <= 1500 ? '1H' : '4H')
+    if (['1m', '5m', '15m'].includes(bar)) bar = '1H' // the fixture has hourly data only (like the server's 1m-retention fallback)
     const out = bar === '4H' ? aggregate(rows, 4 * HOUR) : bar === '1D' ? aggregate(rows, DAY) : rows
     return ok(res, { instId: inst, bar, from: rows[0][0], to: rows[rows.length - 1][0] + HOUR, rows: out })
   }
