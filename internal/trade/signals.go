@@ -63,7 +63,10 @@ func (s *Service) Submit(ctx context.Context, sg Signal) (int64, error) {
 		cancel()
 	}
 	reason := ""
-	_, specOK := b.market().Spec(sg.InstID)
+	spec, specOK := b.market().Spec(sg.InstID)
+	if specOK {
+		sg.StopLoss, sg.TakeProfit = roundTick(sg.StopLoss, spec.TickSz), roundTick(sg.TakeProfit, spec.TickSz)
+	}
 	switch {
 	case ri == nil || inst.State != StRunning:
 		reason = fmt.Sprintf("实例未运行（%s）", inst.State)
@@ -245,6 +248,9 @@ func (s *Service) confirm(ctx context.Context, b *book, inter Interactor, sg Sig
 		def = "execute"
 	}
 	ev := signalEvent(sg, acc, "待确认 · "+actionName(sg.Action)+" "+shortInst(sg.InstID))
+	if est := s.previewSize(b, sg); est != "" {
+		ev.Lines = append(ev.Lines, est)
+	}
 	if aiNote != "" {
 		ev.Lines = append(ev.Lines, "AI："+aiNote)
 	}
@@ -416,4 +422,35 @@ func (s *Service) ClosePositions(ctx context.Context, accountID int64, instID st
 	}
 	s.changed(accountID, "order")
 	return n, nil
+}
+
+// previewSize sizes an opening signal at its reference price without placing anything, so a
+// confirmation shows what "执行" would do.
+func (s *Service) previewSize(b *book, sg Signal) string {
+	if (sg.Action != OpenLong && sg.Action != OpenShort) || sg.Price <= 0 {
+		return ""
+	}
+	spec, ok := b.market().Spec(sg.InstID)
+	if !ok {
+		return ""
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	lev := sg.Leverage
+	if p := b.pos[posKey{sg.InstanceID, sg.InstID}]; p != nil {
+		lev = p.Leverage
+	}
+	out, err := size(sizeIn{Equity: b.equity(), Cash: b.cash(), InstMargin: b.instMargin(sg.InstID), Entry: sg.Price, Stop: sg.StopLoss,
+		Long: sg.Action == OpenLong, Strength: sg.Strength, Scale: 1, Lever: lev, Spec: spec, Limits: b.acc.Limits, MMR: s.opts.MaintMarginRate})
+	if err != nil {
+		return "预估：" + err.Error()
+	}
+	return fmt.Sprintf("预估 %s 张 ≈ %s USDT · %.2fx · 保证金约 %s USDT", fmtQty(out.Qty), fmtUSDT(out.Qty*spec.CtVal*sg.Price), out.Lever, fmtUSDT(out.Margin))
+}
+
+func roundTick(px, tick float64) float64 {
+	if tick <= 0 || px <= 0 {
+		return px
+	}
+	return math.Round(math.Round(px/tick)*tick*1e10) / 1e10
 }
