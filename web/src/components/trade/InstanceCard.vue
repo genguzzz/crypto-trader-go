@@ -25,7 +25,7 @@ const ruleName = (id: string) => store.meta?.rules.find(r => r.id === id)?.name 
     </div>
     <div v-if="Object.keys(inst.params || {}).length" class="pa">{{ Object.entries(inst.params).map(([k, v]) => `${k}=${v}`).join('  ') }}</div>
     <div class="f">
-      <span class="hb" :title="'最近一次处理完事件'">{{ inst.heartbeat ? `心跳 ${ago(inst.heartbeat)}前` : '尚未运行' }}</span>
+      <span class="hb" :title="'最近一次处理完事件'">{{ inst.heartbeat ? `心跳 ${ago(inst.heartbeat)}前` : inst.state === 'created' ? '尚未运行' : '' }}</span>
       <span v-if="!readonly" class="acts">
         <button v-if="inst.state === 'created' || inst.state === 'stopped'" type="button" :disabled="busy" title="启动" @click="emit('act', 'start')"><Play :size="13" />启动</button>
         <button v-if="inst.state === 'paused' || inst.state === 'faulted'" type="button" :disabled="busy" title="恢复" @click="emit('act', 'resume')"><RotateCw :size="13" />恢复</button>
