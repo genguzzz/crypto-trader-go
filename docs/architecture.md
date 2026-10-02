@@ -94,6 +94,7 @@ internal/features/     fact panel
 internal/rules/        rules and scoring
 internal/track/        track-record statistics
 internal/alerts/       monitoring rules (types registered in conditions.go), delivery channels (masking/sending/retries), history
+internal/trade/        paper-trading order layer (docs/trading-design.md): accounts, instances, signals, risk/sizing, SimBroker, backtest replayer, /api/v1/trade/*; trade/mdlive adapts market.Engine (market/tradeapi.go)
 internal/devapi/       external access: API keys / tokens, rate limits, endpoint registry → open REST API, OpenAPI document, MCP server
 internal/api/          HTTP routes, SSE, icon proxy, gzip
 web/                   frontend (src/views pages, src/components components, embed.go embeds the build)
