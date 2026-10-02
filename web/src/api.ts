@@ -93,7 +93,7 @@ export interface DevEndpoint { name: string; path: string; summary: string; desc
 export interface DevEndpoints { restBase: string; mcpPath: string; endpoints: DevEndpoint[]; limits: { defaultRatePerMin: number; maxRatePerMin: number; maxBurst: number } }
 export interface DevLog { ts: number; keyId: number; keyName: string; prefix: string; via: 'rest' | 'mcp'; endpoint: string; status: number; ms: number; cost: number; error?: string }
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+export async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, init)
   const body = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error((body as any).error || `HTTP ${r.status}`)

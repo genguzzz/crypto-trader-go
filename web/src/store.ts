@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { api, type Meta, type Snapshot } from './api'
+import { interactApi } from './tradeApi'
 
 // Until 2026-09-28 the automatically chosen default rule was saved as if picked by hand, pinning
 // every browser to the old default (trend-oi-confirm). Drop that once; only explicit picks persist now.
@@ -18,6 +19,11 @@ export const store = reactive({
   connected: false,
   lastEventAt: 0,
   error: '',
+  // trading: bumped by SSE `trade` / `interact` events so visible pages refetch
+  tradeSeq: 0,
+  tradeAccount: 0, // account id of the latest trade event (0 = unknown / all)
+  interactSeq: 0,
+  openPrompts: 0, // open confirmation prompts (navigation badge)
 })
 
 export function setRule(id: string) {
@@ -74,7 +80,21 @@ export function startStream() {
     store.lastEventAt = Date.now()
     store.prices = JSON.parse(ev.data)
   })
+  es.addEventListener('trade', (ev: MessageEvent) => {
+    let id = 0
+    try { id = Number(JSON.parse(ev.data)?.accountId) || 0 } catch { /* malformed: refetch everything */ }
+    store.tradeAccount = id
+    store.tradeSeq++
+  })
+  es.addEventListener('interact', () => { store.interactSeq++; refreshPrompts() })
   es.onerror = () => { store.connected = false }
+  refreshPrompts()
+  setInterval(() => { if (!document.hidden) refreshPrompts() }, 30_000)
   // Fallback poll in case a proxy buffers SSE.
   setInterval(() => { if (Date.now() - store.lastEventAt > 70_000) refreshUniverse() }, 30_000)
+}
+
+/** Open confirmation count for the navigation badge (silently 0 while the endpoint is unavailable). */
+export async function refreshPrompts() {
+  try { store.openPrompts = (await interactApi.prompts('open')).length } catch { /* endpoint not deployed yet */ }
 }
