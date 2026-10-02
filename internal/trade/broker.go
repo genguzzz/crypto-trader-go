@@ -198,6 +198,7 @@ func (b *book) afterFill(o *Order, f Fill, closes bool, kind string) {
 		for _, x := range b.ordersFor(k, func(x *Order) bool { return x.ReduceOnly }) {
 			b.cancel(b.s.db, x, "持仓已平", now)
 		}
+		b.s.recordAIOutcome(o.InstanceID, o.InstID, f, kind)
 	case o.ReduceOnly:
 		p := b.pos[k]
 		for _, x := range b.ordersFor(k, isProtect) {
