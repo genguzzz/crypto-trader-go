@@ -4,7 +4,7 @@ The principles and measured facts that the implementation relies on. Earlier pla
 
 ## Principles
 
-- **Research tool, not a trading bot.** Public OKX market data only; no orders, ever, without a separate explicitly approved project. Account access, if added, is read-only and needs the owner's approval.
+- **Research tool, not a trading bot.** Public OKX market data only; no real orders without a separate explicitly approved project. Simulated paper trading on recorded and live public data was approved on 2026-10-02 ([trading design](trading-design.md)). Account access, if added, is read-only and needs the owner's approval.
 - **Facts, rules, track record.** The fact panel is direction-free. A score is a user-defined rule's rank within the pool — not a probability or advice — and only the out-of-sample track record can show a rule is useful. Every rule is labeled "unvalidated" until it earns that.
 - **Long and short are independent.** They are not complements of 100, and a weak long score is not a short signal.
 - **Unknown is not zero.** Missing inputs leave a score unrated; missing data shows "—" or `unknown`, never 0 or "safe".
