@@ -28,8 +28,8 @@ export const alpha = (k: keyof typeof rgb, a: number) => `rgba(${rgb[k]},${a})`
  */
 export const LIQ_TIERS = [5, 10, 25, 50, 100]
 const liqRamp = {
-  long: ['#7b2a40', '#a13451', '#ca3f64', '#d56583', '#e090a5'],
-  short: ['#1b6734', '#208541', '#25a750', '#51b973', '#81cc9a'],
+  long: ['#5a1a2c', '#8f2a47', '#c93d63', '#e9789a', '#fbbccd'], // dark → light, evenly spaced so tiers read apart
+  short: ['#124a26', '#1d7a3d', '#2bb257', '#6fd796', '#b9f0cc'],
 }
 /** Colour of a leverage tier on one side (a contract below 5x max leverage takes the 5x step). */
 export const liqTierColor = (lever: number, long: boolean) => {
