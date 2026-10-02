@@ -17,7 +17,7 @@ func fmtPx(x float64) string {
 	}
 	d := 8 - int(math.Floor(math.Log10(math.Abs(x)))) - 1
 	d = max(0, min(d, 10))
-	return strconv.FormatFloat(x, 'f', d, 64)
+	return trimNum(strconv.FormatFloat(x, 'f', d, 64))
 }
 
 func trimNum(s string) string {
