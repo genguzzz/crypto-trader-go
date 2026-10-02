@@ -143,7 +143,7 @@ func (g *Gate) Proposals(state string, limit int) ([]Proposal, error) {
 }
 
 // ErrNotPending is returned when deciding a proposal that was already decided.
-var ErrNotPending = errors.New("proposal is not pending")
+var ErrNotPending = errors.New("该申请已处理")
 
 // ApproveProposal decides a pending proposal. Approval calls ApplyParams first; if that fails the
 // proposal stays pending and the error is returned.

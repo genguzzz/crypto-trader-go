@@ -86,7 +86,7 @@ type reflectDecision struct {
 }
 
 // ErrNoDecisions is returned by Reflect when the strategy has no reviewed signals yet.
-var ErrNoDecisions = errors.New("no AI decisions for this strategy yet")
+var ErrNoDecisions = errors.New("该策略还没有 AI 决策记录")
 
 // Reflect asks the worker to distil the last ReflectN decisions of the strategy and their outcomes
 // into a new version of its experience document.

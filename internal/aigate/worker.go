@@ -28,10 +28,10 @@ import (
 const maxLine = 16 << 20 // one message; review requests carry the full context pack
 
 // ErrUnavailable is returned when no ready worker is connected or no credential is configured.
-var ErrUnavailable = errors.New("AI reviewer unavailable")
+var ErrUnavailable = errors.New("AI 审核不可用（未授权、worker 未连接或代理不可用）")
 
 // ErrWorkerGone is returned for calls that were in flight when the worker disconnected.
-var ErrWorkerGone = errors.New("AI worker disconnected")
+var ErrWorkerGone = errors.New("AI worker 已断开")
 
 type inbound struct {
 	Type       string          `json:"type"`
