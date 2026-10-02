@@ -616,7 +616,7 @@ h3 { display: flex; justify-content: space-between; align-items: center; flex-wr
 .mapbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; font-size: var(--fs-xs); }
 .mapbar .mb-k { color: var(--text-3); }
 .mapbar :deep(.fchip) { height: 22px; padding: 0 8px; font-size: var(--fs-xs); }
-.tsw { display: inline-flex; width: 14px; height: 9px; border-radius: 2px; overflow: hidden; } .tsw em { flex: 1; }
+.tsw { display: inline-flex; width: 18px; height: 11px; border-radius: 3px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,.12); } .tsw em { flex: 1; }
 .tiers :deep(.fchip[data-state="off"] .tsw) { opacity: .35; }
 .map-tip b { font-weight: 600; } .map-tip b.up { color: var(--up); } .map-tip b.down { color: var(--down); }
 .axis-lbl .up { color: var(--up); } .axis-lbl .down { color: var(--down); }
