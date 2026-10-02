@@ -7,7 +7,8 @@ RULE = "resid-reversal"
 
 class PoolReversal(Strategy):
     """Buys the pool's most oversold coins by the beta-neutral residual reversal rule and exits after a
-    fixed holding time (or at the ATR stop). Unvalidated: the rule's track record decides."""
+    fixed holding time, at the ATR stop, or at the optional ATR target. Unvalidated: the rule's track
+    record decides."""
 
     name = "pool-reversal"
     description = "Dynamic pool: long the top residual-reversal names on 1H, exit after a fixed hold."
@@ -17,6 +18,8 @@ class PoolReversal(Strategy):
     min_score = Param(75.0, min=50, max=100, step=1, desc="Minimum long score (0-100) to enter", ai_tunable=True)
     hold_hours = Param(6, min=1, max=48, step=1, desc="Close after this many hours", ai_tunable=True)
     stop_atr = Param(2.5, min=0.5, max=6, step=0.25, desc="Stop distance in ATR(14)", ai_tunable=True)
+    target_atr = Param(0.0, min=0, max=12, step=0.25, desc="Take-profit distance in ATR(14); 0 = no target, exit by time",
+                       ai_tunable=True)
     max_new = Param(2, min=1, max=10, step=1, desc="Max new entries per bar")
 
     def on_universe_change(self, ctx, added, removed):
@@ -41,6 +44,7 @@ class PoolReversal(Strategy):
         if math.isnan(long_score) or long_score < self.min_score:
             return out
         ctx.state["entries"] += 1
-        out.append(Signal.open_long(bar.inst, stop_loss=f"{self.stop_atr}atr",
+        target = f"{self.target_atr}atr" if self.target_atr > 0 else None
+        out.append(Signal.open_long(bar.inst, stop_loss=f"{self.stop_atr}atr", take_profit=target,
                                     reason=f"{RULE} long score {long_score:.1f} >= {self.min_score:g}"))
         return out
