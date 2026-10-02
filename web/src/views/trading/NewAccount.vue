@@ -25,7 +25,7 @@ const today = day(Date.now())
 const form = reactive({
   name: '',
   mode: 'live' as Mode,
-  from: day(Date.now() - 90 * DAY),
+  from: day(Date.now() - 30 * DAY),
   to: day(Date.now() - DAY),
   deposit: 10_000,
   limits: defaultLimits() as Limits,
@@ -131,7 +131,7 @@ function setMode(m: string) {
 }
 if (!form.name) form.name = defaultName()
 const rangePreset = computed({
-  get: () => { const n = Math.round((range.value.to - range.value.from) / DAY); return form.to === day(Date.now() - DAY) && [30, 90, 180, 365].includes(n) ? n : 0 },
+  get: () => { const n = Math.round((range.value.to - range.value.from) / DAY); return form.to === day(Date.now() - DAY) && [7, 30, 90, 365].includes(n) ? n : 0 },
   set: (n: number) => { if (n) { const auto = form.name === defaultName(); form.to = day(Date.now() - DAY); form.from = day(Date.now() - n * DAY); if (auto) form.name = defaultName() } },
 })
 
@@ -148,7 +148,8 @@ async function create() {
     progress.value = '创建账户…'
     const a = await tradeApi.createAccount({
       name: form.name.trim(), mode: form.mode, deposit: form.deposit, limits: form.limits,
-      ...(form.mode === 'backtest' ? { from: range.value.from, to: range.value.to } : {}),
+      // the server rejects an end after now: a range ending today stops at the last full minute
+      ...(form.mode === 'backtest' ? { from: range.value.from, to: Math.min(range.value.to, Date.now() - 60_000) } : {}),
     })
     created = true
     for (const [i, d] of drafts.value.entries()) {
@@ -216,7 +217,7 @@ const modes = [
       </SettingRow>
       <SettingRow v-if="form.mode === 'backtest'" label="回测区间" desc="UTC+8 自然日，含首尾两天" :error="err1.range">
         <div class="line">
-          <Segmented v-model="rangePreset" size="sm" aria-label="区间预设" :options="[{ value: 30, label: '30 天' }, { value: 90, label: '90 天' }, { value: 180, label: '180 天' }, { value: 365, label: '1 年' }]" />
+          <Segmented v-model="rangePreset" size="sm" aria-label="区间预设" :options="[{ value: 7, label: '7 天' }, { value: 30, label: '30 天' }, { value: 90, label: '90 天' }, { value: 365, label: '1 年' }]" />
           <span class="dates"><input v-model="form.from" type="date" :max="today" aria-label="开始日期" /><span class="muted">→</span><input v-model="form.to" type="date" :max="today" aria-label="结束日期" /></span>
         </div>
       </SettingRow>

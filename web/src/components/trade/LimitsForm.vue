@@ -25,7 +25,7 @@ const ch = (k: keyof Limits) => !!props.base && props.base[k] !== l.value[k]
       </InfoTip>
     </div>
     <SettingRow label="最大持仓数" desc="同时持有的合约个数" for-id="l-mp" :changed="ch('maxPositions')" :error="e.maxPositions">
-      <NumInput id="l-mp" v-model="l.maxPositions" unit="个" :min="1" :max="50" :step="1" />
+      <NumInput id="l-mp" v-model="l.maxPositions" unit="个" :min="1" :max="100" :step="1" />
     </SettingRow>
     <SettingRow label="最大杠杆" desc="逐仓杠杆上限，信号请求更高时按此截断" for-id="l-lv" :changed="ch('maxLeverage')" :error="e.maxLeverage">
       <div class="line">
@@ -36,14 +36,14 @@ const ch = (k: keyof Limits) => !!props.base && props.base[k] !== l.value[k]
     <SettingRow label="单笔风险" desc="止损触发时亏掉的权益比例（强度 1）" for-id="l-rk" :changed="ch('riskPct')" :error="e.riskPct">
       <div class="line">
         <Segmented :model-value="l.riskPct" size="sm" aria-label="单笔风险预设" :options="[0.005, 0.01, 0.02].map(v => ({ value: v, label: v * 100 + '%' }))" @update:model-value="v => (l.riskPct = v)" />
-        <NumInput id="l-rk" v-model="l.riskPct" unit="%" :scale="100" :min="0.01" :max="10" width="56px" />
+        <NumInput id="l-rk" v-model="l.riskPct" unit="%" :scale="100" :min="0.01" :max="20" width="56px" />
       </div>
     </SettingRow>
     <SettingRow label="单合约上限" desc="一个合约的保证金占权益比例" for-id="l-mi" :changed="ch('maxInstPct')" :error="e.maxInstPct">
       <NumInput id="l-mi" v-model="l.maxInstPct" unit="%" :scale="100" :min="1" :max="100" />
     </SettingRow>
-    <SettingRow label="日亏损熔断" desc="当日亏损达到权益比例后停止开仓，次日恢复" for-id="l-dl" :changed="ch('dailyLossPct')" :error="e.dailyLossPct">
-      <NumInput id="l-dl" v-model="l.dailyLossPct" unit="%" :scale="100" :min="0.1" :max="100" />
+    <SettingRow label="日亏损熔断" desc="当日亏损达到权益比例后停止开仓，次日恢复；0 = 不熔断" for-id="l-dl" :changed="ch('dailyLossPct')" :error="e.dailyLossPct">
+      <NumInput id="l-dl" v-model="l.dailyLossPct" unit="%" :scale="100" :min="0" :max="100" />
     </SettingRow>
     <SettingRow label="冷却时间" desc="平仓后多久才能再开同一合约" for-id="l-cd" :changed="ch('cooldownMin')" :error="e.cooldownMin">
       <NumInput id="l-cd" v-model="l.cooldownMin" unit="分钟" :min="0" :step="1" />

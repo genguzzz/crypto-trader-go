@@ -6,7 +6,8 @@
 //   cd web && npm run build && node scripts/mock-trade.mjs
 //   PORT=5180 BACKEND=http://127.0.0.1:8686 DIST=dist node scripts/mock-trade.mjs
 //
-// When the backend is unreachable, a few core endpoints (meta, universe, catalog, settings, stream…)
+// PASSTHROUGH=1 BACKEND=http://127.0.0.1:8787 node scripts/mock-trade.mjs serves the fresh build
+// against a real server instead. When the backend is unreachable, a few core endpoints (meta, universe, catalog, settings, stream…)
 // fall back to small stubs so the app shell still renders. State-changing requests under the three
 // prefixes require a non-empty X-CTG-Admin header (any value), like the real server.
 // With `npm run dev`, point Vite at the mock instead: CTG_API=http://127.0.0.1:5180 npm run dev.
@@ -20,6 +21,9 @@ const here = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 5180)
 const BACKEND = new URL(process.env.BACKEND || 'http://127.0.0.1:8686')
 const DIST = process.env.DIST || join(here, '..', 'dist')
+// PASSTHROUGH=1: no fake data — serve this checkout's web/dist and proxy every /api call to BACKEND
+// (UI work against a real server whose embedded web build is older).
+const PASSTHROUGH = process.env.PASSTHROUGH === '1'
 
 // ---------- deterministic randomness (stable screenshots) ----------
 let seed = 42
@@ -83,8 +87,16 @@ const verById = id => VERSIONS.find(v => v.id === id)
 const LIMITS = { maxPositions: 5, maxLeverage: 5, riskPct: 0.01, maxInstPct: 0.3, dailyLossPct: 0.05, slippageBp: 10, cooldownMin: 30, takerFeeBp: 5, makerFeeBp: 2, requireStop: true, confirm: 'off', confirmTimeoutS: 120, confirmDefault: 'skip' }
 
 // ---------- mutable state ----------
-const db = { accounts: [], instances: [], positions: [], orders: [], fills: [], signals: [], ledger: [], equity: {}, reports: {}, prompts: [], decisions: [], proposals: [], ids: { acc: 10, inst: 20, ord: 1000, fill: 5000, sig: 9000, led: 20000, dec: 300, prop: 40 } }
-const ai = { configured: true, kind: 'oauth_token', masked: '••••x7Qa', workerOnline: true, lastCallAt: T0 - 4 * MIN, lastError: '', costToday: 0.84 }
+const db = { accounts: [], instances: [], positions: [], orders: [], fills: [], signals: [], ledger: [], equity: {}, prompts: [], decisions: [], proposals: [], ids: { acc: 10, inst: 20, ord: 1000, fill: 5000, sig: 9000, led: 20000, dec: 300, prop: 40 } }
+// internal/aigate Status (PROXY_DOWN=1 simulates the worker's proxy failing)
+const PROXY_DOWN = process.env.PROXY_DOWN === '1'
+const ai = {
+  configured: true, kind: 'oauth_token', masked: '••••x7Qa', storage: 'encrypted', updatedAt: T0 - 5 * DAY, model: 'claude-sonnet-4-5',
+  workerOnline: true, workerReady: !PROXY_DOWN, proxyOk: !PROXY_DOWN, proxyError: PROXY_DOWN ? 'CONNECT 127.0.0.1:7080: connection refused' : undefined,
+  worker: { version: '1', sdk: '0.1.4', cli: '2.1.0', ready: !PROXY_DOWN, proxyOk: !PROXY_DOWN, connectedAt: T0 - HOUR },
+  available: !PROXY_DOWN, lastCallAt: T0 - 4 * MIN, costToday: 0.84, callsToday: 12, pendingProposals: 1,
+}
+const memory = { 'alt-momentum': [{ strategy: 'alt-momentum', version: 2, ts: T0 - DAY, doc: '1. 4h 涨幅超过 15% 后的突破信号胜率明显偏低（7 次中 2 次盈利），这类信号应缩小仓位或跳过。\n2. 点差 > 8bp 的小币滑点经常吃掉一半以上的预期收益。\n3. BTC 同步走强时的突破更可靠；BTC 走弱时山寨突破多数在 3 根 K 线内回落。', source: 'reflect', throughDecision: 309, decisions: 40, model: 'claude-sonnet-4-5', costUsd: 0.12, auditId: 310 }] }
 // internal/interact ConfigView
 const ALL_KINDS = [['signal', '信号'], ['order', '下单'], ['fill', '成交'], ['cancel', '撤单'], ['stop', '止损'], ['target', '止盈'], ['liquidation', '强平'], ['reject', '拒单'], ['breaker', '熔断'], ['instance', '策略实例'], ['ai', 'AI'], ['daily', '日报']].map(([kind, label]) => ({ kind, label }))
 const ix = {
@@ -139,7 +151,7 @@ function genSignals(acc, insts, n, span) {
     const px = PX[instId] * (1 + 0.03 * gauss())
     const ts = now() - Math.floor(rnd() * span / HOUR) * HOUR
     const opening = action.startsWith('open')
-    db.signals.push({ id: ++db.ids.sig, instanceId: inst.id, accountId: acc.id, instId, action, strength: opening ? +(0.5 + rnd() * 0.5).toFixed(2) : 1, stopLoss: opening ? +(px * (action === 'open_long' ? 0.96 : 1.04)).toPrecision(6) : undefined, takeProfit: opening ? +(px * (action === 'open_long' ? 1.08 : 0.92)).toPrecision(6) : undefined, reason: pick(REASONS[action]), ts, recvTs: ts + 1200, price: +px.toPrecision(6), outcome, outcomeReason: why || undefined, configVersion: inst.configVersion, aiDecisionId: inst.exec === 'ai' ? db.ids.dec + 1 + (i % 8) : undefined })
+    db.signals.push({ id: ++db.ids.sig, instanceId: inst.id, accountId: acc.id, instId, action, strength: opening ? +(0.5 + rnd() * 0.5).toFixed(2) : 1, stopLoss: opening ? +(px * (action === 'open_long' ? 0.96 : 1.04)).toPrecision(6) : undefined, takeProfit: opening ? +(px * (action === 'open_long' ? 1.08 : 0.92)).toPrecision(6) : undefined, reason: pick(REASONS[action]), ts, recvTs: ts + 1200, price: +px.toPrecision(6), outcome, outcomeReason: why || undefined, configVersion: inst.configVersion, aiDecisionId: undefined })
   }
 }
 function genFills(acc, insts, n, span) {
@@ -177,6 +189,7 @@ function refreshDerived(acc) {
   acc.instances = db.instances.filter(i => i.accountId === acc.id).length
 }
 function makeReport(acc) {
+  // internal/trade Report: USDT amounts, ratios as fractions, nullable sharpe / winRate / profitFactor
   const series = db.equity[acc.id] || []
   let peak = -Infinity, mdd = 0
   for (const [, e] of series) { peak = Math.max(peak, e); mdd = Math.max(mdd, 1 - e / peak) }
@@ -185,20 +198,29 @@ function makeReport(acc) {
   const wins = closes.filter(f => f.realizedPnl > 0)
   const fees = fills.reduce((s, f) => s + f.fee, 0)
   const funding = db.ledger.filter(l => l.accountId === acc.id && l.kind === 'funding').reduce((s, l) => s + l.amount, 0)
-  const net = (series.at(-1)?.[1] ?? acc.deposit) - acc.deposit
+  const equity = series.at(-1)?.[1] ?? acc.deposit
+  const net = equity - acc.deposit
+  const unrealized = db.positions.filter(x => x.accountId === acc.id).reduce((s, x) => s + x.unrealizedPnl, 0)
   const byInst = {}
   for (const f of fills) {
-    const b = (byInst[f.instId] ||= { instId: f.instId, trades: 0, net: 0, gross: 0, fees: 0, funding: 0, wins: 0 })
-    b.fees += f.fee
-    if (f.realizedPnl) { b.trades++; b.gross += f.realizedPnl; b.net += f.realizedPnl - f.fee; if (f.realizedPnl > 0) b.wins++ }
+    const b = (byInst[f.instId] ||= { instId: f.instId, trades: 0, wins: 0, pnl: 0, fees: 0, funding: 0, turnover: 0 })
+    b.fees += f.fee; b.pnl -= f.fee; b.turnover += f.px * f.qty * CTVAL[f.instId]
+    if (f.realizedPnl) { b.trades++; b.pnl += f.realizedPnl; if (f.realizedPnl > 0) b.wins++ }
   }
   const sigs = db.signals.filter(s => s.accountId === acc.id)
+  const outcomes = {}
+  for (const x of sigs) outcomes[x.outcome] = (outcomes[x.outcome] || 0) + 1
   const grossWin = wins.reduce((s, f) => s + f.realizedPnl, 0), grossLoss = -closes.filter(f => f.realizedPnl < 0).reduce((s, f) => s + f.realizedPnl, 0)
+  const r2 = x => +x.toFixed(2)
   return {
-    gross: +(net + fees - funding).toFixed(2), net: +net.toFixed(2), maxDrawdown: +mdd.toFixed(4), sharpe: 1.42, winRate: closes.length ? wins.length / closes.length : 0,
-    profitFactor: grossLoss ? +(grossWin / grossLoss).toFixed(2) : 0, turnover: +fills.reduce((s, f) => s + f.px * f.qty * CTVAL[f.instId], 0).toFixed(0), fees: +fees.toFixed(2), funding: +funding.toFixed(2), trades: closes.length,
-    byInst: Object.values(byInst).map(b => ({ instId: b.instId, trades: b.trades, net: +b.net.toFixed(2), gross: +b.gross.toFixed(2), winRate: b.trades ? b.wins / b.trades : 0, fees: +b.fees.toFixed(2), funding: +(gauss() * 3).toFixed(2) })),
-    signals: { ordered: sigs.filter(s => s.outcome === 'ordered').length, rejected: sigs.filter(s => s.outcome === 'rejected').length, skipped: sigs.filter(s => s.outcome.startsWith('skipped') || s.outcome === 'expired').length },
+    accountId: acc.id, deposit: acc.deposit, equity: r2(equity), gross: r2(net + fees - funding), net: r2(net), netPct: +(net / acc.deposit).toFixed(6),
+    realized: r2(closes.reduce((s, f) => s + f.realizedPnl, 0)), unrealized: r2(unrealized), maxDrawdown: +mdd.toFixed(4),
+    sharpe: series.length > 30 ? 1.42 : null, sharpeBasis: 'daily', winRate: closes.length ? wins.length / closes.length : null,
+    profitFactor: grossLoss ? r2(grossWin / grossLoss) : null, turnover: r2(fills.reduce((s, f) => s + f.px * f.qty * CTVAL[f.instId], 0)),
+    fees: r2(fees), funding: r2(funding), liquidations: fills.filter(f => f.liquidation).length, trades: closes.length, openTrades: db.positions.filter(x => x.accountId === acc.id).length,
+    byInst: Object.values(byInst).map(b => ({ ...b, pnl: r2(b.pnl), fees: r2(b.fees), turnover: r2(b.turnover) })),
+    signals: { ordered: outcomes.ordered || 0, rejected: outcomes.rejected || 0, skipped: (outcomes.skipped_ai || 0) + (outcomes.skipped_user || 0) + (outcomes.expired || 0), recorded: outcomes.recorded || 0, pending: outcomes.pending || 0 },
+    outcomes, from: acc.from, to: acc.to,
   }
 }
 
@@ -232,7 +254,7 @@ function makeReport(acc) {
   db.equity[4] = equitySeries(2000, T0 - 60 * DAY, T0 - 30 * DAY, HOUR, -0.00002, 0.002)
   addInstance(4, 'a1b2c3d4e5f6', { state: 'stopped', createdAt: T0 - 60 * DAY })
   for (const a of db.accounts) refreshDerived(a)
-  db.reports[3] = makeReport(a3)
+  a3.backtest = { state: 'done', progress: 1, clock: to, startedAt: T0 - 2 * DAY, finishedAt: T0 - 2 * DAY + 40_000 }
 
   // AI decisions + proposals
   const rationale = [
@@ -244,12 +266,18 @@ function makeReport(acc) {
   for (let i = 0; i < 12; i++) {
     const exec = i % 3 !== 1
     const instId = pick(['DOGE-USDT-SWAP', 'SUI-USDT-SWAP', 'PEPE-USDT-SWAP', 'LINK-USDT-SWAP', 'AVAX-USDT-SWAP'])
-    db.decisions.push({ id: ++db.ids.dec, ts: T0 - i * 3 * HOUR - 7 * MIN, signalId: 9000 + i, accountId: 2, instanceId: i3.id, instId, signalAction: 'open_long', action: exec ? 'execute' : 'skip', sizeScale: exec ? pick([1, 0.7, 0.5]) : 0, stopLoss: exec ? +(PX[instId] * 0.95).toPrecision(5) : undefined, confidence: +(0.55 + rnd() * 0.35).toFixed(2), rationale: rationale[i % rationale.length], model: 'claude-sonnet-4-5', costUsd: +(0.02 + rnd() * 0.05).toFixed(3), latencyMs: Math.round(4000 + rnd() * 9000), outcome: exec ? (i % 5 === 3 ? 'rejected' : 'ordered') : 'skipped_ai', outcomeReason: exec && i % 5 === 3 ? '已达最大持仓数 8' : undefined })
+    // internal/aigate DecisionRecord; the engine verdict lives on the signal (aiDecisionId)
+    const id = ++db.ids.dec
+    const decision = { action: exec ? 'execute' : 'skip', sizeScale: exec ? pick([1, 0.7, 0.5]) : 0, stopLoss: exec ? +(PX[instId] * 0.95).toPrecision(5) : 0, takeProfit: 0, confidence: +(0.55 + rnd() * 0.35).toFixed(2), rationale: rationale[i % rationale.length] }
+    db.decisions.push({ id, ts: T0 - i * 3 * HOUR - 7 * MIN, kind: 'review', signalId: 9100 + i, accountId: 2, instanceId: i3.id, strategy: 'alt-momentum', instId, signalAction: 'open_long', requestSha256: 'ab12cd34ef56' + i, memoryVersion: 2, promptVersion: 'r3', model: 'claude-sonnet-4-5', action: decision.action, decision, costUsd: +(0.02 + rnd() * 0.05).toFixed(3), latencyMs: Math.round(4000 + rnd() * 9000),
+      error: i === 9 ? 'deadline exceeded (TTL 120s)' : undefined, outcomes: exec && i % 3 === 0 ? [{ ts: T0 - i * 3 * HOUR + 5 * HOUR, result: pick(['止盈，实现 +42.10 USDT（未含手续费），持有 4.8 小时', '止损，实现 -18.75 USDT（未含手续费），持有 1.2 小时']) }] : undefined })
+    db.signals.push({ id: 9100 + i, instanceId: i3.id, accountId: 2, instId, action: 'open_long', strength: 1, reason: '突破 24 根 K 线高点', ts: T0 - i * 3 * HOUR - 8 * MIN, recvTs: T0 - i * 3 * HOUR - 8 * MIN, price: PX[instId], configVersion: 1, aiDecisionId: id,
+      outcome: !exec ? 'skipped_ai' : i % 5 === 3 ? 'rejected' : 'ordered', outcomeReason: !exec ? 'AI 跳过' : i % 5 === 3 ? '已达最大持仓数 8' : '96 张 · 4.00x · 保证金约 87.20 USDT' })
   }
-  db.proposals.push(
-    { id: ++db.ids.prop, ts: T0 - 5 * HOUR, accountId: 2, instanceId: i3.id, instanceName: 'alt-momentum', decisionId: 301, current: { lookback: 24, stop_atr: 2 }, proposed: { lookback: 36, stop_atr: 2.5 }, rationale: '过去 40 个信号中 62% 在入场后 3 根 K 线内被 2ATR 止损扫出，随后又回到原方向；当前山寨波动率比 30 天均值高 35%。建议放宽止损到 2.5ATR，并把突破回看延长到 36 根以过滤噪声突破。', state: 'open' },
-    { id: ++db.ids.prop, ts: T0 - 3 * DAY, accountId: 1, instanceId: i1.id, instanceName: 'majors-trend', current: { fast: 20 }, proposed: { fast: 21 }, rationale: '小幅调整避免与常见 EMA20 同时触发。', state: 'approved' },
-    { id: ++db.ids.prop, ts: T0 - 6 * DAY, accountId: 2, instanceId: i3.id, instanceName: 'alt-momentum', current: { min_score: 70 }, proposed: { min_score: 55 }, rationale: '放宽入场分数以增加信号数量。', state: 'rejected' },
+  db.proposals.push( // internal/aigate Proposal
+    { id: ++db.ids.prop, ts: T0 - 5 * HOUR, accountId: 2, instanceId: i3.id, strategy: 'alt-momentum', decisionId: 301, current: { lookback: 24, stop_atr: 2 }, params: { lookback: 36, stop_atr: 2.5 }, rationale: '过去 40 个信号中 62% 在入场后 3 根 K 线内被 2ATR 止损扫出，随后又回到原方向；当前山寨波动率比 30 天均值高 35%。建议放宽止损到 2.5ATR，并把突破回看延长到 36 根以过滤噪声突破。', state: 'pending' },
+    { id: ++db.ids.prop, ts: T0 - 3 * DAY, accountId: 1, instanceId: i1.id, strategy: 'majors-trend', decisionId: 290, current: { fast: 20 }, params: { fast: 21 }, rationale: '小幅调整避免与常见 EMA20 同时触发。', state: 'approved', decidedAt: T0 - 3 * DAY + HOUR },
+    { id: ++db.ids.prop, ts: T0 - 6 * DAY, accountId: 2, instanceId: i3.id, strategy: 'alt-momentum', decisionId: 280, current: { min_score: 70 }, params: { min_score: 55 }, rationale: '放宽入场分数以增加信号数量。', state: 'rejected', decidedAt: T0 - 6 * DAY + HOUR, note: '被新的建议取代' },
   )
 }
 function openPrompts() {
@@ -284,6 +312,7 @@ async function mockApi(req, res, url) {
     if (body.mode === 'real') return send(res, 400, { error: '实盘尚未开放' })
     const a = addAccount({ name: body.name, mode: body.mode, deposit: body.deposit, limits: body.limits, from: body.from, to: body.to })
     db.equity[a.id] = body.mode === 'backtest' ? [] : [[now(), a.deposit]]
+    if (body.mode === 'backtest') a.backtest = { state: 'idle', progress: 0 }
     refreshDerived(a)
     return ok(res, a)
   }
@@ -322,31 +351,42 @@ async function mockApi(req, res, url) {
   }
   if ((r = p.match(/^trade\/accounts\/(\d+)\/report$/))) {
     const a = acct(+r[1]); if (!a) return notFound(res)
-    if (a.mode !== 'backtest') return ok(res, makeReport(a))
-    return db.reports[a.id] ? ok(res, db.reports[a.id]) : send(res, 409, { error: '回测尚未完成' })
+    return ok(res, makeReport(a)) // partial while a backtest runs, like the server
   }
   if ((r = p.match(/^trade\/backtests\/(\d+)\/run$/))) {
     const a = acct(+r[1]); if (!a || a.mode !== 'backtest') return notFound(res)
     const insts = db.instances.filter(i => i.accountId === a.id)
+    if (!insts.length) return send(res, 400, { error: '账户没有策略实例' })
+    if (a.backtest?.state === 'running') return send(res, 409, { error: '回测正在运行' })
     insts.forEach(i => (i.state = 'running'))
-    delete db.reports[a.id]
+    a.backtest = { state: 'running', progress: 0, clock: a.from, startedAt: now() }
     db.equity[a.id] = []
     const full = equitySeries(a.deposit, a.from, a.to, 4 * HOUR, 0.0003, 0.008)
     let k = 0
     const tick = setInterval(() => {
       k += Math.ceil(full.length / 8)
+      if (a.backtest.state !== 'running') return clearInterval(tick) // cancelled
       db.equity[a.id] = full.slice(0, k)
+      a.backtest.progress = Math.min(1, k / full.length)
+      a.backtest.clock = full[Math.min(k, full.length) - 1][0]
       refreshDerived(a)
       pushEvent('trade', { accountId: a.id, kind: 'backtest' })
       if (k >= full.length) {
         clearInterval(tick)
         if (!db.fills.some(f => f.accountId === a.id)) { genSignals(a, insts, 30, a.to - a.from); genFills(a, insts, 40, a.to - a.from); genLedger(a) }
         insts.forEach(i => { i.state = 'done'; i.heartbeat = now() })
-        db.reports[a.id] = makeReport(a)
+        Object.assign(a.backtest, { state: 'done', progress: 1, clock: a.to, finishedAt: now() })
         pushEvent('trade', { accountId: a.id, kind: 'instance' })
       }
     }, 600)
-    return ok(res, { ok: true })
+    return send(res, 202, a)
+  }
+  if ((r = p.match(/^trade\/backtests\/(\d+)\/cancel$/))) {
+    const a = acct(+r[1]); if (!a) return notFound(res)
+    if (a.backtest?.state !== 'running') return send(res, 409, { error: '回测未在运行' })
+    Object.assign(a.backtest, { state: 'failed', error: '已取消', finishedAt: now() })
+    db.instances.filter(i => i.accountId === a.id).forEach(i => (i.state = 'stopped'))
+    return ok(res, a)
   }
   if (p === 'trade/strategies' && m === 'GET') {
     const names = [...new Set(VERSIONS.map(v => v.name))]
@@ -375,7 +415,16 @@ async function mockApi(req, res, url) {
     return ok(res, i)
   }
   // ---- interact ----
-  if (p === 'interact/prompts' && m === 'GET') return ok(res, { prompts: openPrompts(), now: now() })
+  if (p === 'interact/prompts' && m === 'GET') {
+    const open = openPrompts()
+    if (q.get('state') !== 'all') return ok(res, { prompts: open, now: now() })
+    const t = now(), opts = [{ key: 'execute', label: '执行' }, { key: 'half', label: '半仓' }, { key: 'skip', label: '跳过' }]
+    const closed = [
+      { id: 'sig-88', event: { kind: 'signal', accountId: 1, account: '主流趋势', mode: 'live', title: '待确认 · 开多 BTC', lines: ['BTC-USDT-SWAP 开多 · 强度 1.00'], ts: t - 3 * HOUR }, options: opts, deadline: t - 3 * HOUR + 120_000, default: 'skip', state: 'answered', choice: 'execute', by: 'telegram:123456789', answeredAt: t - 3 * HOUR + 30_000, createdAt: t - 3 * HOUR },
+      { id: 'sig-80', event: { kind: 'signal', accountId: 2, account: '山寨动量 · AI 审核', mode: 'live', title: '待确认 · 开多 PEPE', lines: [], ts: t - 7 * HOUR }, options: opts, deadline: t - 7 * HOUR + 90_000, default: 'skip', state: 'expired', choice: 'skip', by: 'timeout', answeredAt: t - 7 * HOUR + 90_000, createdAt: t - 7 * HOUR },
+    ]
+    return ok(res, { prompts: [...open, ...closed], now: t })
+  }
   if ((r = p.match(/^interact\/prompts\/([\w-]+)$/))) { db.prompts.push(r[1]); pushEvent('interact', {}); return ok(res, { ok: true, choice: body.choice }) }
   if (p === 'interact/config') {
     if (m === 'PUT') {
@@ -405,13 +454,37 @@ async function mockApi(req, res, url) {
     Object.assign(ai, { configured: true, kind: body.kind, masked: '••••' + String(body.value || '').slice(-4), lastError: '' })
     return ok(res, ai)
   }
-  if (p === 'ai/test') { ai.lastCallAt = now(); return ok(res, ai.configured ? { ok: true, model: 'claude-sonnet-4-5', latencyMs: 2140 } : { ok: false, error: '未配置凭证' }) }
-  if (p === 'ai/decisions') { const id = Number(q.get('accountId') || 0); return ok(res, db.decisions.filter(d => !id || d.accountId === id).slice(0, limit)) }
-  if (p === 'ai/proposals' && m === 'GET') return ok(res, db.proposals)
+  if (p === 'ai/model') { ai.model = String(body.model || '').trim() || 'claude-sonnet-4-5'; return ok(res, ai) }
+  if (p === 'ai/test') {
+    if (!ai.configured) return ok(res, { ok: false, costUsd: 0, latencyMs: 0, error: 'no credential configured' })
+    if (!ai.proxyOk) return ok(res, { ok: false, costUsd: 0, latencyMs: 0, error: 'AI worker is not ready: ' + ai.proxyError })
+    ai.lastCallAt = now(); ai.callsToday++
+    return ok(res, { ok: true, model: ai.model, reply: 'ok', costUsd: 0.0004, latencyMs: 2140 })
+  }
+  if (p === 'ai/decisions') {
+    const id = Number(q.get('accountId') || 0), kind = q.get('kind') || ''
+    return ok(res, db.decisions.filter(d => (!id || d.accountId === id) && (!kind || d.kind === kind)).slice(0, Number(q.get('limit') || 50)))
+  }
+  if ((r = p.match(/^ai\/decisions\/(\d+)$/))) {
+    const d = db.decisions.find(x => x.id === +r[1]); if (!d) return notFound(res)
+    return ok(res, { ...d, request: { signal: db.signals.find(x => x.id === d.signalId), account: { id: d.accountId }, market: { ret_4h: 0.031, spread_bps: 4.2, oi_chg_4h: 0.06 }, memory: memory['alt-momentum'][0].doc } })
+  }
+  if ((r = p.match(/^ai\/memory\/([\w-]+)$/))) { const v = memory[r[1]] || []; return ok(res, { strategy: r[1], current: v[0] || null, versions: v }) }
+  if ((r = p.match(/^ai\/memory\/([\w-]+)\/reflect$/))) {
+    if (!ai.available) return send(res, 503, { error: 'AI unavailable' })
+    const v = (memory[r[1]] ||= [])
+    const doc = { strategy: r[1], version: (v[0]?.version || 0) + 1, ts: now(), doc: '（模拟）暂无足够的已平仓决策，先积累更多审核记录。', source: 'reflect', throughDecision: db.ids.dec, decisions: 0, model: ai.model, costUsd: 0.02 }
+    v.unshift(doc)
+    return ok(res, doc)
+  }
+  if (p === 'ai/proposals' && m === 'GET') { const st = q.get('state'); return ok(res, db.proposals.filter(x => !st || x.state === st)) }
   if ((r = p.match(/^ai\/proposals\/(\d+)$/))) {
     const x = db.proposals.find(y => y.id === +r[1]); if (!x) return notFound(res)
+    if (x.state !== 'pending') return send(res, 409, { error: 'proposal is not pending' })
     x.state = body.approve ? 'approved' : 'rejected'
-    if (body.approve) { const i = db.instances.find(y => y.id === x.instanceId); if (i) { Object.assign(i.params, x.proposed); i.configVersion++ } }
+    x.decidedAt = now()
+    ai.pendingProposals = db.proposals.filter(y => y.state === 'pending').length
+    if (body.approve) { const i = db.instances.find(y => y.id === x.instanceId); if (i) { Object.assign(i.params, x.params); i.configVersion++ } }
     return ok(res, x)
   }
   return notFound(res)
@@ -438,7 +511,7 @@ function fallback(p) {
 // ---------- SSE: proxied stream + injected trade events, or a mock stream ----------
 const clients = new Set()
 function pushEvent(type, data) { for (const c of clients) c.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`) }
-setInterval(() => pushEvent('trade', { accountId: 1, kind: 'fill' }), 20_000)
+if (!PASSTHROUGH) setInterval(() => pushEvent('trade', { accountId: 1, kind: 'fill' }), 20_000)
 function mockStream(res) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' })
   res.write('event: hello\ndata: {"seq":1}\n\n')
@@ -477,7 +550,7 @@ async function serveStatic(res, pathname) {
 http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://x')
   const p = url.pathname
-  if (/^\/api\/v1\/(trade|interact|ai)\//.test(p)) return mockApi(req, res, url).catch(e => send(res, 500, { error: String(e) }))
+  if (!PASSTHROUGH && /^\/api\/v1\/(trade|interact|ai)\//.test(p)) return mockApi(req, res, url).catch(e => send(res, 500, { error: String(e) }))
   if (p === '/api/v1/stream') return proxy(req, res, url, () => mockStream(res))
   if (p.startsWith('/api/')) {
     return proxy(req, res, url, () => {
@@ -486,4 +559,4 @@ http.createServer((req, res) => {
     })
   }
   serveStatic(res, p)
-}).listen(PORT, '127.0.0.1', () => console.log(`mock-trade on http://127.0.0.1:${PORT}  (backend ${BACKEND.href}, web ${DIST})`))
+}).listen(PORT, '127.0.0.1', () => console.log(`mock-trade on http://127.0.0.1:${PORT}  (${PASSTHROUGH ? 'passthrough to' : 'backend'} ${BACKEND.href}, web ${DIST})`))

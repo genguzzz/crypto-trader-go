@@ -63,7 +63,7 @@ watch(aid, () => { d.value = null; insts.value = null; signals.value = null; loa
 const a = computed(() => d.value?.account)
 const isBacktest = computed(() => a.value?.mode === 'backtest')
 const running = computed(() => insts.value?.filter(i => i.state === 'running').length)
-const st = computed(() => (a.value ? accountStatus(a.value, running.value) : null))
+const st = computed(() => (a.value ? accountStatus(a.value, running.value, insts.value?.filter(i => i.state === 'paused' || i.state === 'faulted').length) : null))
 const positions = computed(() => d.value?.positions || [])
 const upnl = computed(() => positions.value.reduce((s, p) => s + p.unrealizedPnl, 0))
 const kpis = computed<Kpi[]>(() => {
