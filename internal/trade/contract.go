@@ -127,6 +127,8 @@ type Account struct {
 	// backtest only
 	From int64 `json:"from,omitempty"` // ms, inclusive
 	To   int64 `json:"to,omitempty"`   // ms, exclusive
+	// Backtest is the state of the last backtest run (backtest accounts only).
+	Backtest *BacktestStatus `json:"backtest,omitempty"`
 	// derived (filled by reads)
 	Equity    float64 `json:"equity"`
 	Cash      float64 `json:"cash"` // available (not used as margin)
@@ -134,6 +136,16 @@ type Account struct {
 	Halted    bool    `json:"halted"` // circuit breaker tripped for today
 	OpenCount int     `json:"openCount"`
 	Instances int     `json:"instances"`
+}
+
+// BacktestStatus is the progress of a backtest run.
+type BacktestStatus struct {
+	State      string  `json:"state"`           // idle | running | done | failed
+	Progress   float64 `json:"progress"`        // 0..1 of the replayed range
+	Clock      int64   `json:"clock,omitempty"` // replay time reached, ms
+	Error      string  `json:"error,omitempty"`
+	StartedAt  int64   `json:"startedAt,omitempty"`
+	FinishedAt int64   `json:"finishedAt,omitempty"`
 }
 
 // Universe is either a static list or a screener query evaluated every Refresh.

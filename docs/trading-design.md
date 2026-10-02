@@ -84,14 +84,23 @@ SimBroker:
 
 Daily breaker: day boundary UTC+8; when tripped, opening signals are rejected until the next day and an `breaker` event is sent.
 
+Implementation notes (`internal/trade`):
+- Timeframes are aligned to UTC epoch multiples (1D = 00:00–24:00 UTC, i.e. OKX `1Dutc`; 4H matches OKX). Live bars are aggregated from recorded 1m (1H+ from stored 1H plus 1m for recent hours) and delivered when the pool clock confirms their last minute (`OnMinute`, registered with `Engine.OnConfirmed`).
+- Mark price = last trade price (v1). Live stops/targets/limits/liquidations are polled every 1.5 s from the in-memory quote; executions (market entries, closes, triggered stops) fetch a 50-level book.
+- Leverage defaults to `Limits.MaxLeverage` (capped by the contract) and is lowered so the liquidation price stays at least 25% of the stop distance beyond the stop. Without a stop (`RequireStop` off), margin = equity × MaxInstPct × strength × scale.
+- Positions are per (instance, instrument); opposite positions in one instrument are rejected; adding re-creates the OCO stop/target for the whole position. AI review applies to opening signals only.
+- Backtests: base resolution 1m when any instance runs below 1H, else 1H; a signal at a bar close fills at the next base bar's open. Confirmation is skipped and `ai` behaves like `auto` (an AI reviewing history it may remember is look-ahead). `Factors` are the replayable fields at the last hour close; `Score`/`Screener` use hourly `score_snapshots` (live record over replay) and per-minute `universe_snapshots`; missing history fails the run with a message. Progress is `Account.backtest` {state, progress, clock, error}.
+- Funding is charged for every settlement hour a position was held through, from settled rates (`FundingRate`); live waits up to 10 min for the settled sample.
+- A Session error other than `ErrFaulted` is a strategy handler exception: 3 in a row pause a live instance (fail a backtest).
+
 ## 4. REST API (all JSON, under `/api/v1`)
 
 Trade (`internal/trade`):
 - `GET trade/accounts` · `POST trade/accounts` {name, mode, deposit, limits, from?, to?} · `GET trade/accounts/{id}` (account + positions + open orders) · `PATCH trade/accounts/{id}` {name?, limits?, archived?} · `POST trade/accounts/{id}/deposit` {amount}
 - `GET trade/accounts/{id}/equity?from&to` → [[ts, equity]] (1m live / bar backtest, downsampled ≤ 2000 points)
 - `GET trade/accounts/{id}/fills|orders|signals|ledger?limit&before`
-- `POST trade/accounts/{id}/close` {instId?} (manual close one or all) · `POST trade/backtests/{id}/run` (re-run)
-- `GET trade/accounts/{id}/report` → {gross, net, maxDrawdown, sharpe, winRate, profitFactor, turnover, fees, funding, trades, byInst[], signals{ordered,rejected,skipped}}
+- `POST trade/accounts/{id}/close` {instId?} (manual close one or all) · `POST trade/backtests/{id}/run` (re-run, 202) · `POST trade/backtests/{id}/cancel`
+- `GET trade/accounts/{id}/report` → {gross, net, maxDrawdown, sharpe, winRate, profitFactor, turnover, fees, funding, trades, byInst[], signals{ordered,rejected,skipped}} — net = equity − deposits (incl. unrealized); gross = net + fees − funding; sharpe on daily (UTC+8) equity returns × √365, null under 5 days; trades are round trips (open → flat) per instance and instrument
 - `GET trade/strategies` (latest version per name + versions list) · `GET trade/strategies/{versionId}` (with code) · `POST trade/strategies/reload`
 - `GET trade/accounts/{id}/instances` · `POST trade/accounts/{id}/instances` {versionId, params, universe, exec} · `PATCH trade/instances/{id}` {params?, universe?, exec?} (new config version) · `POST trade/instances/{id}/{start|pause|resume|stop}`
 - SSE: existing `/api/v1/stream` gets event types `trade` (account id + kind) so pages refetch.
