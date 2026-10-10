@@ -40,6 +40,7 @@ The backlog of smaller, not yet filed items is listed in the Roadmap issue. Issu
 | 2026-09-29 | Agent access: API keys and short-lived tokens (hashed, shown once), per-key token-bucket limits with endpoint costs and a server-wide ceiling, read-only REST API (`/api/open/v1`, OpenAPI document) and MCP server (`/mcp`) from one endpoint registry; Dev tab (keys, docs, tester, request log) and Settings → Developer switches |
 | 2026-09-29 | Liquidation map closer to CoinGlass: 5m steps with per-minute OI (hourly only where data is broken), bars stacked by leverage tier (ordinal red/green ramps) with tier filter and 1/7-day look-back, per-tier crosshair readout; map and liquidation bars refresh every 10 s on an open detail page |
 | 2026-10-02 | Paper trading (#3): Python strategy SDK and runner (static or screener universes, Pine-like `ta`), Go order layer with risk, sizing, OCO stops/targets and a simulated broker (live order book / bar model), backtest accounts sharing the same code, two-way Telegram interaction with confirmations and commands (dedicated bot, owner only), optional AI review via the Claude Agent SDK with audit, memory and parameter proposals, trading UI; owner key for trading writes until #1 |
+| 2026-10-10 | Altcoin strategy `alt-regime-trend` (regime-gated breakouts + weak-alt shorts, owner sizing with equity-based suggested margin), market-wide turnover screener (`scope="market"`, top ≤ 300), offline multi-coin backtest `research/altbt`; research in [research-alt-perps](research-alt-perps.md) (#8) |
 
 ## Rules
 

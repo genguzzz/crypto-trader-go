@@ -270,35 +270,64 @@ class AltRegimeTrend(Strategy):
     def _universe(self, ctx):
         """监控范围：上线 ≥ 30 天、按 30 天成交额取前 top_n 的山寨币，并算好要用的指标。"""
         btc = ctx.bars(BTC, "4H", 80)
-        btc_ret = dict(zip(btc.ts[1:].tolist(), np.diff(np.log(btc.c)).tolist())) if len(btc) > 60 else {}
         rows = []
         for inst, v in self._buf.items():
             if inst in SKIP or len(v["c"]) < 30 * DAY or not v["c"] or not (v["c"][-1] > 0):
                 continue
             rows.append((float(np.nansum(v["q"][-30 * DAY:])), inst))
         rows.sort(reverse=True)
-        cols = {}
-        for _, inst in rows[: self.top_n]:
-            v = self._buf[inst]
-            c = np.asarray(v["c"], dtype=float)
-            h, l, q = np.asarray(v["h"], dtype=float), np.asarray(v["l"], dtype=float), np.asarray(v["q"], dtype=float)
-            q7 = np.nansum(q[-7 * DAY:]) / 7
-            cols[inst] = dict(c=c, h=h, l=l, ema42=float(ta.ema(c, 42)[-1]), atr=float(ta.atr(h, l, c, 14)[-1]),
-                              volx=float(np.nansum(q[-DAY:]) / q7) if q7 > 0 else 0.0,
-                              resid72=self._resid(v["ts"], c, btc_ret))
-        return cols
+        insts = [inst for _, inst in rows[: self.top_n]]
+        if not insts:
+            return {}
+        # 200 个币一起算：把最近 30 天（180 根）拼成矩阵，指标按时间只循环一遍（比逐个币调用 ta 快几十倍）
+        L = 30 * DAY
 
-    @staticmethod
-    def _resid(ts, c, btc_ret, beta_n=42, hold=18):
-        """过去 72 小时（18 根 4H）相对 BTC 的残差收益：r − β·r_btc 求和，β 用最近 7 天估计。"""
-        if len(c) < beta_n + 2 or not btc_ret:
-            return math.nan
-        r = np.diff(np.log(c[-beta_n - 1:]))
-        rb = np.array([btc_ret.get(t, math.nan) for t in ts[-beta_n:]])
-        ok = np.isfinite(r) & np.isfinite(rb)
-        if ok.sum() < beta_n * 0.8:
-            return math.nan
-        var = np.var(rb[ok])
-        beta = np.cov(r[ok], rb[ok])[0, 1] / var if var > 0 else 0.0
-        res = r - beta * np.nan_to_num(rb)
-        return float(np.nansum(res[-hold:]))
+        def mat(k, dtype=float):
+            return np.array([self._buf[i][k][-L:] for i in insts], dtype=dtype)
+
+        C, Hm, Lm, Q, TS = mat("c"), mat("h"), mat("l"), mat("q"), mat("ts", np.int64)
+        ema42 = _smooth_last(C, 42, 2 / 43)                              # = ta.ema(c, 42)[-1]
+        prev = np.concatenate([np.full((len(insts), 1), np.nan), C[:, :-1]], axis=1)
+        with np.errstate(invalid="ignore"):
+            TR = np.fmax(Hm - Lm, np.fmax(np.abs(Hm - prev), np.abs(Lm - prev)))
+        TR[:, 0] = Hm[:, 0] - Lm[:, 0]
+        atr = _smooth_last(TR, 14, 1 / 14)                               # = ta.atr(h, l, c, 14)[-1]
+        q7 = np.nansum(Q[:, -7 * DAY:], axis=1) / 7
+        volx = np.where(q7 > 0, np.nansum(Q[:, -DAY:], axis=1) / np.where(q7 > 0, q7, 1), 0.0)
+        resid = _resid72(C, TS, btc)
+        return {inst: dict(c=C[k], h=Hm[k], l=Lm[k], ema42=float(ema42[k]), atr=float(atr[k]), volx=float(volx[k]),
+                           resid72=float(resid[k])) for k, inst in enumerate(insts)}
+
+
+def _smooth_last(X, n, alpha):
+    """每行做 EMA / RMA（种子 = 前 n 个值的均值，缺失值跳过、保持上一状态），返回最后一个值。与 ta.ema / ta.rma 同口径。"""
+    if X.shape[1] < n:
+        return np.full(X.shape[0], np.nan)
+    prev = np.mean(X[:, :n], axis=1)
+    for t in range(n, X.shape[1]):
+        v = X[:, t]
+        prev = np.where(np.isfinite(v), alpha * v + (1 - alpha) * prev, prev)
+    return prev
+
+
+def _resid72(C, TS, btc, beta_n=42, hold=18):
+    """过去 72 小时（18 根 4H）相对 BTC 的残差收益：Σ(r − β·r_btc)，β 用最近 7 天（42 根）估计。缺数据的币为 NaN。"""
+    out = np.full(C.shape[0], np.nan)
+    if len(btc) < beta_n + 2 or C.shape[1] < beta_n + 1:
+        return out
+    with np.errstate(invalid="ignore", divide="ignore"):
+        R = np.diff(np.log(C[:, -beta_n - 1:]), axis=1)
+        bts, brt = btc.ts[1:], np.diff(np.log(btc.c))
+        tsx = TS[:, -beta_n:]
+        k = np.clip(np.searchsorted(bts, tsx), 0, len(bts) - 1)
+        RB = np.where(bts[k] == tsx, brt[k], np.nan)
+        ok = np.isfinite(R) & np.isfinite(RB)
+        n = ok.sum(axis=1)
+        r0, b0 = np.where(ok, R, 0.0), np.where(ok, RB, 0.0)
+        mr, mb = r0.sum(1) / np.maximum(n, 1), b0.sum(1) / np.maximum(n, 1)
+        cov = (np.where(ok, (R - mr[:, None]) * (RB - mb[:, None]), 0.0)).sum(1)
+        var = (np.where(ok, (RB - mb[:, None]) ** 2, 0.0)).sum(1)
+        beta = np.where(var > 0, cov / np.where(var > 0, var, 1), 0.0)
+        res = R - beta[:, None] * np.nan_to_num(RB)
+        val = np.nansum(res[:, -hold:], axis=1)
+    return np.where(n >= beta_n * 0.8, val, np.nan)
