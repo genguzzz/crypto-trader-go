@@ -6,7 +6,7 @@ import Modal from '../Modal.vue'
 import Loading from '../ui/Loading.vue'
 import InstanceForm from './InstanceForm.vue'
 import StrategyPicker from './StrategyPicker.vue'
-import { paramError } from './meta'
+import { paramError, universeError } from './meta'
 
 /**
  * Add a strategy instance to an account (pick → configure → create and start) or edit an existing
@@ -52,7 +52,8 @@ async function pick(v: StrategyVersion) {
 
 const invalid = computed(() => {
   if (!version.value) return '请选择策略'
-  if (universe.value.static && !universe.value.static.length && !universe.value.screener) return '请至少选择一个合约'
+  const ue = universeError(universe.value)
+  if (ue) return ue
   for (const p of version.value.params) { const e = paramError(p, params.value[p.name]); if (e) return `${p.name}：${e}` }
   return ''
 })

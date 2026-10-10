@@ -215,18 +215,37 @@ func (e *Engine) SettledFunding(id string, at int64) (float64, bool) {
 // Keep keeps an instrument streaming (candles, OI, funding and tickers) while the trading layer
 // needs it, independent of the user's watchlist and views.
 func (e *Engine) Keep(id string, on bool) {
-	if on && e.instFor(id) == nil {
-		return
+	if on {
+		e.KeepMany([]string{id}, nil)
+	} else {
+		e.KeepMany(nil, []string{id})
+	}
+}
+
+// KeepMany is Keep for many instruments with one subscription update (a large screener universe
+// would otherwise send one WS subscribe request per instrument).
+func (e *Engine) KeepMany(on, off []string) {
+	var known []string
+	for _, id := range on {
+		if e.instFor(id) != nil {
+			known = append(known, id)
+		}
 	}
 	e.mu.Lock()
 	if e.keep == nil {
 		e.keep = map[string]bool{}
 	}
-	changed := e.keep[id] != on
-	if on {
-		e.keep[id] = true
-	} else {
-		delete(e.keep, id)
+	changed := false
+	for _, id := range known {
+		if !e.keep[id] {
+			e.keep[id], changed = true, true
+		}
+	}
+	for _, id := range off {
+		if e.keep[id] {
+			delete(e.keep, id)
+			changed = true
+		}
 	}
 	e.mu.Unlock()
 	if changed {

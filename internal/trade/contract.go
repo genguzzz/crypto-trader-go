@@ -154,14 +154,29 @@ type Universe struct {
 	Screener *ScreenerQuery `json:"screener,omitempty"`
 }
 
+// ScreenerQuery selects a dynamic universe. Scope "" / "pool" ranks the active pool (by a rule's
+// score on Side, else by pool rank); scope "market" ranks every recorded crypto USDT swap by its
+// 12h USDT turnover (no rule: scores exist only for pool rows).
 type ScreenerQuery struct {
-	Rule     string                `json:"rule,omitempty"` // rule id; sort by its score on Side
-	Side     string                `json:"side,omitempty"` // long | short | both (the stronger side)
+	Scope    string                `json:"scope,omitempty"` // "" | pool | market
+	Rule     string                `json:"rule,omitempty"`  // rule id; sort by its score on Side
+	Side     string                `json:"side,omitempty"`  // long | short | both (the stronger side)
 	Top      int                   `json:"top"`
 	MinScore float64               `json:"minScore,omitempty"`
 	Filter   map[string][2]float64 `json:"filter,omitempty"`  // field → [min,max] on fact-panel values (NaN-free)
 	Refresh  string                `json:"refresh,omitempty"` // "1H" default
 }
+
+const (
+	ScopePool      = "pool"
+	ScopeMarket    = "market"
+	MaxPoolTop     = 50  // screener top, pool scope
+	MaxMarketTop   = 300 // screener top, market scope
+	CategoryCrypto = "1" // OKX instCategory of crypto swaps
+)
+
+// Market reports whether the query ranks the whole recorded crypto market.
+func (q ScreenerQuery) Market() bool { return q.Scope == ScopeMarket }
 
 // StrategyVersion is an immutable (code, param schema) pair. ID = first 12 hex of sha256(code).
 type StrategyVersion struct {
@@ -352,6 +367,7 @@ type Spec struct {
 	LotSz    float64
 	MinSz    float64
 	MaxLever float64
+	Category string // OKX instCategory: "1" crypto, "3" stock/ETF, "4" commodity, …
 }
 
 // Quote is a top-of-book view for live fills. Asks/Bids may be empty (then Last ± half spread).
@@ -373,6 +389,12 @@ type MarketData interface {
 	Score(rule, instID string) (long, short float64, ok bool)    // an unscored side is NaN
 	FundingRate(instID string, at int64) (rate float64, ok bool) // settled rate for the settlement at `at`
 	Keep(instID string, on bool)                                 // keep the instrument streaming while a position/universe needs it
+}
+
+// KeepBatcher is optionally implemented by live MarketData: Keep for many instruments at once
+// (one stream subscription update for a large universe).
+type KeepBatcher interface {
+	KeepMany(on, off []string)
 }
 
 type ScreenRow struct {

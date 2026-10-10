@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +23,8 @@ import (
 // (candles_1h). Factors are computed with features.Compute on 1H bars, OI and settled funding at
 // the last hour close (the replayable fields only); Score and Screener read the hourly
 // score_snapshots (live record preferred over replay) and the per-minute pool membership
-// (universe_snapshots).
+// (universe_snapshots); a market-scope Screener ranks the crypto swaps by the 1H quote volume of
+// the 12 complete hours before the clock.
 type replayer struct {
 	st       *store.Store
 	db       *sql.DB
@@ -39,6 +41,7 @@ type replayer struct {
 	oi      map[string][]store.OISample
 	funding map[string][]store.FundingSample // settled, ascending
 	scores  map[string]*scoreSet
+	crypto  []string // crypto swaps with 1H history (market screener), nil until loaded
 }
 
 type barSeries struct {
@@ -436,8 +439,112 @@ func (r *replayer) poolAt(now int64) ([]ScreenRow, error) {
 	return out, rows.Err()
 }
 
+// cryptoIDs lists the crypto swaps with stored 1H candles (once per run; instruments without a
+// known spec cannot be traded and are left out).
+func (r *replayer) cryptoIDs() ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.crypto != nil {
+		return r.crypto, nil
+	}
+	if r.specs == nil {
+		return nil, fmt.Errorf("缺少合约规格，无法按品类筛选全市场")
+	}
+	ids, err := r.st.InstIDs("candles_1h")
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, id := range ids {
+		if sp, ok := r.specs(id); ok && sp.Category == CategoryCrypto {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	r.crypto = out
+	return out, nil
+}
+
+// marketAt ranks the crypto swaps by USDT turnover over the 12 complete hours before now
+// (candles_1h quote volume; an instrument missing any of the 12 hours is left out — a gap, not
+// zero), descending.
+func (r *replayer) marketAt(now int64) ([]ScreenRow, error) {
+	ids, err := r.cryptoIDs()
+	if err != nil {
+		return nil, err
+	}
+	end := now / hourMs * hourMs
+	var out []ScreenRow
+	var turn []float64
+	if len(ids) > 0 {
+		args := make([]any, 0, len(ids)+2)
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		args = append(args, end-12*hourMs, end)
+		rows, err := r.db.Query(`SELECT inst_id, SUM(quote) FROM candles_1h WHERE inst_id IN (?`+strings.Repeat(",?", len(ids)-1)+
+			`) AND ts>=? AND ts<? GROUP BY inst_id HAVING COUNT(quote)=12 AND SUM(quote)>0`, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			var v float64
+			if err := rows.Scan(&id, &v); err != nil {
+				return nil, err
+			}
+			out = append(out, ScreenRow{InstID: id, Long: math.NaN(), Short: math.NaN()})
+			turn = append(turn, v)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("缺少 %s 前 12 小时的 1H K 线，无法按成交额回放全市场", fmtTime(end))
+	}
+	idx := make([]int, len(out))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		if turn[idx[a]] != turn[idx[b]] {
+			return turn[idx[a]] > turn[idx[b]]
+		}
+		return out[idx[a]].InstID < out[idx[b]].InstID
+	})
+	ranked := make([]ScreenRow, len(out))
+	for i, k := range idx {
+		ranked[i] = out[k]
+		ranked[i].Rank = i + 1
+	}
+	return ranked, nil
+}
+
 func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
 	now := r.Now()
+	if q.Market() {
+		if q.Rule != "" {
+			return nil, fmt.Errorf("全市场筛选不能指定评分规则")
+		}
+		rows, err := r.marketAt(now)
+		if err != nil {
+			return nil, err
+		}
+		if len(q.Filter) > 0 {
+			for i := range rows {
+				rows[i].Values, _ = r.Factors(rows[i].InstID)
+			}
+		}
+		out := SelectScreen(rows, q)
+		for i := range out { // only the selected rows: loading every candidate's bars is costly
+			if c, ok := r.lastClose(out[i].InstID); ok {
+				out[i].Last = c
+			}
+		}
+		return out, nil
+	}
 	pool, err := r.poolAt(now)
 	if err != nil {
 		return nil, err

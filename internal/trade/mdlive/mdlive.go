@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ func New(e *market.Engine) *MD { return &MD{e: e} }
 var (
 	_ trade.MarketData  = (*MD)(nil)
 	_ trade.DepthQuoter = (*MD)(nil)
+	_ trade.KeepBatcher = (*MD)(nil)
 )
 
 func (m *MD) Now() int64 { return time.Now().UnixMilli() }
@@ -40,7 +42,7 @@ func (m *MD) Spec(id string) (trade.Spec, bool) {
 	if minSz <= 0 {
 		minSz = lot
 	}
-	return trade.Spec{InstID: id, CtVal: i.CtVal, TickSz: i.TickSz, LotSz: lot, MinSz: minSz, MaxLever: i.MaxLever}, true
+	return trade.Spec{InstID: id, CtVal: i.CtVal, TickSz: i.TickSz, LotSz: lot, MinSz: minSz, MaxLever: i.MaxLever, Category: i.Category}, true
 }
 
 func (m *MD) Quote(_ context.Context, id string) (trade.Quote, error) {
@@ -113,11 +115,18 @@ func (m *MD) Factors(id string) (map[string]float64, bool) {
 	return finiteValues(r.Values), true
 }
 
-// Screener ranks the active pool of the last confirmed snapshot by a rule's score.
+// Screener ranks the active pool of the last confirmed snapshot by a rule's score, or (scope
+// market) every recorded crypto swap by 12h USDT turnover.
 func (m *MD) Screener(q trade.ScreenerQuery) ([]trade.ScreenRow, error) {
 	snap := m.e.Snapshot()
 	if len(snap.Rows) == 0 {
 		return nil, fmt.Errorf("市场快照尚未就绪")
+	}
+	if q.Market() {
+		if q.Rule != "" {
+			return nil, fmt.Errorf("全市场筛选不能指定评分规则")
+		}
+		return trade.SelectScreen(MarketRows(snap.Rows), q), nil
 	}
 	if q.Rule != "" {
 		if _, ok := m.e.Rule(q.Rule); !ok {
@@ -146,6 +155,29 @@ func (m *MD) Screener(q trade.ScreenerQuery) ([]trade.ScreenRow, error) {
 	return trade.SelectScreen(rows, q), nil
 }
 
+// MarketRows ranks the recorded (eligible) crypto swaps of a snapshot by 12h USDT turnover,
+// descending (rank 1 = largest). Instruments without a full 12h window (new, stale; a missing
+// minute is a gap, not zero) are left out; a warming instrument counts with its provisional value.
+func MarketRows(rows []market.Row) []trade.ScreenRow {
+	var xs []market.Row
+	for _, r := range rows {
+		if r.Eligible && r.Category == trade.CategoryCrypto && r.Turnover12h > 0 && (r.Status == "live" || r.Provisional) {
+			xs = append(xs, r)
+		}
+	}
+	sort.SliceStable(xs, func(i, j int) bool {
+		if xs[i].Turnover12h != xs[j].Turnover12h {
+			return xs[i].Turnover12h > xs[j].Turnover12h
+		}
+		return xs[i].InstID < xs[j].InstID
+	})
+	out := make([]trade.ScreenRow, len(xs))
+	for i, r := range xs {
+		out[i] = trade.ScreenRow{InstID: r.InstID, Rank: i + 1, Last: r.Last, Long: math.NaN(), Short: math.NaN(), Values: r.Values}
+	}
+	return out
+}
+
 // Score returns a rule's scores of the last confirmed snapshot (active pool and watchlist rows);
 // an unscored side is NaN.
 func (m *MD) Score(rule, id string) (float64, float64, bool) {
@@ -170,3 +202,5 @@ func (m *MD) Score(rule, id string) (float64, float64, bool) {
 func (m *MD) FundingRate(id string, at int64) (float64, bool) { return m.e.SettledFunding(id, at) }
 
 func (m *MD) Keep(id string, on bool) { m.e.Keep(id, on) }
+
+func (m *MD) KeepMany(on, off []string) { m.e.KeepMany(on, off) }
