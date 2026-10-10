@@ -32,17 +32,19 @@ type replayer struct {
 	base     int64
 	table    string
 
-	mu       sync.RWMutex
-	now      int64
-	bars     map[string]*barSeries // base bars
-	fine     map[string]*barSeries // 1m bars for timeframes below an hourly base (read on demand)
-	hourly   map[string]*barSeries // 1H bars for factors
-	oi       map[string][]store.OISample
-	funding  map[string][]store.FundingSample // settled, ascending
-	scores   map[string]*scoreSet
-	crypto   []string    // crypto swaps with 1H history (market screener), nil until loaded
-	market   []ScreenRow // last full market ranking (kept across a gap in candles_1h)
-	marketAt int64       // replay clock of that ranking
+	mu        sync.RWMutex
+	now       int64
+	bars      map[string]*barSeries // base bars
+	fine      map[string]*barSeries // 1m bars for timeframes below an hourly base (read on demand)
+	hourly    map[string]*barSeries // 1H bars for factors
+	oi        map[string][]store.OISample
+	funding   map[string][]store.FundingSample // settled, ascending
+	scores    map[string]*scoreSet
+	crypto    []string    // crypto swaps with 1H history (market screener), nil until loaded
+	market    []ScreenRow // last full market ranking (kept across a gap in candles_1h)
+	marketAt  int64       // replay clock of that ranking
+	marketEnd int64       // window end of the last computed result (the ranking changes once per hour)
+	marketRes []ScreenRow // that result
 }
 
 type barSeries struct {
@@ -443,15 +445,16 @@ func (r *replayer) poolAt(now int64) ([]ScreenRow, error) {
 // cryptoIDs lists the crypto swaps with stored 1H candles (once per run; instruments without a
 // known spec cannot be traded and are left out).
 func (r *replayer) cryptoIDs() ([]string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.crypto != nil {
-		return r.crypto, nil
+	r.mu.RLock()
+	cached := r.crypto
+	r.mu.RUnlock()
+	if cached != nil {
+		return cached, nil
 	}
 	if r.specs == nil {
 		return nil, fmt.Errorf("缺少合约规格，无法按品类筛选全市场")
 	}
-	ids, err := r.st.InstIDs("candles_1h")
+	ids, err := r.st.InstIDs("candles_1h") // a full scan: done without holding r.mu
 	if err != nil {
 		return nil, err
 	}
@@ -463,7 +466,9 @@ func (r *replayer) cryptoIDs() ([]string, error) {
 	}
 	sort.Strings(out)
 	if len(out) > 0 { // an empty list may mean the catalog was not loaded yet: ask again next time
+		r.mu.Lock()
 		r.crypto = out
+		r.mu.Unlock()
 	}
 	return out, nil
 }
@@ -480,6 +485,13 @@ func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
 		return nil, err
 	}
 	end := now / hourMs * hourMs
+	r.mu.Lock()
+	if r.marketRes != nil && r.marketEnd == end {
+		res := append([]ScreenRow(nil), r.marketRes...)
+		r.mu.Unlock()
+		return res, nil
+	}
+	r.mu.Unlock()
 	var out []ScreenRow
 	var turn []float64
 	// one primary-key range per instrument (candles_1h has no ts index)
@@ -508,10 +520,10 @@ func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
 	// that has never had a ranking fails.
 	if len(out) < len(last)/2 {
 		if now-lastAt <= marketGapMs {
-			return append([]ScreenRow(nil), last...), nil
+			return r.keepMarket(end, last), nil
 		}
 		if len(out) == 0 {
-			return []ScreenRow{}, nil
+			return r.keepMarket(end, []ScreenRow{}), nil
 		}
 	}
 	if len(out) == 0 {
@@ -535,7 +547,15 @@ func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
 	r.mu.Lock()
 	r.market, r.marketAt = ranked, now
 	r.mu.Unlock()
-	return append([]ScreenRow(nil), ranked...), nil
+	return r.keepMarket(end, ranked), nil
+}
+
+// keepMarket caches the result for the window ending at end and returns a copy.
+func (r *replayer) keepMarket(end int64, rows []ScreenRow) []ScreenRow {
+	r.mu.Lock()
+	r.marketEnd, r.marketRes = end, rows
+	r.mu.Unlock()
+	return append([]ScreenRow(nil), rows...)
 }
 
 func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
@@ -548,9 +568,7 @@ func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
 		if err != nil {
 			return nil, err
 		}
-		if q.Top <= 0 || q.Top > MaxMarketTop { // ctx.screener queries skip validUniverse
-			q.Top = MaxMarketTop
-		}
+		q = q.CappedTop()
 		if len(q.Filter) > 0 {
 			// rows are in rank order: compute factors only until Top rows pass the filter
 			var kept []ScreenRow
