@@ -25,6 +25,9 @@ trades, monthly P&L, exits, rejected signals), plus `trades.csv` and `equity.csv
 On a small machine run it in a capped container, e.g. with the strategy image:
 `docker run --rm --cpus 1 --memory 1200m --network none -v $PWD:/w -w /w --entrypoint python3 ctg-strategy:local research/altbt/run.py …`.
 
+`starts.py trades.csv …` measures start-date risk from a run's trades: for every start day, the
+trades opened in the next 365 days, the deepest dip below the start and the one-year P&L.
+
 ## Model
 
 Mirrors the Go backtest (`internal/trade`, see `harness.py` docstring): 1H base bars, signals fill at
