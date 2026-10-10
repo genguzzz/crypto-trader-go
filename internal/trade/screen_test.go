@@ -1,8 +1,12 @@
 package trade
 
 import (
+	"encoding/json"
+	"errors"
+	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"crypto-trader-go/internal/store"
 )
@@ -122,5 +126,42 @@ func TestMarketQuery(t *testing.T) {
 		if q, err := (ScreenerQuery{Scope: ScopeMarket, Top: top}).MarketQuery(); err != nil || q.Top != MaxMarketTop {
 			t.Fatalf("top %d → %d %v", top, q.Top, err)
 		}
+	}
+}
+
+func TestScreenRowJSONKeepsUnscoredNull(t *testing.T) {
+	b, err := json.Marshal(ScreenRow{InstID: "A", Rank: 1, Last: 2, Long: math.NaN(), Short: 30})
+	if err != nil || string(b) != `{"instId":"A","rank":1,"last":2,"long":null,"short":30,"values":null}` {
+		t.Fatalf("%s %v", b, err)
+	}
+}
+
+type flakyMD struct {
+	*fakeMD
+	fails int
+}
+
+func (m *flakyMD) Screener(q ScreenerQuery) ([]ScreenRow, error) {
+	if m.fails > 0 {
+		m.fails--
+		return nil, errors.New("snapshot not ready")
+	}
+	return m.fakeMD.Screener(q)
+}
+
+func TestUniverseRetriesAfterFailedStart(t *testing.T) {
+	md := &flakyMD{fakeMD: newFakeMD(t0), fails: 1}
+	md.screen = []ScreenRow{{InstID: "X-USDT-SWAP", Rank: 1}}
+	b := &book{}
+	b.setMarket(md)
+	ri := &instRT{inst: Instance{ID: 1, Universe: Universe{Screener: &ScreenerQuery{Scope: ScopeMarket, Top: 5, Refresh: "4H"}}},
+		b: b, wake: make(chan struct{}, 1)}
+	s := &Service{opts: Options{SessionTimeout: time.Second}}
+	if err := s.refreshUniverse(ri, t0, true); err == nil || !ri.universeRetry {
+		t.Fatalf("the start refresh should fail and ask for a retry: %v", err)
+	}
+	// one minute later, not on a 4H boundary: retried anyway
+	if err := s.refreshUniverse(ri, t0+minuteMs, false); err != nil || ri.universeRetry || len(ri.universe) != 1 {
+		t.Fatalf("retry: %v %v %v", err, ri.universeRetry, ri.universe)
 	}
 }

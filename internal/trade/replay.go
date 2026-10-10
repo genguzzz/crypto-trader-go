@@ -32,19 +32,20 @@ type replayer struct {
 	base     int64
 	table    string
 
-	mu        sync.RWMutex
-	now       int64
-	bars      map[string]*barSeries // base bars
-	fine      map[string]*barSeries // 1m bars for timeframes below an hourly base (read on demand)
-	hourly    map[string]*barSeries // 1H bars for factors
-	oi        map[string][]store.OISample
-	funding   map[string][]store.FundingSample // settled, ascending
-	scores    map[string]*scoreSet
-	crypto    []string    // crypto swaps with 1H history (market screener), nil until loaded
-	market    []ScreenRow // last full market ranking (kept across a gap in candles_1h)
-	marketAt  int64       // replay clock of that ranking
-	marketEnd int64       // window end of the last computed result (the ranking changes once per hour)
-	marketRes []ScreenRow // that result
+	mu          sync.RWMutex
+	now         int64
+	bars        map[string]*barSeries // base bars
+	fine        map[string]*barSeries // 1m bars for timeframes below an hourly base (read on demand)
+	hourly      map[string]*barSeries // 1H bars for factors
+	oi          map[string][]store.OISample
+	funding     map[string][]store.FundingSample // settled, ascending
+	scores      map[string]*scoreSet
+	crypto      []string    // crypto swaps with 1H history (market screener), nil until loaded
+	cryptoRetry int64       // replay clock before which an empty crypto list is not looked up again
+	market      []ScreenRow // last full market ranking (kept across a gap in candles_1h)
+	marketAt    int64       // replay clock of that ranking
+	marketEnd   int64       // window end of the last computed result (the ranking changes once per hour)
+	marketRes   []ScreenRow // that result
 }
 
 type barSeries struct {
@@ -446,10 +447,13 @@ func (r *replayer) poolAt(now int64) ([]ScreenRow, error) {
 // known spec cannot be traded and are left out).
 func (r *replayer) cryptoIDs() ([]string, error) {
 	r.mu.RLock()
-	cached := r.crypto
+	cached, retry, now := r.crypto, r.cryptoRetry, r.now
 	r.mu.RUnlock()
 	if cached != nil {
 		return cached, nil
+	}
+	if now < retry {
+		return nil, nil
 	}
 	if r.specs == nil {
 		return nil, fmt.Errorf("缺少合约规格，无法按品类筛选全市场")
@@ -465,11 +469,13 @@ func (r *replayer) cryptoIDs() ([]string, error) {
 		}
 	}
 	sort.Strings(out)
-	if len(out) > 0 { // an empty list may mean the catalog was not loaded yet: ask again next time
-		r.mu.Lock()
+	r.mu.Lock()
+	if len(out) > 0 {
 		r.crypto = out
-		r.mu.Unlock()
+	} else { // the catalog may not be loaded yet: ask again, at most once per replay day (a full scan)
+		r.cryptoRetry = r.now + dayMs
 	}
+	r.mu.Unlock()
 	return out, nil
 }
 
@@ -483,6 +489,9 @@ func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
 	ids, err := r.cryptoIDs()
 	if err != nil {
 		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("没有已知规格的加密合约 1H K 线（合约目录可能尚未加载），无法按成交额回放全市场")
 	}
 	end := now / hourMs * hourMs
 	r.mu.Lock()

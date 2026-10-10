@@ -1,6 +1,7 @@
 package mdlive
 
 import (
+	"math"
 	"testing"
 
 	"crypto-trader-go/internal/market"
@@ -30,7 +31,7 @@ func TestMarketRows(t *testing.T) {
 		}
 	}
 	sel := trade.SelectScreen(got, trade.ScreenerQuery{Scope: trade.ScopeMarket, Top: 2})
-	if len(sel) != 2 || sel[0].InstID != "B" || sel[1].InstID != "C" || sel[0].Long != 0 {
+	if len(sel) != 2 || sel[0].InstID != "B" || sel[1].InstID != "C" || !math.IsNaN(sel[0].Long) { // market rows are unscored, not 0
 		t.Fatalf("%+v", sel)
 	}
 	f := trade.SelectScreen(got, trade.ScreenerQuery{Scope: trade.ScopeMarket, Top: 10, Filter: map[string][2]float64{"x": {0, 2}}})

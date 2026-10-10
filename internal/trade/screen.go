@@ -58,13 +58,7 @@ func SelectScreen(rows []ScreenRow, q ScreenerQuery) []ScreenRow {
 	if q.Top > 0 && len(out) > q.Top {
 		out = out[:q.Top]
 	}
-	for i := range out {
-		if math.IsNaN(out[i].Long) {
-			out[i].Long = 0
-		}
-		if math.IsNaN(out[i].Short) {
-			out[i].Short = 0
-		}
+	for i := range out { // an unscored side stays NaN (null on the wire): unscored, never 0
 		if out[i].Values != nil {
 			v := make(map[string]float64, len(out[i].Values))
 			for k, x := range out[i].Values {

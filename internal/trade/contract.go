@@ -8,7 +8,9 @@ package trade
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"math"
 	"time"
 )
 
@@ -182,7 +184,7 @@ func (q ScreenerQuery) Market() bool { return q.Scope == ScopeMarket }
 // validUniverse) and bounds Top, so live and replay answer it the same way.
 func (q ScreenerQuery) MarketQuery() (ScreenerQuery, error) {
 	if q.Rule != "" {
-		return q, errors.New("全市场筛选不能指定评分规则")
+		return q, errors.New("全市场筛选按成交额排序，不能指定评分规则（评分只覆盖活跃池）")
 	}
 	if q.MinScore != 0 {
 		return q, errors.New("全市场筛选没有评分，不能设最低分")
@@ -416,9 +418,28 @@ type ScreenRow struct {
 	InstID string             `json:"instId"`
 	Rank   int                `json:"rank"`
 	Last   float64            `json:"last"`
-	Long   float64            `json:"long"`
-	Short  float64            `json:"short"`
+	Long   float64            `json:"long"`  // NaN = unscored (null in JSON)
+	Short  float64            `json:"short"` // NaN = unscored (null in JSON)
 	Values map[string]float64 `json:"values"`
+}
+
+// MarshalJSON writes an unscored side (NaN) as null: missing input is unscored, never 0.
+func (r ScreenRow) MarshalJSON() ([]byte, error) {
+	f := func(x float64) *float64 {
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return nil
+		}
+		return &x
+	}
+	type row struct {
+		InstID string             `json:"instId"`
+		Rank   int                `json:"rank"`
+		Last   *float64           `json:"last"`
+		Long   *float64           `json:"long"`
+		Short  *float64           `json:"short"`
+		Values map[string]float64 `json:"values"`
+	}
+	return json.Marshal(row{r.InstID, r.Rank, f(r.Last), f(r.Long), f(r.Short), r.Values})
 }
 
 // Interactor is the human interaction layer (internal/interact). Notify is fire-and-forget

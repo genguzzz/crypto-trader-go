@@ -25,8 +25,11 @@ type instRT struct {
 	sess     Session
 	q        []sessCall
 	universe []string
-	paused   bool
-	hbSaved  int64
+	// a forced refresh (session start) failed, e.g. the market snapshot was not ready: retry every
+	// minute instead of waiting up to a whole refresh interval with no universe
+	universeRetry bool
+	paused        bool
+	hbSaved       int64
 	// consecutive events whose strategy handler raised (3 → paused)
 	handlerErrs int
 	state       []byte
@@ -142,11 +145,8 @@ func (s *Service) validUniverse(u Universe) (Universe, error) {
 				return u, errBad(fmt.Sprintf("筛选数量 top 需在 1–%d", MaxPoolTop))
 			}
 		case ScopeMarket:
-			if q.Rule != "" {
-				return u, errBad("全市场筛选按成交额排序，不能指定评分规则（评分只覆盖活跃池）")
-			}
-			if q.MinScore != 0 {
-				return u, errBad("全市场筛选没有评分，不能设最低分")
+			if _, err := q.MarketQuery(); err != nil { // the same rule/minScore check as at runtime
+				return u, errBad(err.Error())
 			}
 			if q.Top < 1 || q.Top > MaxMarketTop {
 				return u, errBad(fmt.Sprintf("全市场筛选数量 top 需在 1–%d", MaxMarketTop))
@@ -550,7 +550,9 @@ func (s *Service) runLive(ctx context.Context, ri *instRT) {
 				st = StPaused
 			}
 			s.setRTState(ri, st, "")
-			s.refreshUniverse(ri, s.md.Now(), true)
+			if err := s.refreshUniverse(ri, s.md.Now(), true); err != nil {
+				log.Printf("trade: instance %d universe (retrying every minute): %v", ri.inst.ID, err)
+			}
 			s.updateKeep()
 			began := time.Now()
 			err = s.pump(ctx, ri, sess)
@@ -705,6 +707,9 @@ func (s *Service) persistState(ri *instRT, sess Session, write bool) {
 // the change for the strategy.
 func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	inst := ri.instance()
+	ri.mu.Lock()
+	force = force || ri.universeRetry
+	ri.mu.Unlock()
 	var cur []string
 	if q := inst.Universe.Screener; q != nil {
 		every, _ := refreshMillis(q.Refresh)
@@ -713,6 +718,11 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 		}
 		rows, err := ri.b.market().Screener(*q)
 		if err != nil {
+			if force {
+				ri.mu.Lock()
+				ri.universeRetry = true
+				ri.mu.Unlock()
+			}
 			return fmt.Errorf("筛选器：%w", err)
 		}
 		for _, r := range rows {
@@ -726,6 +736,7 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	}
 	sort.Strings(cur)
 	ri.mu.Lock()
+	ri.universeRetry = false
 	added, removed := diffSets(ri.universe, cur)
 	if !force && len(added) == 0 && len(removed) == 0 {
 		ri.mu.Unlock()
