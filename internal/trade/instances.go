@@ -727,9 +727,10 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	ri.universe = cur
 	ri.mu.Unlock()
 	cp := append([]string{}, cur...)
-	// the host allows 5 s + 0.5 s per added instrument (warm-up reads); leave it room to answer first
+	// the host allows its event timeout + 10 % per added instrument (warm-up reads); the same
+	// proportion of SessionTimeout (≥ the host's timeout) leaves it room to answer first
 	ri.push(sessCall{name: "universe", fn: func(ctx context.Context, x Session) error { return x.Universe(ctx, added, removed, cp) },
-		timeout: s.opts.SessionTimeout + time.Duration(len(added))*600*time.Millisecond})
+		timeout: s.opts.SessionTimeout + time.Duration(len(added))*s.opts.SessionTimeout/10})
 	return nil
 }
 

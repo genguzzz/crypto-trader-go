@@ -79,6 +79,9 @@ class ScreenerScopeTest(unittest.TestCase):
         self.assertNotIn("scope", Screener(rule="r", scope="pool").to_wire())
         w = Screener(top=300, scope="market", filter={"spread_bps": (0, 10)}).to_wire()
         self.assertEqual((w["scope"], w["top"], w["rule"]), ("market", 300, ""))
+        from ctg.context import Context
+        with self.assertRaises(ValueError):  # a typo must not silently fall back to the pool
+            Context(None).screener(top=200, scope="Market")
 
     def _msgs(self, screener: str) -> list[str]:
         code = ("from ctg import Strategy, Screener\n"

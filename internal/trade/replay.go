@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +40,8 @@ type replayer struct {
 	oi      map[string][]store.OISample
 	funding map[string][]store.FundingSample // settled, ascending
 	scores  map[string]*scoreSet
-	crypto  []string // crypto swaps with 1H history (market screener), nil until loaded
+	crypto  []string    // crypto swaps with 1H history (market screener), nil until loaded
+	market  []ScreenRow // last non-empty market ranking (kept across a gap in candles_1h)
 }
 
 type barSeries struct {
@@ -473,35 +473,42 @@ func (r *replayer) marketAt(now int64) ([]ScreenRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	crypto := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		crypto[id] = true
+	}
 	end := now / hourMs * hourMs
 	var out []ScreenRow
 	var turn []float64
-	if len(ids) > 0 {
-		args := make([]any, 0, len(ids)+2)
-		for _, id := range ids {
-			args = append(args, id)
-		}
-		args = append(args, end-12*hourMs, end)
-		rows, err := r.db.Query(`SELECT inst_id, SUM(quote) FROM candles_1h WHERE inst_id IN (?`+strings.Repeat(",?", len(ids)-1)+
-			`) AND ts>=? AND ts<? GROUP BY inst_id HAVING COUNT(quote)=12 AND SUM(quote)>0`, args...)
-		if err != nil {
+	rows, err := r.db.Query(`SELECT inst_id, SUM(quote) FROM candles_1h WHERE ts>=? AND ts<? GROUP BY inst_id
+		HAVING COUNT(quote)=12 AND SUM(quote)>0`, end-12*hourMs, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var v float64
+		if err := rows.Scan(&id, &v); err != nil {
 			return nil, err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var id string
-			var v float64
-			if err := rows.Scan(&id, &v); err != nil {
-				return nil, err
-			}
+		if crypto[id] {
 			out = append(out, ScreenRow{InstID: id, Long: math.NaN(), Short: math.NaN()})
 			turn = append(turn, v)
 		}
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if len(out) == 0 {
+		// a gap in the stored 1H history (recorder downtime): keep the last ranking rather than
+		// failing the run; only a run that starts without any history fails
+		r.mu.Lock()
+		last := r.market
+		r.mu.Unlock()
+		if last != nil {
+			return append([]ScreenRow(nil), last...), nil
+		}
 		return nil, fmt.Errorf("缺少 %s 前 12 小时的 1H K 线，无法按成交额回放全市场", fmtTime(end))
 	}
 	idx := make([]int, len(out))
@@ -519,7 +526,10 @@ func (r *replayer) marketAt(now int64) ([]ScreenRow, error) {
 		ranked[i] = out[k]
 		ranked[i].Rank = i + 1
 	}
-	return ranked, nil
+	r.mu.Lock()
+	r.market = ranked
+	r.mu.Unlock()
+	return append([]ScreenRow(nil), ranked...), nil
 }
 
 func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
@@ -533,9 +543,18 @@ func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
 			return nil, err
 		}
 		if len(q.Filter) > 0 {
+			// rows are in rank order: compute factors only until Top rows pass the filter
+			var kept []ScreenRow
 			for i := range rows {
 				rows[i].Values, _ = r.Factors(rows[i].InstID)
+				if len(SelectScreen(rows[i:i+1], q)) == 1 {
+					kept = append(kept, rows[i])
+					if q.Top > 0 && len(kept) >= q.Top {
+						break
+					}
+				}
 			}
+			rows = kept
 		}
 		out := SelectScreen(rows, q)
 		for i := range out { // only the selected rows: loading every candidate's bars is costly

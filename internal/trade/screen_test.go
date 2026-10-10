@@ -90,8 +90,13 @@ func TestReplayerMarketScreener(t *testing.T) {
 	if _, err := rp.Screener(ScreenerQuery{Scope: ScopeMarket, Top: 2, Rule: "r"}); err == nil {
 		t.Fatal("a rule must be rejected in market scope")
 	}
-	rp.setNow(t0 + 5*hourMs) // not 12 hours of history yet
-	if _, err := rp.Screener(ScreenerQuery{Scope: ScopeMarket, Top: 2}); err == nil || !strings.Contains(err.Error(), "1H K 线") {
+	rp.setNow(t0 + 40*hourMs) // a gap in the stored history after a ranking: keep the last one
+	if kept, err := rp.Screener(ScreenerQuery{Scope: ScopeMarket, Top: 2}); err != nil || len(kept) != 2 || kept[0].InstID != "B-USDT-SWAP" {
+		t.Fatalf("want the last ranking across a gap, got %+v %v", kept, err)
+	}
+	fresh := newReplayer(st, func(id string) (Spec, bool) { s, ok := specs[id]; return s, ok }, t0, t0+24*hourMs, hourMs)
+	fresh.setNow(t0 + 5*hourMs) // not 12 hours of history yet and no earlier ranking
+	if _, err := fresh.Screener(ScreenerQuery{Scope: ScopeMarket, Top: 2}); err == nil || !strings.Contains(err.Error(), "1H K 线") {
 		t.Fatalf("want a missing-history error, got %v", err)
 	}
 	if _, err := newReplayer(st, nil, t0, t0+hourMs, hourMs).Screener(ScreenerQuery{Scope: ScopeMarket, Top: 2}); err == nil {
