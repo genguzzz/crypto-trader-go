@@ -130,7 +130,11 @@ class AltRegimeTrend(Strategy):
         weak_mkt = breadth < self.short_breadth
 
         out = self._exits(ctx)
-        free = self.max_pos - len(held)   # 本根发出的平仓下一根才成交，不立刻腾出名额
+        # 已发出、还没成交的开仓信号（确认模式下可能等一会儿）也占名额；成交或超过一根 K 线就清掉
+        pending = ctx.state.setdefault("pending", {})
+        for inst in [i for i, t in pending.items() if i in held or ctx.now - t >= BAR_MS]:
+            del pending[inst]
+        free = self.max_pos - len(held) - len(pending)   # 本根发出的平仓下一根才成交，不立刻腾出名额
         legs = ctx.state.setdefault("legs", {})
         last_close = ctx.state.setdefault("closed", {})
         cool = self.cooldown_h * 3600_000
@@ -166,7 +170,7 @@ class AltRegimeTrend(Strategy):
         for score, inst, side, leg, why in cands:
             if free <= 0 or m <= 0:
                 break
-            if inst in held or ctx.now - last_close.get(inst, 0) < cool:
+            if inst in held or inst in pending or ctx.now - last_close.get(inst, 0) < cool:
                 continue
             v = cols[inst]
             sig = self._open(ctx, acct, m, inst, side, leg, v, why)
@@ -174,6 +178,7 @@ class AltRegimeTrend(Strategy):
                 continue
             out.append(sig)
             legs[inst] = leg
+            pending[inst] = ctx.now
             free -= 1
             if self.notify:
                 ctx.notify(f"{inst.replace('-USDT-SWAP', '')} {'开多' if side == 'long' else '开空'}：{why}")

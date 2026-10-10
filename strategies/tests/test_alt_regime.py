@@ -160,6 +160,17 @@ class AltRegimeTrendTest(unittest.TestCase):
         self.assertGreater(sig.stop_loss, 0)
         self.assertAlmostEqual((3.0 - sig.stop_loss) / 3.0, 0.5)
 
+    def test_pending_open_holds_its_slot(self):
+        s = AltRegimeTrend({"margin_usdt": 125, "max_pos": 1})
+        bars = market(0.002, breakout="X-USDT-SWAP")
+        ctx, out = run(s, bars)
+        self.assertEqual([x.inst for x in out if x.action == "open_long"], ["X-USDT-SWAP"])
+        last = {i: bar_of(i, r[-1]) for i, r in bars.items() if i != BTC}
+        again = s.on_bars(ctx, last) or []                 # same bar time, signal not filled yet
+        self.assertFalse([x for x in again if x.action.startswith("open")])
+        ctx.now += 4 * 3600_000                            # a bar later and still not held: expired
+        self.assertTrue([x for x in (s.on_bars(ctx, last) or []) if x.action.startswith("open")])
+
     def test_suggested_margin(self):
         s = AltRegimeTrend({"aggr": 1.0, "style": 1})        # aggressive: dd95 = 50 margins
         self.assertAlmostEqual(s.suggested_margin(3000), 3000 * 0.5 / 50)

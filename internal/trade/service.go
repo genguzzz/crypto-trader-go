@@ -17,7 +17,7 @@ import (
 type Options struct {
 	PricePoll       time.Duration // live stop/target/limit/liquidation polling (default 1.5 s)
 	MaintMarginRate float64       // flat maintenance margin rate (default 0.5%; TODO OKX tiers)
-	SessionTimeout  time.Duration // upper bound per strategy event (default 10 s; the host kills at 5 s)
+	SessionTimeout  time.Duration // upper bound per strategy event (default 10 s; the host kills at 5 s); keep ≥ the host's EventTimeout
 	FundingGrace    time.Duration // live: how long to wait for a settled rate after a settlement hour (default 10 min)
 	RunnerRetry     time.Duration // live: wait between start attempts while the runner is offline (default 10 s)
 }

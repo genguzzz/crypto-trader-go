@@ -32,16 +32,17 @@ type replayer struct {
 	base     int64
 	table    string
 
-	mu      sync.RWMutex
-	now     int64
-	bars    map[string]*barSeries // base bars
-	fine    map[string]*barSeries // 1m bars for timeframes below an hourly base (read on demand)
-	hourly  map[string]*barSeries // 1H bars for factors
-	oi      map[string][]store.OISample
-	funding map[string][]store.FundingSample // settled, ascending
-	scores  map[string]*scoreSet
-	crypto  []string    // crypto swaps with 1H history (market screener), nil until loaded
-	market  []ScreenRow // last non-empty market ranking (kept across a gap in candles_1h)
+	mu       sync.RWMutex
+	now      int64
+	bars     map[string]*barSeries // base bars
+	fine     map[string]*barSeries // 1m bars for timeframes below an hourly base (read on demand)
+	hourly   map[string]*barSeries // 1H bars for factors
+	oi       map[string][]store.OISample
+	funding  map[string][]store.FundingSample // settled, ascending
+	scores   map[string]*scoreSet
+	crypto   []string    // crypto swaps with 1H history (market screener), nil until loaded
+	market   []ScreenRow // last full market ranking (kept across a gap in candles_1h)
+	marketAt int64       // replay clock of that ranking
 }
 
 type barSeries struct {
@@ -465,10 +466,13 @@ func (r *replayer) cryptoIDs() ([]string, error) {
 	return out, nil
 }
 
-// marketAt ranks the crypto swaps by USDT turnover over the 12 complete hours before now
+// marketRank ranks the crypto swaps by USDT turnover over the 12 complete hours before now
 // (candles_1h quote volume; an instrument missing any of the 12 hours is left out — a gap, not
 // zero), descending.
-func (r *replayer) marketAt(now int64) ([]ScreenRow, error) {
+// marketGapMs is how long a market ranking is kept across a gap in the 1H history.
+const marketGapMs = 24 * hourMs
+
+func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
 	ids, err := r.cryptoIDs()
 	if err != nil {
 		return nil, err
@@ -500,15 +504,16 @@ func (r *replayer) marketAt(now int64) ([]ScreenRow, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	r.mu.Lock()
+	last, lastAt := r.market, r.marketAt
+	r.mu.Unlock()
+	// A gap in the stored 1H history (recorder downtime) leaves out every instrument missing an
+	// hour: when fewer than half of the last ranking remain, keep that ranking for up to a day
+	// rather than shrinking the universe or failing the run.
+	if len(out) < len(last)/2 && now-lastAt <= marketGapMs {
+		return append([]ScreenRow(nil), last...), nil
+	}
 	if len(out) == 0 {
-		// a gap in the stored 1H history (recorder downtime): keep the last ranking rather than
-		// failing the run; only a run that starts without any history fails
-		r.mu.Lock()
-		last := r.market
-		r.mu.Unlock()
-		if last != nil {
-			return append([]ScreenRow(nil), last...), nil
-		}
 		return nil, fmt.Errorf("缺少 %s 前 12 小时的 1H K 线，无法按成交额回放全市场", fmtTime(end))
 	}
 	idx := make([]int, len(out))
@@ -527,7 +532,7 @@ func (r *replayer) marketAt(now int64) ([]ScreenRow, error) {
 		ranked[i].Rank = i + 1
 	}
 	r.mu.Lock()
-	r.market = ranked
+	r.market, r.marketAt = ranked, now
 	r.mu.Unlock()
 	return append([]ScreenRow(nil), ranked...), nil
 }
@@ -538,7 +543,7 @@ func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
 		if q.Rule != "" {
 			return nil, fmt.Errorf("全市场筛选不能指定评分规则")
 		}
-		rows, err := r.marketAt(now)
+		rows, err := r.marketRank(now)
 		if err != nil {
 			return nil, err
 		}

@@ -142,8 +142,10 @@ class Context:
         """Like Screener(...): scope="pool" ranks the active pool (by `rule` when given), scope="market"
         every recorded crypto swap by 12h USDT turnover (no rule). Rows: inst_id, rank, last, long,
         short, values."""
-        if scope not in ("pool", "market"):
-            raise ValueError(f"scope must be 'pool' or 'market', not {scope!r}")
+        from .strategy import Screener
+
+        if scope not in Screener.SCOPES:
+            raise ValueError(f"scope must be one of {Screener.SCOPES}, not {scope!r}")
         q: dict[str, Any] = {"rule": rule, "side": side, "top": int(top)}
         if scope == "market":
             q["scope"] = "market"
