@@ -223,3 +223,21 @@ class PortfolioTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RankUnscoredTest(unittest.TestCase):
+    """An unscored side arrives as null (never 0) and must never win in side="both"."""
+
+    class RT:
+        def query(self, method, args):
+            return [{"instId": "A", "long": None, "short": 85}, {"instId": "B", "long": 70, "short": None},
+                    {"instId": "C", "long": 60, "short": 65}, {"instId": "D", "long": None, "short": None}]
+
+    def test_both_sides(self):
+        from ctg.context import Context
+        ctx = Context(self.RT())
+        got = [(r.inst_id, r.side, r.score) for r in ctx.rank("r", side="both")]
+        self.assertEqual(got, [("A", "short", 85), ("B", "long", 70), ("C", "short", 65)])
+        rows = ctx.screener("r")
+        self.assertTrue(math.isnan(rows[0].long) and rows[0].short == 85)
+        self.assertFalse(rows[3].short < 30)   # NaN compares False instead of raising

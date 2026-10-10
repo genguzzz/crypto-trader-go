@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"time"
 
@@ -160,23 +159,15 @@ func (m *MD) Screener(q trade.ScreenerQuery) ([]trade.ScreenRow, error) {
 // descending (rank 1 = largest). Instruments without a full 12h window (new, stale; a missing
 // minute is a gap, not zero) are left out; a warming instrument counts with its provisional value.
 func MarketRows(rows []market.Row) []trade.ScreenRow {
-	var xs []market.Row
+	var out []trade.ScreenRow
+	var turn []float64
 	for _, r := range rows {
 		if r.Eligible && r.Category == trade.CategoryCrypto && r.Turnover12h > 0 && (r.Status == "live" || r.Provisional) {
-			xs = append(xs, r)
+			out = append(out, trade.ScreenRow{InstID: r.InstID, Last: r.Last, Long: math.NaN(), Short: math.NaN(), Values: r.Values})
+			turn = append(turn, r.Turnover12h)
 		}
 	}
-	sort.SliceStable(xs, func(i, j int) bool {
-		if xs[i].Turnover12h != xs[j].Turnover12h {
-			return xs[i].Turnover12h > xs[j].Turnover12h
-		}
-		return xs[i].InstID < xs[j].InstID
-	})
-	out := make([]trade.ScreenRow, len(xs))
-	for i, r := range xs {
-		out[i] = trade.ScreenRow{InstID: r.InstID, Rank: i + 1, Last: r.Last, Long: math.NaN(), Short: math.NaN(), Values: r.Values}
-	}
-	return out
+	return trade.RankByTurnover(out, turn)
 }
 
 // Score returns a rule's scores of the last confirmed snapshot (active pool and watchlist rows);

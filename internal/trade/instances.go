@@ -708,7 +708,8 @@ func (s *Service) persistState(ri *instRT, sess Session, write bool) {
 func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	inst := ri.instance()
 	ri.mu.Lock()
-	force = force || ri.universeRetry
+	retrying := ri.universeRetry
+	force = force || retrying
 	ri.mu.Unlock()
 	var cur []string
 	if q := inst.Universe.Screener; q != nil {
@@ -722,6 +723,9 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 				ri.mu.Lock()
 				ri.universeRetry = true
 				ri.mu.Unlock()
+				if retrying {
+					return nil // already reported when the retries began; keep trying quietly
+				}
 			}
 			return fmt.Errorf("筛选器：%w", err)
 		}

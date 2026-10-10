@@ -129,7 +129,12 @@ class Context:
             if want is not None and r.inst_id not in want:
                 continue
             lg, sh = _f(r.get("long")), _f(r.get("short"))
-            s = side if side != "both" else ("short" if sh > lg else "long")
+            if side != "both":
+                s = side
+            elif math.isnan(lg) or (not math.isnan(sh) and sh > lg):   # an unscored side never wins
+                s = "short"
+            else:
+                s = "long"
             score = sh if s == "short" else lg
             if math.isnan(score) or (min_score is not None and score < min_score):
                 continue
@@ -141,7 +146,7 @@ class Context:
                  filter: dict | None = None, scope: str = "pool") -> list[Record]:
         """Like Screener(...): scope="pool" ranks the active pool (by `rule` when given), scope="market"
         every recorded crypto swap by 12h USDT turnover (no rule). Rows: inst_id, rank, last, long,
-        short, values."""
+        short, values; an unscored side is NaN (always for market rows)."""
         from .strategy import Screener
 
         if scope not in Screener.SCOPES:
@@ -155,7 +160,11 @@ class Context:
             q["minScore"] = float(min_score)
         if filter:
             q["filter"] = {k: [float(v[0]), float(v[1])] for k, v in filter.items()}
-        return record(self._rt.query("screener", q) or [])
+        rows = record(self._rt.query("screener", q) or [])
+        for r in rows:  # unscored / unknown come as null: NaN, like ctx.score (comparisons are False, not errors)
+            for k in ("long", "short", "last"):
+                r[k] = _f(r.get(k))
+        return rows
 
     def score(self, rule: str, inst: str) -> tuple[float, float]:
         """(long, short) score of a rule, NaN when unscored."""

@@ -540,21 +540,7 @@ func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
 	if len(out) == 0 {
 		return nil, fmt.Errorf("缺少 %s 前 12 小时的 1H K 线，无法按成交额回放全市场", fmtTime(end))
 	}
-	idx := make([]int, len(out))
-	for i := range idx {
-		idx[i] = i
-	}
-	sort.SliceStable(idx, func(a, b int) bool {
-		if turn[idx[a]] != turn[idx[b]] {
-			return turn[idx[a]] > turn[idx[b]]
-		}
-		return out[idx[a]].InstID < out[idx[b]].InstID
-	})
-	ranked := make([]ScreenRow, len(out))
-	for i, k := range idx {
-		ranked[i] = out[k]
-		ranked[i].Rank = i + 1
-	}
+	ranked := RankByTurnover(out, turn)
 	r.mu.Lock()
 	r.market, r.marketAt = ranked, now
 	r.mu.Unlock()
