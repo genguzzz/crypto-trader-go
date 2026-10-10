@@ -138,6 +138,25 @@ margins ≈ 6–7.5 k USDT) is the safer planning number.
   during the moves that matter is likely worse than 5 bp.
 - **In-app backtests** can only replay the ~50 days of 1H history kept in production.
 
+## Reproducing and continuing
+
+This is a long-running line of work; everything needed to pick it up is in the repository.
+
+| Asset | Where |
+|---|---|
+| Literature notes (verified sources) | [research-alt-perps-literature.md](research-alt-perps-literature.md) |
+| Research engine and every experiment above, with an index of questions and findings | [`research/altstudy/`](../research/altstudy/README.md) |
+| Offline backtest of a strategy file (SDK runtime + Go backtest model) | [`research/altbt/`](../research/altbt/README.md) |
+| Data: hourly OKX panel (2024-10-01 →, all USDT swaps, funding where served) | `data/altbt/panel.npz` from `research/altbt/fetch.py`; the owner's copy is on the server in `/opt/ctg-research/repo/data/altbt/`, extended weekly with `fetch.py --update` (instruments delisted after a download keep their history) |
+| Strategy and tests | `strategies/library/alt_regime.py`, `strategies/tests/test_alt_regime.py` |
+
+On the server, research runs in resource-capped throwaway containers so production is unaffected:
+`/opt/ctg-research/bt.sh <script> …` (strategy image, numpy only, no network) for `research/altbt`, and the
+`ctg-research` image (`research/altstudy/Dockerfile`) for `research/altstudy`. Workflow for a change:
+idea → experiment in `altstudy` (both years, plateau, net without the best five) → port into the
+strategy → `altbt` run of the strategy file → update this note and the strategy's `dd95` when the
+risk profile changes.
+
 ## Next ideas (not implemented)
 
 - A funding/basis crowding filter for the trend leg (BIS WP 1087).

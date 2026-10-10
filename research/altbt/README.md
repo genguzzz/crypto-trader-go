@@ -36,3 +36,13 @@ lot sizes, maintenance-margin tiers, AI review and confirmations, adding to posi
 
 Known biases: instruments delisted before the download are missing (survivorship); OKX serves only
 ~3 months of funding history, earlier hours use `--funding-default` (0.01 % per 8h, longs pay).
+
+## Server setup (owner's research box)
+
+`ops/` holds the two scripts installed under `/opt/ctg-research/` on the server, next to a copy of
+this repository in `/opt/ctg-research/repo` (code synced by hand; data in `repo/data/altbt/`):
+
+- `bt.sh <script> …` — runs a Python script of the repo in a throwaway container (strategy image,
+  1 CPU, 1.2 GB, no network, `nice`), so research never competes with production.
+- `update-data.sh` — weekly cron (`13 4 * * 0`) extending the panel with `fetch.py --update` in the
+  `ctg-research` image (`research/altstudy/Dockerfile`); log in `/opt/ctg-research/update-data.log`.
