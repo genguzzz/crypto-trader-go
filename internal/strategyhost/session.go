@@ -228,16 +228,7 @@ func (s *session) event(ctx context.Context, typ string, fields map[string]any) 
 	}
 	select {
 	case d := <-s.doneCh:
-		s.mu.Lock()
-		if d.err == "" {
-			s.handlerErrs = 0
-			s.mu.Unlock()
-			return nil
-		}
-		s.handlerErrs++
-		n := s.handlerErrs
-		s.mu.Unlock()
-		return &HandlerError{Event: typ, Msg: d.err, Consecutive: n}
+		return s.handled(typ, d)
 	case <-evCtx.Done():
 		var err error
 		if ctx.Err() != nil {
@@ -248,6 +239,13 @@ func (s *session) event(ctx context.Context, typ string, fields map[string]any) 
 		s.kill(err)
 		return err
 	case <-s.connDead:
+		// The reader queues a done before it stops, so the process may have answered and then
+		// closed (as it does after stop); select picks either ready case at random.
+		select {
+		case d := <-s.doneCh:
+			return s.handled(typ, d)
+		default:
+		}
 		// Give the supervisor's exit report (with stderr) a moment to land.
 		select {
 		case <-s.exit:
@@ -258,6 +256,18 @@ func (s *session) event(ctx context.Context, typ string, fields map[string]any) 
 		}
 		return fmt.Errorf("%w: connection closed", trade.ErrFaulted)
 	}
+}
+
+// handled records an acknowledged event and returns the handler's error, if any.
+func (s *session) handled(typ string, d doneMsg) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d.err == "" {
+		s.handlerErrs = 0
+		return nil
+	}
+	s.handlerErrs++
+	return &HandlerError{Event: typ, Msg: d.err, Consecutive: s.handlerErrs}
 }
 
 // deadErr returns the fault once the session ended or its connection dropped.
