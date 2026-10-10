@@ -129,8 +129,9 @@ func (s *session) Status() string {
 }
 
 func (s *session) Universe(ctx context.Context, added, removed, current []string) error {
+	// the strategy may warm up every added instrument: the same per-instrument allowance as a bar batch
 	return s.event(ctx, "universe", map[string]any{"added": strs(added), "removed": strs(removed),
-		"current": strs(current)})
+		"current": strs(current), "_extra": len(added)})
 }
 
 func (s *session) Fill(ctx context.Context, f trade.Fill) error {
@@ -193,15 +194,20 @@ func (s *session) event(ctx context.Context, typ string, fields map[string]any) 
 	}
 	msg := map[string]any{}
 	var closes map[string]float64
+	extra := 0 // instruments that earn extra time
 	for k, v := range fields {
-		if k == "_closes" {
+		switch k {
+		case "_closes":
 			closes = v.(map[string]float64)
-			continue
+			extra = len(closes)
+		case "_extra":
+			extra = v.(int)
+		default:
+			msg[k] = v
 		}
-		msg[k] = v
 	}
-	// a batch of bars gets the per-event budget plus a little per instrument
-	evCtx, cancel := context.WithTimeout(ctx, s.h.opts.EventTimeout+time.Duration(len(closes))*s.h.opts.EventTimeout/10)
+	// a batch of bars (or a universe change) gets the per-event budget plus a little per instrument
+	evCtx, cancel := context.WithTimeout(ctx, s.h.opts.EventTimeout+time.Duration(extra)*s.h.opts.EventTimeout/10)
 	defer cancel()
 
 	s.mu.Lock()

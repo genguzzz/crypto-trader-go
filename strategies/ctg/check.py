@@ -103,8 +103,14 @@ def check_class(cls, code: str) -> list[dict]:
     if isinstance(u, Screener):
         if u.side not in ("long", "short", "both"):
             bad("universe", "Screener 的 side 需为 long、short 或 both")
-        if not 1 <= u.top <= 50:
-            bad("universe", "Screener 的 top 需在 1–50")
+        if u.scope not in Screener.SCOPES:
+            bad("universe", "Screener 的 scope 需为 pool 或 market")
+        elif not 1 <= u.top <= u.max_top():
+            bad("universe", f"Screener 的 top 需在 1–{u.max_top()}" + ("（全市场）" if u.scope == "market" else ""))
+        if u.scope == "market" and u.rule:
+            bad("universe", "全市场 Screener 按成交额排序，不能指定 rule（评分只覆盖活跃池）")
+        if u.scope == "market" and u.min_score is not None:
+            bad("universe", "全市场 Screener 没有评分，不能设 min_score")
         if u.refresh not in ("5m", "15m", "1H", "4H", "1D"):
             bad("universe", "Screener 的 refresh 需为 5m / 15m / 1H / 4H / 1D")
         if u.min_score is not None and not 0 <= u.min_score <= 100:

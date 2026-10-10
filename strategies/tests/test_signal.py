@@ -73,6 +73,29 @@ class StrategyTest(unittest.TestCase):
                                                       "minScore": 60.0, "filter": {"spread_bps": [0.0, 10.0]}}})
 
 
+class ScreenerScopeTest(unittest.TestCase):
+    def test_wire(self):
+        self.assertNotIn("scope", Screener(rule="r").to_wire())
+        self.assertNotIn("scope", Screener(rule="r", scope="pool").to_wire())
+        w = Screener(top=300, scope="market", filter={"spread_bps": (0, 10)}).to_wire()
+        self.assertEqual((w["scope"], w["top"], w["rule"]), ("market", 300, ""))
+
+    def _msgs(self, screener: str) -> list[str]:
+        code = ("from ctg import Strategy, Screener\n"
+                "class S(Strategy):\n"
+                f"    universe = {screener}\n")
+        return [d["message"] for d in check(code)["diagnostics"] if ".universe" in d["message"]]
+
+    def test_check(self):
+        self.assertEqual(self._msgs('Screener(top=300, scope="market")'), [])
+        self.assertEqual(self._msgs('Screener(rule="r", top=50)'), [])
+        self.assertTrue(any("1–50" in m for m in self._msgs('Screener(rule="r", top=51)')))
+        self.assertTrue(any("1–300" in m for m in self._msgs('Screener(top=301, scope="market")')))
+        self.assertTrue(any("rule" in m for m in self._msgs('Screener(rule="r", top=10, scope="market")')))
+        self.assertTrue(any("min_score" in m for m in self._msgs('Screener(top=10, min_score=50, scope="market")')))
+        self.assertTrue(any("scope" in m for m in self._msgs('Screener(top=10, scope="all")')))
+
+
 class NewSignalTest(unittest.TestCase):
     def test_percent_trailing_time_limit(self):
         w = Signal.open("X", "short", stop_loss="2%", take_profit="1%", trailing_stop="1.5atr", time_limit="6h").to_wire(100, 2)

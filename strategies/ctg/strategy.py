@@ -184,17 +184,28 @@ class Timeframe(Choice):
 
 
 class Screener:
-    """Dynamic universe: the top instruments of the pool by a rule's score, re-evaluated every `refresh`.
+    """Dynamic universe re-evaluated every `refresh`.
 
-    side: long | short | both (ranked by the stronger side)."""
+    scope="pool" (default): the active pool, ranked by a rule's score on `side` (long | short | both,
+    the stronger side), else by pool rank; top 1–50.
+    scope="market": every recorded crypto USDT swap ranked by 12h USDT turnover, descending; top 1–300.
+    No rule or min_score (scores exist only for pool rows); `filter` still applies."""
+
+    SCOPES = ("pool", "market")
 
     def __init__(self, rule: str = "", side: str = "long", top: int = 20, min_score: float | None = None,
-                 filter: dict[str, tuple[float, float]] | None = None, refresh: str = "1H"):
+                 filter: dict[str, tuple[float, float]] | None = None, refresh: str = "1H", scope: str = "pool"):
         self.rule, self.side, self.top = rule, side, int(top)
         self.min_score, self.filter, self.refresh = min_score, filter or {}, refresh
+        self.scope = scope
+
+    def max_top(self) -> int:
+        return 300 if self.scope == "market" else 50
 
     def to_wire(self) -> dict:
         d: dict[str, Any] = {"rule": self.rule, "side": self.side, "top": self.top, "refresh": self.refresh}
+        if self.scope == "market":
+            d["scope"] = "market"
         if self.min_score is not None:
             d["minScore"] = float(self.min_score)
         if self.filter:

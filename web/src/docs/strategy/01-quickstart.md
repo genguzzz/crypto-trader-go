@@ -89,7 +89,8 @@ class MyBreakout(Strategy):
 | `周期 '…' 不在 [...] 里` / `周期参数请用 Timeframe(...)` | 错误 | 周期只能是 `1m 5m 15m 1H 4H 1D`；做成参数要用 `Timeframe` |
 | `'…' 不是 BTC-USDT-SWAP 这样的合约 ID` | 错误 | 合约要写全称 |
 | `universe 为空：列出合约，或用 Screener` | 提醒 | 固定列表为空时，记得在实例里选标的或改用 Screener |
-| `最多 50 个合约` / `Screener 的 top 需在 1–50` | 错误 | 标的最多 50 个 |
+| `最多 50 个合约` / `Screener 的 top 需在 1–50` | 错误 | 固定列表和活跃池筛选最多 50 个；全市场筛选（`scope="market"`）最多 300 个 |
+| `全市场 Screener 按成交额排序，不能指定 rule` | 错误 | `scope="market"` 不用评分，去掉 `rule` / `min_score` |
 | `Screener 的 refresh 需为 5m / 15m / 1H / 4H / 1D` / `Screener 的 min_score 需在 0–100` | 错误 | 见 [多币种与组合](/help/strategy/portfolio) |
 | `定时器 'x' 的间隔 '…' 不在 [...] 里` | 错误 | `schedule` 的间隔同样只能是上面 6 种周期 |
 | `默认值 5 超出范围 [10, None]` 等参数问题 | 错误 | 默认值要在范围内，见 [参数声明](/help/strategy/params) |

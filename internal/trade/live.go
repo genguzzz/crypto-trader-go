@@ -240,6 +240,12 @@ func (s *Service) updateKeep() {
 	}
 	s.kept = want
 	s.mu.Unlock()
+	if kb, ok := s.md.(KeepBatcher); ok {
+		if len(on) > 0 || len(off) > 0 {
+			kb.KeepMany(on, off)
+		}
+		return
+	}
 	for _, id := range on {
 		s.md.Keep(id, true)
 	}

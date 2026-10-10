@@ -134,8 +134,25 @@ func (s *Service) validUniverse(u Universe) (Universe, error) {
 		if q.Side != "" && q.Side != "long" && q.Side != "short" && q.Side != "both" {
 			return u, errBad("筛选方向需为 long / short / both")
 		}
-		if q.Top < 1 || q.Top > 50 {
-			return u, errBad("筛选数量 top 需在 1–50")
+		q.Scope = strings.ToLower(strings.TrimSpace(q.Scope))
+		switch q.Scope {
+		case "", ScopePool:
+			q.Scope = ""
+			if q.Top < 1 || q.Top > MaxPoolTop {
+				return u, errBad(fmt.Sprintf("筛选数量 top 需在 1–%d", MaxPoolTop))
+			}
+		case ScopeMarket:
+			if q.Rule != "" {
+				return u, errBad("全市场筛选按成交额排序，不能指定评分规则（评分只覆盖活跃池）")
+			}
+			if q.MinScore != 0 {
+				return u, errBad("全市场筛选没有评分，不能设最低分")
+			}
+			if q.Top < 1 || q.Top > MaxMarketTop {
+				return u, errBad(fmt.Sprintf("全市场筛选数量 top 需在 1–%d", MaxMarketTop))
+			}
+		default:
+			return u, errBad("筛选范围 scope 需为 pool 或 market")
 		}
 		if q.MinScore < 0 || q.MinScore > 100 {
 			return u, errBad("最低分需在 0–100")
@@ -710,7 +727,9 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	ri.universe = cur
 	ri.mu.Unlock()
 	cp := append([]string{}, cur...)
-	ri.push(sessCall{name: "universe", fn: func(ctx context.Context, x Session) error { return x.Universe(ctx, added, removed, cp) }})
+	// the host allows 5 s + 0.5 s per added instrument (warm-up reads); leave it room to answer first
+	ri.push(sessCall{name: "universe", fn: func(ctx context.Context, x Session) error { return x.Universe(ctx, added, removed, cp) },
+		timeout: s.opts.SessionTimeout + time.Duration(len(added))*600*time.Millisecond})
 	return nil
 }
 

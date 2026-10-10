@@ -138,8 +138,13 @@ class Context:
         return out[:top] if top else out
 
     def screener(self, rule: str = "", side: str = "long", top: int = 20, min_score: float | None = None,
-                 filter: dict | None = None) -> list[Record]:
+                 filter: dict | None = None, scope: str = "pool") -> list[Record]:
+        """Like Screener(...): scope="pool" ranks the active pool (by `rule` when given), scope="market"
+        every recorded crypto swap by 12h USDT turnover (no rule). Rows: inst_id, rank, last, long,
+        short, values."""
         q: dict[str, Any] = {"rule": rule, "side": side, "top": int(top)}
+        if scope == "market":
+            q["scope"] = "market"
         if min_score is not None:
             q["minScore"] = float(min_score)
         if filter:
