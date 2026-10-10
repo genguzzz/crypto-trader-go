@@ -96,6 +96,7 @@ class ScreenerScopeTest(unittest.TestCase):
         self.assertTrue(any("1–300" in m for m in self._msgs('Screener(top=301, scope="market")')))
         self.assertTrue(any("rule" in m for m in self._msgs('Screener(rule="r", top=10, scope="market")')))
         self.assertTrue(any("min_score" in m for m in self._msgs('Screener(top=10, min_score=50, scope="market")')))
+        self.assertEqual(self._msgs('Screener(top=10, min_score=0, scope="market")'), [])   # 0 = not set, like the server
         self.assertTrue(any("scope" in m for m in self._msgs('Screener(top=10, scope="all")')))
 
 

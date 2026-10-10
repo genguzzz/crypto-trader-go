@@ -125,6 +125,7 @@ export function universeError(u: Universe) {
     const max = screenerMaxTop(q)
     if (!(Number.isInteger(q.top) && q.top >= 1 && q.top <= max)) return `取前 N 需为 1–${max} 的整数`
     if (q.scope === 'market' && q.rule) return '全市场筛选按成交额排序，不能指定评分规则'
+    if (q.scope === 'market' && q.minScore) return '全市场筛选没有评分，不能设最低分'
   }
   return ''
 }

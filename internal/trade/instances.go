@@ -622,6 +622,13 @@ func (s *Service) pump(ctx context.Context, ri *instRT, sess Session) error {
 
 // call runs one session event; faults (timeout, dead process) end the session, other errors are
 // logged and the event is dropped.
+// eventBudget is the deadline of an event carrying n instruments (a bar batch, or a universe change
+// with n additions). The strategy host allows its event timeout + 10 % per instrument; the same
+// proportion of SessionTimeout (configured ≥ the host's timeout) leaves the host room to answer first.
+func (s *Service) eventBudget(n int) time.Duration {
+	return s.opts.SessionTimeout + time.Duration(n)*s.opts.SessionTimeout/10
+}
+
 func (s *Service) call(ctx context.Context, ri *instRT, sess Session, c sessCall) error {
 	d := max(s.opts.SessionTimeout, c.timeout)
 	cctx, cancel := context.WithTimeout(ctx, d)
@@ -727,10 +734,8 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	ri.universe = cur
 	ri.mu.Unlock()
 	cp := append([]string{}, cur...)
-	// the host allows its event timeout + 10 % per added instrument (warm-up reads); the same
-	// proportion of SessionTimeout (≥ the host's timeout) leaves it room to answer first
 	ri.push(sessCall{name: "universe", fn: func(ctx context.Context, x Session) error { return x.Universe(ctx, added, removed, cp) },
-		timeout: s.opts.SessionTimeout + time.Duration(len(added))*s.opts.SessionTimeout/10})
+		timeout: s.eventBudget(len(added))})
 	return nil
 }
 

@@ -64,10 +64,8 @@ func (s *Service) queueBars(ri *instRT, T int64) {
 			items = append(items, InstBar{InstID: id, Bar: bars[len(bars)-1]})
 		}
 		if len(items) > 0 {
-			// the host allows its event timeout + 10 % per instrument for a batch; the same proportion of
-			// SessionTimeout (≥ the host's timeout) leaves it room to answer first
 			ri.push(sessCall{"bars", func(ctx context.Context, x Session) error { return x.Bars(ctx, tf, items) },
-				s.opts.SessionTimeout + time.Duration(len(items))*s.opts.SessionTimeout/10})
+				s.eventBudget(len(items))})
 		}
 	}
 	for _, name := range sortedKeys(ri.ver.Meta.Schedule) {

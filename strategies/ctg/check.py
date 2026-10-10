@@ -109,7 +109,7 @@ def check_class(cls, code: str) -> list[dict]:
             bad("universe", f"Screener 的 top 需在 1–{u.max_top()}" + ("（全市场）" if u.scope == "market" else ""))
         if u.scope == "market" and u.rule:
             bad("universe", "全市场 Screener 按成交额排序，不能指定 rule（评分只覆盖活跃池）")
-        if u.scope == "market" and u.min_score is not None:
+        if u.scope == "market" and u.min_score:          # 0 / None = not set (the server checks the same)
             bad("universe", "全市场 Screener 没有评分，不能设 min_score")
         if u.refresh not in ("5m", "15m", "1H", "4H", "1D"):
             bad("universe", "Screener 的 refresh 需为 5m / 15m / 1H / 4H / 1D")
