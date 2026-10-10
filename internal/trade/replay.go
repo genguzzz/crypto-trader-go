@@ -495,19 +495,21 @@ func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
 	var out []ScreenRow
 	var turn []float64
 	// one primary-key range per instrument (candles_1h has no ts index)
-	stmt, err := r.db.Prepare(`SELECT COUNT(quote), COALESCE(SUM(quote), 0) FROM candles_1h WHERE inst_id=? AND ts>=? AND ts<?`)
+	stmt, err := r.db.Prepare(`SELECT COUNT(quote), COALESCE(SUM(quote), 0),
+		COALESCE((SELECT c FROM candles_1h WHERE inst_id=?1 AND ts<?3 ORDER BY ts DESC LIMIT 1), 0)
+		FROM candles_1h WHERE inst_id=?1 AND ts>=?2 AND ts<?3`)
 	if err != nil {
 		return nil, err
 	}
 	defer stmt.Close()
 	for _, id := range ids {
 		var n int
-		var v float64
-		if err := stmt.QueryRow(id, end-12*hourMs, end).Scan(&n, &v); err != nil {
+		var v, last float64
+		if err := stmt.QueryRow(id, end-12*hourMs, end).Scan(&n, &v, &last); err != nil {
 			return nil, err
 		}
 		if n == 12 && v > 0 {
-			out = append(out, ScreenRow{InstID: id, Long: math.NaN(), Short: math.NaN()})
+			out = append(out, ScreenRow{InstID: id, Last: last, Long: math.NaN(), Short: math.NaN()})
 			turn = append(turn, v)
 		}
 	}
@@ -518,7 +520,7 @@ func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
 	// hour: when fewer than half of the last ranking remain, keep that ranking for up to a day,
 	// then run with an empty universe until data resumes, rather than failing the run. Only a run
 	// that has never had a ranking fails.
-	if len(out) < len(last)/2 {
+	if last != nil && (len(out) == 0 || len(out) < len(last)/2) {
 		if now-lastAt <= marketGapMs {
 			return r.keepMarket(end, last), nil
 		}
@@ -561,14 +563,14 @@ func (r *replayer) keepMarket(end int64, rows []ScreenRow) []ScreenRow {
 func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
 	now := r.Now()
 	if q.Market() {
-		if q.Rule != "" {
-			return nil, fmt.Errorf("全市场筛选不能指定评分规则")
+		q, err := q.MarketQuery()
+		if err != nil {
+			return nil, err
 		}
 		rows, err := r.marketRank(now)
 		if err != nil {
 			return nil, err
 		}
-		q = q.CappedTop()
 		if len(q.Filter) > 0 {
 			// rows are in rank order: compute factors only until Top rows pass the filter
 			var kept []ScreenRow
@@ -583,13 +585,7 @@ func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
 			}
 			rows = kept
 		}
-		out := SelectScreen(rows, q)
-		for i := range out { // only the selected rows: loading every candidate's bars is costly
-			if c, ok := r.lastClose(out[i].InstID); ok {
-				out[i].Last = c
-			}
-		}
-		return out, nil
+		return SelectScreen(rows, q), nil // Last = close of the last complete hour (from the ranking query)
 	}
 	pool, err := r.poolAt(now)
 	if err != nil {

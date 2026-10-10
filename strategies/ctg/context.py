@@ -146,6 +146,8 @@ class Context:
 
         if scope not in Screener.SCOPES:
             raise ValueError(f"scope must be one of {Screener.SCOPES}, not {scope!r}")
+        if scope == "market" and (rule or min_score):
+            raise ValueError("a market screener ranks by turnover: no rule or min_score")
         q: dict[str, Any] = {"rule": rule, "side": side, "top": int(top)}
         if scope == "market":
             q["scope"] = "market"

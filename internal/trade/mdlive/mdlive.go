@@ -123,10 +123,11 @@ func (m *MD) Screener(q trade.ScreenerQuery) ([]trade.ScreenRow, error) {
 		return nil, fmt.Errorf("市场快照尚未就绪")
 	}
 	if q.Market() {
-		if q.Rule != "" {
-			return nil, fmt.Errorf("全市场筛选不能指定评分规则")
+		q, err := q.MarketQuery()
+		if err != nil {
+			return nil, err
 		}
-		return trade.SelectScreen(MarketRows(snap.Rows), q.CappedTop()), nil
+		return trade.SelectScreen(MarketRows(snap.Rows), q), nil
 	}
 	if q.Rule != "" {
 		if _, ok := m.e.Rule(q.Rule); !ok {
