@@ -178,6 +178,15 @@ const (
 // Market reports whether the query ranks the whole recorded crypto market.
 func (q ScreenerQuery) Market() bool { return q.Scope == ScopeMarket }
 
+// CappedTop is the query with Top bounded to the market cap: ctx.screener queries from strategies
+// do not pass validUniverse, and live and replay must return the same row count.
+func (q ScreenerQuery) CappedTop() ScreenerQuery {
+	if q.Market() && (q.Top <= 0 || q.Top > MaxMarketTop) {
+		q.Top = MaxMarketTop
+	}
+	return q
+}
+
 // StrategyVersion is an immutable (code, param schema) pair. ID = first 12 hex of sha256(code).
 type StrategyVersion struct {
 	ID              string       `json:"id"`

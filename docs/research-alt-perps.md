@@ -136,7 +136,11 @@ margins ≈ 6–7.5 k USDT) is the safer planning number.
 - **Survivorship and funding** (above) flatter longs and understate funding before 2026-07.
 - **Liquidity.** 1 000 USDT notional is small for the top 200, but slippage on the smallest names
   during the moves that matter is likely worse than 5 bp.
-- **In-app backtests** can only replay the ~50 days of 1H history kept in production.
+- **In-app backtests** can only replay the ~50 days of 1H history kept in production; in them the
+  market universe also leaves out swaps delisted since (no current spec).
+- **Empty universe.** Bars only arrive for universe instruments. If the market universe is ever
+  empty (a long gap in stored history), held positions are protected by their stops only until bars
+  resume; the strategy then catches up on missed bars before judging the midline exit.
 
 ## Reproducing and continuing
 

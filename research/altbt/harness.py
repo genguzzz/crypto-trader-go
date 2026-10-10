@@ -485,15 +485,16 @@ class Host:
             dk = (self.now + 8 * H) // (24 * H)
             if dk != self.day_key:
                 self.day_key, self.day_start = dk, self.equity_now()
+            # the screener refreshes on its own interval (like the Go service), the first time at start
+            if first or (refresh and self.now % (refresh * H) == 0):
+                cur = self._universe_at(i)
+                added = [s for s in cur if s not in self.cur_universe]
+                removed = [s for s in self.cur_universe if s not in cur]
+                if first or added or removed:
+                    self.cur_universe = cur
+                    self._event(rt, {"type": "universe", "added": added, "removed": removed, "current": cur})
+                first = False
             if self.now % (self.tfh * H) == 0:
-                if first or (refresh and self.now % (refresh * H) == 0):
-                    cur = self._universe_at(i)
-                    added = [s for s in cur if s not in self.cur_universe]
-                    removed = [s for s in self.cur_universe if s not in cur]
-                    if first or added or removed:
-                        self.cur_universe = cur
-                        self._event(rt, {"type": "universe", "added": added, "removed": removed, "current": cur})
-                    first = False
                 k = self.tfh
                 bars = []
                 for s in self.cur_universe:

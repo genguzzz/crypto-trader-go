@@ -110,29 +110,31 @@ class AltRegimeTrend(Strategy):
         latest = max(b.ts for b in bars.values())
         held = {p.inst_id for p in ctx.positions()}
         for inst in held - set(bars):                       # 持仓的币已不在监控范围：单独补最新 K 线，离场照常判断
-            if inst not in self._buf:                       # 例如重启后：缓存是空的，先拉历史
+            v = self._buf.get(inst)
+            if not v or not v["ts"] or latest - v["ts"][-1] > (KEEP - 10) * BAR_MS:   # 重启后或空档太长：重拉历史
                 self._load(ctx, inst)
             else:
-                for row in zip(*(getattr(ctx.bars(inst, "4H", 6), k) for k in ("ts", "o", "h", "l", "c", "volq"))):
+                n = int((latest - v["ts"][-1]) // BAR_MS) + 2   # 补齐整个空档，缓存里不留洞
+                for row in zip(*(getattr(ctx.bars(inst, "4H", n), k) for k in ("ts", "o", "h", "l", "c", "volq"))):
                     self._push(inst, Bar(inst, "4H", dict(zip(("ts", "o", "h", "l", "c", "volq"), row))))
         self._gc(ctx, held)
+        out = self._exits(ctx)                              # 离场先判断：后面任何一步数据不够都不影响离场
 
         btc = ctx.bars(BTC, "4H", 130)
         if len(btc) < 121:
-            return None
+            return out
         btc_up = btc.c[-1] > ta.ema(btc.c, 120)[-1]          # BTC 在 20 日（120 根 4H）均线上方
         cols = self._universe(btc, latest, set(ctx.universe))
         if not cols:
-            return None
+            return out
         breadth = float(np.mean([v["c"][-1] > v["ema42"] for v in cols.values()]))  # 站上 7 日均线的比例
         bull = btc_up and breadth > self.long_breadth
         bear_break = (not btc_up) and breadth < 0.5
         weak_mkt = breadth < self.short_breadth
 
-        out = self._exits(ctx)
         # 已发出、还没成交的开仓信号（确认模式下可能等一会儿）也占名额；成交或超过一根 K 线就清掉
         pending = ctx.state.setdefault("pending", {})
-        for inst in [i for i, t in pending.items() if i in held or ctx.now - t >= BAR_MS]:
+        for inst in [i for i, t in pending.items() if i in held or ctx.now - t >= BAR_MS / 2]:   # 容忍时钟抖动
             del pending[inst]
         free = self.max_pos - len(held) - len(pending)   # 本根发出的平仓下一根才成交，不立刻腾出名额
         legs = ctx.state.setdefault("legs", {})
@@ -349,6 +351,6 @@ def _resid72(C, TS, btc, beta_n=42, hold=18):
         cov = (np.where(ok, (R - mr[:, None]) * (RB - mb[:, None]), 0.0)).sum(1)
         var = (np.where(ok, (RB - mb[:, None]) ** 2, 0.0)).sum(1)
         beta = np.where(var > 0, cov / np.where(var > 0, var, 1), 0.0)
-        res = R - beta[:, None] * np.nan_to_num(RB)
+        res = np.where(ok, R - beta[:, None] * RB, np.nan)   # BTC 收益缺失的那根不计入（否则大盘涨跌会被当成个币强弱）
         val = np.nansum(res[:, -hold:], axis=1)
     return np.where(n >= beta_n * 0.8, val, np.nan)
