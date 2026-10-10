@@ -171,6 +171,19 @@ class AltRegimeTrendTest(unittest.TestCase):
         ctx.now += 4 * 3600_000                            # a bar later and still not held: expired
         self.assertTrue([x for x in (s.on_bars(ctx, last) or []) if x.action.startswith("open")])
 
+    def test_reload_after_a_missed_bar(self):
+        bars = market(0.002)
+        s = AltRegimeTrend({"margin_usdt": 125})
+        ctx = AcctCtx(bars=bars)
+        s.on_start(ctx)
+        s.on_universe_change(ctx, [i for i in bars if i != BTC], [])
+        inst = "A1-USDT-SWAP"
+        s._buf[inst] = {k: v[:-2] for k, v in s._buf[inst].items()}      # missed the previous bar
+        s.on_bars(ctx, {inst: bar_of(inst, bars[inst][-1])})
+        ts = s._buf[inst]["ts"]
+        self.assertEqual(ts[-1], bars[inst][-1][0])
+        self.assertTrue(all(b - a == STEP for a, b in zip(ts, ts[1:])))   # contiguous again
+
     def test_suggested_margin(self):
         s = AltRegimeTrend({"aggr": 1.0, "style": 1})        # aggressive: dd95 = 50 margins
         self.assertAlmostEqual(s.suggested_margin(3000), 3000 * 0.5 / 50)

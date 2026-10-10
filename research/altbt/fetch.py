@@ -44,6 +44,11 @@ class Rate:
 
 
 CANDLES, FUNDING = Rate(8), Rate(4)
+FAILED: list[str] = []          # requests that failed after all retries (reported at the end)
+
+
+class Incomplete(Exception):
+    """A paginated download stopped on a failed request: the data would have a hole."""
 
 
 def get(path, rate):
@@ -57,6 +62,7 @@ def get(path, rate):
             pass
         time.sleep(1 + k)
     print("failed:", path, file=sys.stderr)
+    FAILED.append(path)
     return None
 
 
@@ -64,6 +70,8 @@ def candles(inst, start, end):
     rows, cur = {}, f"&after={end + H}"
     while True:
         d = get(f"market/history-candles?bar=1H&limit=100&instId={inst}{cur}", CANDLES)
+        if d is None:
+            raise Incomplete(inst)
         if not d:
             break
         for r in d:
@@ -81,6 +89,8 @@ def funding(inst, start):
     rows, cur = {}, ""
     while True:
         d = get(f"public/funding-rate-history?limit=100&instId={inst}{cur}", FUNDING)
+        if d is None:
+            raise Incomplete(inst)
         if not d:
             break
         for x in d:
@@ -93,6 +103,16 @@ def funding(inst, start):
 
 
 def one(inst, start, end, raw):
+    try:
+        return _one(inst, start, end, raw)
+    except Incomplete:
+        print(f"{inst}: download incomplete, cache not updated (re-run to retry)", file=sys.stderr)
+        fn = os.path.join(raw, inst + ".json")
+        old = json.load(open(fn)) if os.path.exists(fn) else {"c": {}, "f": {}}
+        return inst, {int(k): v for k, v in old["c"].items()}, {int(k): v for k, v in old["f"].items()}
+
+
+def _one(inst, start, end, raw):
     fn = os.path.join(raw, inst + ".json")
     old = json.load(open(fn)) if os.path.exists(fn) else {"c": {}, "f": {}}
     have = {int(k): v for k, v in old["c"].items()}
@@ -156,6 +176,7 @@ def main():
     np.savez_compressed(a.out, ts=ts, insts=np.array([r[0] for r in res]),
                         crypto=np.array([cat[r[0]] for r in res]), fund=fund, **arr)
     print(f"wrote {a.out}: {T} hours × {N} instruments", file=sys.stderr)
+    report()
 
 
 def update(a):
@@ -190,9 +211,13 @@ def update(a):
     def one_upd(s_):
         if s_ not in cat:                       # delisted: keep what we have
             return s_, {}, {}
-        frm = (last[s_] + H) if last.get(s_) else start
-        bars = candles(s_, frm, end) if frm <= end else {}
-        fr = {t: r for t, r in funding(s_, fund_last.get(s_, start)).items() if t > fund_last.get(s_, start)}
+        try:
+            frm = (last[s_] + H) if last.get(s_) else start
+            bars = candles(s_, frm, end) if frm <= end else {}
+            fr = {t: r for t, r in funding(s_, fund_last.get(s_, start)).items() if t > fund_last.get(s_, start)}
+        except Incomplete:                      # keep the panel gap-free: retry this instrument next run
+            print(f"{s_}: update incomplete, skipped (re-run to retry)", file=sys.stderr)
+            return s_, {}, {}
         return s_, bars, fr
 
     print(f"update {len(insts)} instruments ({len(insts) - len(old_insts)} new) to "
@@ -221,6 +246,13 @@ def update(a):
     np.savez_compressed(tmp, ts=np.arange(start, end + H, H, dtype=np.int64), insts=np.array(insts), crypto=crypto, **out)
     os.replace(tmp, a.out)
     print(f"wrote {a.out}: {T} hours × {N} instruments", file=sys.stderr)
+    report()
+
+
+def report():
+    if FAILED:
+        print(f"{len(FAILED)} requests failed after retries; affected instruments were left as they were", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

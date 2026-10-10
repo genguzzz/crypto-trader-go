@@ -103,7 +103,8 @@ class AltRegimeTrend(Strategy):
 
     def on_bars(self, ctx, bars):
         for inst, b in bars.items():
-            if inst not in self._buf:
+            v = self._buf.get(inst)
+            if v is None or (v["ts"] and b.ts - v["ts"][-1] > BAR_MS):   # 新币，或漏了 K 线（缓存会有洞）：重拉历史
                 self._load(ctx, inst)
                 continue
             self._push(inst, b)
@@ -132,7 +133,8 @@ class AltRegimeTrend(Strategy):
         bear_break = (not btc_up) and breadth < 0.5
         weak_mkt = breadth < self.short_breadth
 
-        # 已发出、还没成交的开仓信号（确认模式下可能等一会儿）也占名额；成交或超过一根 K 线就清掉
+        # 已发出、还没成交的开仓信号（确认模式下可能等一会儿）也占名额。信号有效期 5 分钟、人工确认最长 1 小时，
+        # 到下一根 4H 时一定已经成交或作废，所以超过半根 K 线（容忍时钟抖动）就清掉
         pending = ctx.state.setdefault("pending", {})
         for inst in [i for i, t in pending.items() if i in held or ctx.now - t >= BAR_MS / 2]:   # 容忍时钟抖动
             del pending[inst]
