@@ -33,7 +33,15 @@ func TestLiveLoop(t *testing.T) {
 	if _, err := s.InstanceAction(inst.ID, "start"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "session", func() bool { x := r.last(); return x != nil && len(x.universe) == 1 })
+	waitFor(t, "session", func() bool {
+		x := r.last()
+		if x == nil {
+			return false
+		}
+		x.mu.Lock()
+		defer x.mu.Unlock()
+		return len(x.universe) == 1
+	})
 	waitFor(t, "keep", func() bool { md.mu.Lock(); defer md.mu.Unlock(); return md.kept[btc] })
 
 	md.mu.Lock()
