@@ -26,6 +26,7 @@ SKIP = {"BTC-USDT-SWAP", "ETH-USDT-SWAP"}   # 大币不在本策略的交易范�
 KEEP = 240                                  # 每个币在内存里保留的 4H K 线根数（40 天）
 DAY = 6                                     # 一天 = 6 根 4H K 线
 BAR_MS = 4 * 3600_000
+MAX_STOP = 0.5                              # 止损距离硬上限 50%（低杠杆时「亏损倍数 ÷ 杠杆」可能 ≥ 100%）
 STYLES = {
     # 风格预设：信号快慢 + 是否做空突破。dd95 = 回测蒙特卡洛估计的一年 95% 分位最大回撤（单位：单笔保证金，
     # 5 笔持仓上限时），用来把「激进度」换算成每笔保证金，见 docs/research-alt-perps.md。
@@ -109,7 +110,9 @@ class AltRegimeTrend(Strategy):
         latest = max(b.ts for b in bars.values())
         held = {p.inst_id for p in ctx.positions()}
         for inst in held - set(bars):                       # 持仓的币已不在监控范围：单独补最新 K 线，离场照常判断
-            if inst in self._buf:
+            if inst not in self._buf:                       # 例如重启后：缓存是空的，先拉历史
+                self._load(ctx, inst)
+            else:
                 for row in zip(*(getattr(ctx.bars(inst, "4H", 6), k) for k in ("ts", "o", "h", "l", "c", "volq"))):
                     self._push(inst, Bar(inst, "4H", dict(zip(("ts", "o", "h", "l", "c", "volq"), row))))
         self._gc(ctx, held)
@@ -118,7 +121,7 @@ class AltRegimeTrend(Strategy):
         if len(btc) < 121:
             return None
         btc_up = btc.c[-1] > ta.ema(btc.c, 120)[-1]          # BTC 在 20 日（120 根 4H）均线上方
-        cols = self._universe(btc, latest)
+        cols = self._universe(btc, latest, set(ctx.universe))
         if not cols:
             return None
         breadth = float(np.mean([v["c"][-1] > v["ema42"] for v in cols.values()]))  # 站上 7 日均线的比例
@@ -218,13 +221,13 @@ class AltRegimeTrend(Strategy):
         return sug, ""
 
     def _open(self, ctx, acct, m, inst, side, leg, v, why):
-        """名义 = 保证金 × 杠杆；止损距离 d 来自 ATR，夹在 [1%, loss_cap ÷ 杠杆]；
+        """名义 = 保证金 × 杠杆；止损距离 d 来自 ATR，夹在 [1%, min(loss_cap ÷ 杠杆, 50%)]；
         订单层按「权益 × riskPct × strength ÷ 止损距离」算数量，所以 strength = 名义 × d ÷ (权益 × riskPct)。"""
         px = float(v["c"][-1])
         atr = float(v["atr"])
         if not (px > 0 and math.isfinite(atr) and atr > 0):
             return None
-        d = min(max(self.stop_atr * atr / px, 0.01), self.loss_cap / self.leverage)
+        d = min(max(self.stop_atr * atr / px, 0.01), self.loss_cap / self.leverage, MAX_STOP)
         notional = m * self.leverage
         eq = float(acct.get("equity") or 0)
         lim = acct.get("limits") or {}
@@ -280,11 +283,12 @@ class AltRegimeTrend(Strategy):
         for inst in [i for i, v in self._buf.items() if i not in held and v["ts"] and ctx.now - v["ts"][-1] > 7 * 86400_000]:
             del self._buf[inst]
 
-    def _universe(self, btc, latest):
-        """监控范围：本根有新 K 线、上线 ≥ 30 天、按 30 天成交额取前 top_n 的山寨币，并算好要用的指标。"""
+    def _universe(self, btc, latest, current):
+        """监控范围：当前币池里、本根有新 K 线、上线 ≥ 30 天、按 30 天成交额取前 top_n 的山寨币，并算好要用的指标。
+        （已移出币池但还有持仓的币只用来判断离场，不参与选币、宽度和排名。）"""
         rows = []
         for inst, v in self._buf.items():
-            if inst in SKIP or len(v["c"]) < 30 * DAY or v["ts"][-1] != latest or not (v["c"][-1] > 0):
+            if inst not in current or inst in SKIP or len(v["c"]) < 30 * DAY or v["ts"][-1] != latest or not (v["c"][-1] > 0):
                 continue
             rows.append((float(np.nansum(v["q"][-30 * DAY:])), inst))
         rows.sort(reverse=True)

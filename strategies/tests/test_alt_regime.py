@@ -137,6 +137,29 @@ class AltRegimeTrendTest(unittest.TestCase):
         self.assertEqual([x.inst for x in out if x.action == "close"], ["Y-USDT-SWAP"])
         self.assertNotIn("Y-USDT-SWAP", [x.inst for x in out if x.action.startswith("open")])
 
+    def test_exit_after_restart_outside_the_universe(self):
+        bars = market(0.002)
+        closes = [1.0 + 0.002 * i for i in range(N - 1)] + [0.9]
+        bars["Y-USDT-SWAP"] = series(closes)
+        s = AltRegimeTrend({"margin_usdt": 125})
+        ctx = AcctCtx(bars=bars, positions={"Y-USDT-SWAP": Record(inst_id="Y-USDT-SWAP", pos_side="long")},
+                      universe=[i for i in bars if i not in (BTC, "Y-USDT-SWAP")])
+        s.on_start(ctx)                                    # fresh process: empty buffers
+        s.on_universe_change(ctx, ctx.universe, [])        # Y is no longer in the universe
+        last = {i: bar_of(i, r[-1]) for i, r in bars.items() if i not in (BTC, "Y-USDT-SWAP")}
+        out = s.on_bars(ctx, last) or []
+        self.assertEqual([x.inst for x in out if x.action == "close"], ["Y-USDT-SWAP"])
+
+    def test_stop_capped_at_low_leverage(self):
+        s = AltRegimeTrend({"margin_usdt": 125, "leverage": 1, "stop_atr": 6})
+        bars = market(0.002)
+        closes = [1.0 + 0.3 * np.sin(i) for i in range(N - 1)] + [3.0]   # very wide ATR, breakout
+        bars["W-USDT-SWAP"] = series(closes, vol=1e6, last_vol=5e6)
+        _, out = run(s, bars)
+        sig = [x for x in out if x.inst == "W-USDT-SWAP"][0]
+        self.assertGreater(sig.stop_loss, 0)
+        self.assertAlmostEqual((3.0 - sig.stop_loss) / 3.0, 0.5)
+
     def test_suggested_margin(self):
         s = AltRegimeTrend({"aggr": 1.0, "style": 1})        # aggressive: dd95 = 50 margins
         self.assertAlmostEqual(s.suggested_margin(3000), 3000 * 0.5 / 50)

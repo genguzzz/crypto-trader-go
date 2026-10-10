@@ -207,7 +207,8 @@ func (s *session) event(ctx context.Context, typ string, fields map[string]any) 
 		}
 	}
 	// a batch of bars (or a universe change) gets the per-event budget plus a little per instrument
-	evCtx, cancel := context.WithTimeout(ctx, s.h.opts.EventTimeout+time.Duration(extra)*s.h.opts.EventTimeout/10)
+	budget := s.h.opts.EventTimeout + time.Duration(extra)*s.h.opts.EventTimeout/10
+	evCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
 	s.mu.Lock()
@@ -240,7 +241,7 @@ func (s *session) event(ctx context.Context, typ string, fields map[string]any) 
 		if ctx.Err() != nil {
 			err = fmt.Errorf("%w: %s event: %w", trade.ErrFaulted, typ, ctx.Err())
 		} else {
-			err = fmt.Errorf("%w: %s event not acknowledged within %s", trade.ErrFaulted, typ, s.h.opts.EventTimeout)
+			err = fmt.Errorf("%w: %s event not acknowledged within %s", trade.ErrFaulted, typ, budget)
 		}
 		s.kill(err)
 		return err
