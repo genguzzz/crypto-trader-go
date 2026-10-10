@@ -110,3 +110,17 @@ func TestReplayerMarketScreener(t *testing.T) {
 		t.Fatal("market scope needs specs")
 	}
 }
+
+func TestMarketQuery(t *testing.T) {
+	if _, err := (ScreenerQuery{Scope: ScopeMarket, Top: 10, Rule: "r"}).MarketQuery(); err == nil {
+		t.Fatal("a rule must be rejected")
+	}
+	if _, err := (ScreenerQuery{Scope: ScopeMarket, Top: 10, MinScore: 70}).MarketQuery(); err == nil {
+		t.Fatal("a minimum score must be rejected, not ignored")
+	}
+	for _, top := range []int{0, -1, 1000} {
+		if q, err := (ScreenerQuery{Scope: ScopeMarket, Top: top}).MarketQuery(); err != nil || q.Top != MaxMarketTop {
+			t.Fatalf("top %d → %d %v", top, q.Top, err)
+		}
+	}
+}

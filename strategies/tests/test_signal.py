@@ -82,6 +82,8 @@ class ScreenerScopeTest(unittest.TestCase):
         from ctg.context import Context
         with self.assertRaises(ValueError):  # a typo must not silently fall back to the pool
             Context(None).screener(top=200, scope="Market")
+        with self.assertRaises(ValueError):  # the server would reject it; do not send it silently
+            Context(None).screener(top=50, scope="market", min_score=70)
 
     def _msgs(self, screener: str) -> list[str]:
         code = ("from ctg import Strategy, Screener\n"
