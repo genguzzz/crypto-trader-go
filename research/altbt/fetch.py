@@ -4,6 +4,9 @@
   HTTPS_PROXY=http://127.0.0.1:7080 python3 research/altbt/fetch.py --from 2025-10-01 --insts BTC,SOL,DOGE
 
 Per-instrument downloads are cached in data/altbt/raw/ (re-runs only fetch what is missing or new).
+With --update an existing panel is extended in place instead: every instrument is fetched from its
+last stored hour to now (new listings from the panel start); instruments delisted since then keep
+their history, so a panel updated over time loses the survivorship bias going forward.
 Panel arrays: ts[T] (hour open, ms), insts[N], crypto[N] (instCategory 1), o/h/l/c/q[T,N] float32
 (q = USDT turnover), fund[T,N] settled funding rate at its settlement hour (NaN otherwise).
 Instruments delisted before the download are not available (survivorship bias)."""
@@ -114,7 +117,10 @@ def main():
     ap.add_argument("--insts", default="", help="comma-separated bases or instIds (default: every live USDT swap)")
     ap.add_argument("--out", default=os.path.join(ROOT, "data", "altbt", "panel.npz"))
     ap.add_argument("--workers", type=int, default=12)
+    ap.add_argument("--update", action="store_true", help="extend the existing panel at --out to the last closed hour")
     a = ap.parse_args()
+    if a.update:
+        return update(a)
     start = int(dt.datetime.strptime(a.start, "%Y-%m-%d").replace(tzinfo=dt.timezone.utc).timestamp() * 1000)
     end = (int(dt.datetime.strptime(a.end, "%Y-%m-%d").replace(tzinfo=dt.timezone.utc).timestamp() * 1000) - H
            if a.end else int(time.time() * 1000) // H * H - H)
@@ -147,6 +153,71 @@ def main():
                 fund[i, j] = r
     np.savez_compressed(a.out, ts=ts, insts=np.array([r[0] for r in res]),
                         crypto=np.array([cat[r[0]] for r in res]), fund=fund, **arr)
+    print(f"wrote {a.out}: {T} hours × {N} instruments", file=sys.stderr)
+
+
+def update(a):
+    """Extend an existing panel: fetch each instrument after its last stored hour, add new listings."""
+    z = np.load(a.out)
+    P = {k: z[k] for k in z.files}
+    old_insts = [str(x) for x in P["insts"]]
+    start = int(P["ts"][0])
+    end = int(time.time() * 1000) // H * H - H
+    meta = [x for x in get("public/instruments?instType=SWAP", CANDLES) or []
+            if x["instId"].endswith("-USDT-SWAP") and x["state"] == "live"]
+    if not meta:
+        sys.exit("instrument list unavailable")
+    cat = {x["instId"]: x.get("instCategory") == "1" for x in meta}
+    if "crypto" in P:
+        old_cat = {s: bool(c) for s, c in zip(old_insts, P["crypto"])}
+    else:
+        side = os.path.splitext(a.out)[0] + ".noncrypto.json"
+        non = set(json.load(open(side))) if os.path.exists(side) else set()
+        old_cat = {s: s.split("-")[0] not in non for s in old_insts}
+    insts = old_insts + sorted(set(cat) - set(old_insts))
+    T0, T = len(P["ts"]), (end - start) // H + 1
+    last = {}
+    for j, s_ in enumerate(old_insts):
+        ok = np.nonzero(np.isfinite(P["c"][:, j]))[0]
+        last[s_] = start + int(ok[-1]) * H if len(ok) else None
+    fund_last = {}
+    for j, s_ in enumerate(old_insts):
+        ok = np.nonzero(np.isfinite(P["fund"][:, j]))[0] if "fund" in P else []
+        fund_last[s_] = start + int(ok[-1]) * H if len(ok) else start
+
+    def one_upd(s_):
+        if s_ not in cat:                       # delisted: keep what we have
+            return s_, {}, {}
+        frm = (last[s_] + H) if last.get(s_) else start
+        bars = candles(s_, frm, end) if frm <= end else {}
+        fr = {t: r for t, r in funding(s_, fund_last.get(s_, start)).items() if t > fund_last.get(s_, start)}
+        return s_, bars, fr
+
+    print(f"update {len(insts)} instruments ({len(insts) - len(old_insts)} new) to "
+          f"{dt.datetime.fromtimestamp(end / 1000, dt.timezone.utc):%Y-%m-%d %H:00}", file=sys.stderr)
+    with ThreadPoolExecutor(a.workers) as ex:
+        res = list(ex.map(one_upd, insts))
+    N = len(insts)
+    out = {}
+    for k in ("o", "h", "l", "c", "q", "fund"):
+        arr = np.full((T, N), np.nan, np.float32)
+        if k in P:
+            arr[:T0, :len(old_insts)] = P[k][:T]
+        out[k] = arr
+    for j, (s_, bars, fr) in enumerate(res):
+        for t, v in bars.items():
+            i = (t - start) // H
+            if 0 <= i < T:
+                for k, x in zip("ohlcq", v):
+                    out[k][i, j] = x
+        for t, r in fr.items():
+            i = (t - start) // H
+            if 0 <= i < T:
+                out["fund"][i, j] = r
+    crypto = np.array([cat.get(s_, old_cat.get(s_, True)) for s_ in insts])
+    tmp = a.out + ".tmp.npz"
+    np.savez_compressed(tmp, ts=np.arange(start, end + H, H, dtype=np.int64), insts=np.array(insts), crypto=crypto, **out)
+    os.replace(tmp, a.out)
     print(f"wrote {a.out}: {T} hours × {N} instruments", file=sys.stderr)
 
 
