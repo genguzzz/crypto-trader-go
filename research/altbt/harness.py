@@ -147,11 +147,13 @@ class Host:
         self.params = self._wire_params(params or {})
         self.i0 = int(np.searchsorted(self.ts, start_ms)) if start_ms else 0
         self.i1 = int(np.searchsorted(self.ts, end_ms)) if end_ms else T
-        # rolling 12h turnover for the market screener
+        # rolling 12h turnover for the market screener; like the Go screener, an instrument missing any
+        # of the 12 hours is left out (NaN)
         qz = np.nan_to_num(self.q, nan=0.0).astype(np.float64)
         cs = np.vstack([np.zeros((1, N)), np.cumsum(qz, 0)])
-        self.q12 = cs[12:] - cs[:-12]          # q12[i] = turnover of hours i-11..i  (index shift below)
-        self.q12 = np.vstack([np.zeros((11, N)), self.q12])
+        cnt = np.vstack([np.zeros((1, N)), np.cumsum(np.isfinite(self.q), 0)])
+        q12 = np.where(cnt[12:] - cnt[:-12] == 12, cs[12:] - cs[:-12], np.nan)   # hours i-11..i
+        self.q12 = np.vstack([np.full((11, N), np.nan), q12])
         # state
         self.now = 0
         self.i = 0
@@ -442,7 +444,7 @@ class Host:
             if sc.get("scope") != "market" or sc.get("rule"):
                 raise RuntimeError("offline backtest supports Screener(scope='market') or static universes")
             top = int(sc.get("top") or 20)
-            t = np.where(self.crypto & np.isfinite(self.c[i]), self.q12[i], -1)
+            t = np.where(self.crypto & np.isfinite(self.q12[i]), self.q12[i], -1)
             order = np.argsort(-t)[:top]
             return [self.insts[j] for j in order if t[j] > 0]
         if isinstance(u, dict):

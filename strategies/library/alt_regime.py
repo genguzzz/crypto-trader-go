@@ -19,12 +19,13 @@ import math
 
 import numpy as np
 
-from ctg import Bool, Choice, Float, Int, Screener, Signal, Strategy, ta
+from ctg import Bar, Bool, Choice, Float, Int, Screener, Signal, Strategy, ta
 
 BTC = "BTC-USDT-SWAP"
 SKIP = {"BTC-USDT-SWAP", "ETH-USDT-SWAP"}   # 大币不在本策略的交易范围内（BTC 只用来判断大盘状态）
 KEEP = 240                                  # 每个币在内存里保留的 4H K 线根数（40 天）
 DAY = 6                                     # 一天 = 6 根 4H K 线
+BAR_MS = 4 * 3600_000
 STYLES = {
     # 风格预设：信号快慢 + 是否做空突破。dd95 = 回测蒙特卡洛估计的一年 95% 分位最大回撤（单位：单笔保证金，
     # 5 笔持仓上限时），用来把「激进度」换算成每笔保证金，见 docs/research-alt-perps.md。
@@ -91,11 +92,12 @@ class AltRegimeTrend(Strategy):
                 f"最多 {self.max_pos} 笔，单笔最多亏 {self.loss_cap:g} 倍保证金")
 
     def on_universe_change(self, ctx, added, removed):
-        # 新进入监控范围的币：拉一次历史，之后每根 K 线由 on_bars 追加
-        for inst in removed:
-            self._buf.pop(inst, None)
+        # 新进入监控范围的币：拉一次历史，之后每根 K 线由 on_bars 追加。
+        # 移出的币先保留缓存（12 小时成交额在第 300 名附近的币会反复进出，持仓中的币还要算离场），
+        # 只是不再参与选币；超过 7 天没更新且没有持仓的缓存才清掉（见 _gc）。
         for inst in added:
-            if inst not in self._buf:
+            v = self._buf.get(inst)
+            if v is None or not v["ts"] or ctx.now - v["ts"][-1] > 2 * BAR_MS:
                 self._load(ctx, inst)
 
     def on_bars(self, ctx, bars):
@@ -104,12 +106,19 @@ class AltRegimeTrend(Strategy):
                 self._load(ctx, inst)
                 continue
             self._push(inst, b)
+        latest = max(b.ts for b in bars.values())
+        held = {p.inst_id for p in ctx.positions()}
+        for inst in held - set(bars):                       # 持仓的币已不在监控范围：单独补最新 K 线，离场照常判断
+            if inst in self._buf:
+                for row in zip(*(getattr(ctx.bars(inst, "4H", 6), k) for k in ("ts", "o", "h", "l", "c", "volq"))):
+                    self._push(inst, Bar(inst, "4H", dict(zip(("ts", "o", "h", "l", "c", "volq"), row))))
+        self._gc(ctx, held)
 
         btc = ctx.bars(BTC, "4H", 130)
         if len(btc) < 121:
             return None
         btc_up = btc.c[-1] > ta.ema(btc.c, 120)[-1]          # BTC 在 20 日（120 根 4H）均线上方
-        cols = self._universe(ctx)
+        cols = self._universe(btc, latest)
         if not cols:
             return None
         breadth = float(np.mean([v["c"][-1] > v["ema42"] for v in cols.values()]))  # 站上 7 日均线的比例
@@ -117,8 +126,7 @@ class AltRegimeTrend(Strategy):
         bear_break = (not btc_up) and breadth < 0.5
         weak_mkt = breadth < self.short_breadth
 
-        out = self._exits(ctx, cols)
-        held = {p.inst_id for p in ctx.positions()}
+        out = self._exits(ctx)
         free = self.max_pos - len(held)   # 本根发出的平仓下一根才成交，不立刻腾出名额
         legs = ctx.state.setdefault("legs", {})
         last_close = ctx.state.setdefault("closed", {})
@@ -143,9 +151,10 @@ class AltRegimeTrend(Strategy):
             rr = {inst: v["resid72"] for inst, v in cols.items() if math.isfinite(v["resid72"])}
             if rr:
                 k = max(1, int(len(cols) * self.short_pct))
-                for inst in sorted(rr, key=rr.get)[:k]:
-                    if not any(c[1] == inst for c in cands):
-                        cands.append((1 - sorted(rr, key=rr.get).index(inst) / len(cols), inst, "short", 2,
+                taken = {c[1] for c in cands}
+                for rank, inst in enumerate(sorted(rr, key=rr.get)[:k]):
+                    if inst not in taken:
+                        cands.append((1 - rank / len(cols), inst, "short", 2,
                                       f"市场宽度 {breadth:.0%}，72h 相对 BTC 最弱（残差 {rr[inst]:+.1%}）"))
         cands.sort(key=lambda x: -x[0])
 
@@ -233,7 +242,7 @@ class AltRegimeTrend(Strategy):
                            reason=f"{why}；名义 {notional:.0f}U，止损 {d:.1%}（亏 {notional * d:.0f}U）")
 
     # ---------------------------------------------------------------- 离场
-    def _exits(self, ctx, cols):
+    def _exits(self, ctx):
         """趋势腿：收盘跌回通道中轨（多）/ 涨回中轨（空）就离场。弱势做空腿靠 time_limit 到时平仓。"""
         out = []
         legs = ctx.state.get("legs", {})
@@ -267,12 +276,15 @@ class AltRegimeTrend(Strategy):
             if len(v[k]) > KEEP:
                 del v[k][0]
 
-    def _universe(self, ctx):
-        """监控范围：上线 ≥ 30 天、按 30 天成交额取前 top_n 的山寨币，并算好要用的指标。"""
-        btc = ctx.bars(BTC, "4H", 80)
+    def _gc(self, ctx, held):
+        for inst in [i for i, v in self._buf.items() if i not in held and v["ts"] and ctx.now - v["ts"][-1] > 7 * 86400_000]:
+            del self._buf[inst]
+
+    def _universe(self, btc, latest):
+        """监控范围：本根有新 K 线、上线 ≥ 30 天、按 30 天成交额取前 top_n 的山寨币，并算好要用的指标。"""
         rows = []
         for inst, v in self._buf.items():
-            if inst in SKIP or len(v["c"]) < 30 * DAY or not v["c"] or not (v["c"][-1] > 0):
+            if inst in SKIP or len(v["c"]) < 30 * DAY or v["ts"][-1] != latest or not (v["c"][-1] > 0):
                 continue
             rows.append((float(np.nansum(v["q"][-30 * DAY:])), inst))
         rows.sort(reverse=True)

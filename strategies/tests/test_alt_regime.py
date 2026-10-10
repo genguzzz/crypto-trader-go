@@ -122,6 +122,21 @@ class AltRegimeTrendTest(unittest.TestCase):
         _, out = run(s, bars, positions={"Y-USDT-SWAP": Record(inst_id="Y-USDT-SWAP", pos_side="long")})
         self.assertEqual([x.inst for x in out if x.action == "close"], ["Y-USDT-SWAP"])
 
+    def test_exit_after_leaving_the_universe(self):
+        bars = market(0.002)
+        closes = [1.0 + 0.002 * i for i in range(N - 1)] + [0.9]
+        bars["Y-USDT-SWAP"] = series(closes)
+        s = AltRegimeTrend({"margin_usdt": 125})
+        ctx = AcctCtx(bars=bars, positions={"Y-USDT-SWAP": Record(inst_id="Y-USDT-SWAP", pos_side="long")})
+        s.on_start(ctx)
+        s.on_universe_change(ctx, [i for i in bars if i != BTC], [])
+        s._buf["Y-USDT-SWAP"] = {k: v[:-1] for k, v in s._buf["Y-USDT-SWAP"].items()}   # last bar not seen yet
+        s.on_universe_change(ctx, [], ["Y-USDT-SWAP"])
+        last = {i: bar_of(i, r[-1]) for i, r in bars.items() if i not in (BTC, "Y-USDT-SWAP")}
+        out = s.on_bars(ctx, last) or []
+        self.assertEqual([x.inst for x in out if x.action == "close"], ["Y-USDT-SWAP"])
+        self.assertNotIn("Y-USDT-SWAP", [x.inst for x in out if x.action.startswith("open")])
+
     def test_suggested_margin(self):
         s = AltRegimeTrend({"aggr": 1.0, "style": 1})        # aggressive: dd95 = 50 margins
         self.assertAlmostEqual(s.suggested_margin(3000), 3000 * 0.5 / 50)
