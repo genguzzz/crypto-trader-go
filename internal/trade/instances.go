@@ -620,8 +620,6 @@ func (s *Service) pump(ctx context.Context, ri *instRT, sess Session) error {
 	}
 }
 
-// call runs one session event; faults (timeout, dead process) end the session, other errors are
-// logged and the event is dropped.
 // eventBudget is the deadline of an event carrying n instruments (a bar batch, or a universe change
 // with n additions). The strategy host allows its event timeout + 10 % per instrument; the same
 // proportion of SessionTimeout (configured ≥ the host's timeout) leaves the host room to answer first.
@@ -629,6 +627,8 @@ func (s *Service) eventBudget(n int) time.Duration {
 	return s.opts.SessionTimeout + time.Duration(n)*s.opts.SessionTimeout/10
 }
 
+// call runs one session event; faults (timeout, dead process) end the session, other errors are
+// logged and the event is dropped.
 func (s *Service) call(ctx context.Context, ri *instRT, sess Session, c sessCall) error {
 	d := max(s.opts.SessionTimeout, c.timeout)
 	cctx, cancel := context.WithTimeout(ctx, d)

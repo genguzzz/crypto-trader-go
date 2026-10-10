@@ -94,9 +94,12 @@ func TestReplayerMarketScreener(t *testing.T) {
 	if kept, err := rp.Screener(ScreenerQuery{Scope: ScopeMarket, Top: 2}); err != nil || len(kept) != 2 || kept[0].InstID != "B-USDT-SWAP" {
 		t.Fatalf("want the last ranking across a gap, got %+v %v", kept, err)
 	}
-	rp.setNow(t0 + 40*hourMs) // more than a day past the last ranking: the history has ended
-	if _, err := rp.Screener(ScreenerQuery{Scope: ScopeMarket, Top: 2}); err == nil {
-		t.Fatal("a stale ranking must not be reused for more than a day")
+	rp.setNow(t0 + 40*hourMs) // more than a day into the gap: an empty universe, the run goes on
+	if got, err := rp.Screener(ScreenerQuery{Scope: ScopeMarket, Top: 2}); err != nil || len(got) != 0 {
+		t.Fatalf("want an empty universe after a day-long gap, got %+v %v", got, err)
+	}
+	if got, _ := rp.Screener(ScreenerQuery{Scope: ScopeMarket}); len(got) != 0 { // top 0 from ctx.screener is capped, not unbounded
+		t.Fatalf("%+v", got)
 	}
 	fresh := newReplayer(st, func(id string) (Spec, bool) { s, ok := specs[id]; return s, ok }, t0, t0+24*hourMs, hourMs)
 	fresh.setNow(t0 + 5*hourMs) // not 12 hours of history yet and no earlier ranking

@@ -97,12 +97,14 @@ def one(inst, start, end, raw):
     old = json.load(open(fn)) if os.path.exists(fn) else {"c": {}, "f": {}}
     have = {int(k): v for k, v in old["c"].items()}
     fund = {int(k): v for k, v in old["f"].items()}
-    lo = min(have) if have else None
-    hi = max(have) if have else None
-    if lo is None or lo > start:
-        have.update(candles(inst, start, (lo - H) if lo else end))
-    if hi is None or hi < end:
-        have.update(candles(inst, (hi + H) if hi else start, end))
+    if not have:
+        have.update(candles(inst, start, end))
+    else:
+        lo, hi = min(have), max(have)
+        if lo > start:
+            have.update(candles(inst, start, lo - H))
+        if hi < end:
+            have.update(candles(inst, hi + H, end))
     if not fund or max(fund) < end - 8 * H:
         fund.update(funding(inst, start))
     json.dump({"c": {str(k): v for k, v in have.items()}, "f": {str(k): v for k, v in fund.items()}}, open(fn + ".tmp", "w"))

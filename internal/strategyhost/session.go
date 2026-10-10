@@ -115,7 +115,7 @@ func (s *session) Bars(ctx context.Context, tf string, bars []trade.InstBar) err
 		items[i] = map[string]any{"instId": x.InstID, "bar": barJSON(x.Bar)}
 		closes[x.InstID] = x.Bar.C
 	}
-	return s.event(ctx, "bars", map[string]any{"tf": tf, "bars": items, "_closes": closes})
+	return s.eventWith(ctx, "bars", map[string]any{"tf": tf, "bars": items}, evOpts{closes: closes, extra: len(closes)})
 }
 
 func (s *session) Timer(ctx context.Context, name string) error {
@@ -130,8 +130,8 @@ func (s *session) Status() string {
 
 func (s *session) Universe(ctx context.Context, added, removed, current []string) error {
 	// the strategy may warm up every added instrument: the same per-instrument allowance as a bar batch
-	return s.event(ctx, "universe", map[string]any{"added": strs(added), "removed": strs(removed),
-		"current": strs(current), "_extra": len(added)})
+	return s.eventWith(ctx, "universe", map[string]any{"added": strs(added), "removed": strs(removed),
+		"current": strs(current)}, evOpts{extra: len(added)})
 }
 
 func (s *session) Fill(ctx context.Context, f trade.Fill) error {
@@ -185,27 +185,29 @@ func (s *session) Err() error {
 
 // ---------- lifecycle ----------
 
+// evOpts are the per-event settings that are not sent: the bar closes (reference prices for
+// signals sent during the event) and the number of instruments that earn extra time.
+type evOpts struct {
+	closes map[string]float64
+	extra  int
+}
+
 // event sends one seq-numbered message and waits for its done.
 func (s *session) event(ctx context.Context, typ string, fields map[string]any) error {
+	return s.eventWith(ctx, typ, fields, evOpts{})
+}
+
+func (s *session) eventWith(ctx context.Context, typ string, fields map[string]any, o evOpts) error {
 	s.evMu.Lock()
 	defer s.evMu.Unlock()
 	if err := s.deadErr(); err != nil {
 		return err
 	}
-	msg := map[string]any{}
-	var closes map[string]float64
-	extra := 0 // instruments that earn extra time
+	msg := make(map[string]any, len(fields)+3)
 	for k, v := range fields {
-		switch k {
-		case "_closes":
-			closes = v.(map[string]float64)
-			extra = len(closes)
-		case "_extra":
-			extra = v.(int)
-		default:
-			msg[k] = v
-		}
+		msg[k] = v
 	}
+	closes, extra := o.closes, o.extra
 	// a batch of bars (or a universe change) gets the per-event budget plus a little per instrument
 	budget := s.h.opts.EventTimeout + time.Duration(extra)*s.h.opts.EventTimeout/10
 	evCtx, cancel := context.WithTimeout(ctx, budget)

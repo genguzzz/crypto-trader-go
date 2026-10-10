@@ -462,56 +462,57 @@ func (r *replayer) cryptoIDs() ([]string, error) {
 		}
 	}
 	sort.Strings(out)
-	r.crypto = out
+	if len(out) > 0 { // an empty list may mean the catalog was not loaded yet: ask again next time
+		r.crypto = out
+	}
 	return out, nil
 }
+
+// marketGapMs is how long a market ranking is kept across a gap in the 1H history.
+const marketGapMs = 24 * hourMs
 
 // marketRank ranks the crypto swaps by USDT turnover over the 12 complete hours before now
 // (candles_1h quote volume; an instrument missing any of the 12 hours is left out — a gap, not
 // zero), descending.
-// marketGapMs is how long a market ranking is kept across a gap in the 1H history.
-const marketGapMs = 24 * hourMs
-
 func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
 	ids, err := r.cryptoIDs()
 	if err != nil {
 		return nil, err
 	}
-	crypto := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		crypto[id] = true
-	}
 	end := now / hourMs * hourMs
 	var out []ScreenRow
 	var turn []float64
-	rows, err := r.db.Query(`SELECT inst_id, SUM(quote) FROM candles_1h WHERE ts>=? AND ts<? GROUP BY inst_id
-		HAVING COUNT(quote)=12 AND SUM(quote)>0`, end-12*hourMs, end)
+	// one primary-key range per instrument (candles_1h has no ts index)
+	stmt, err := r.db.Prepare(`SELECT COUNT(quote), COALESCE(SUM(quote), 0) FROM candles_1h WHERE inst_id=? AND ts>=? AND ts<?`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
+	defer stmt.Close()
+	for _, id := range ids {
+		var n int
 		var v float64
-		if err := rows.Scan(&id, &v); err != nil {
+		if err := stmt.QueryRow(id, end-12*hourMs, end).Scan(&n, &v); err != nil {
 			return nil, err
 		}
-		if crypto[id] {
+		if n == 12 && v > 0 {
 			out = append(out, ScreenRow{InstID: id, Long: math.NaN(), Short: math.NaN()})
 			turn = append(turn, v)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	r.mu.Lock()
 	last, lastAt := r.market, r.marketAt
 	r.mu.Unlock()
 	// A gap in the stored 1H history (recorder downtime) leaves out every instrument missing an
-	// hour: when fewer than half of the last ranking remain, keep that ranking for up to a day
-	// rather than shrinking the universe or failing the run.
-	if len(out) < len(last)/2 && now-lastAt <= marketGapMs {
-		return append([]ScreenRow(nil), last...), nil
+	// hour: when fewer than half of the last ranking remain, keep that ranking for up to a day,
+	// then run with an empty universe until data resumes, rather than failing the run. Only a run
+	// that has never had a ranking fails.
+	if len(out) < len(last)/2 {
+		if now-lastAt <= marketGapMs {
+			return append([]ScreenRow(nil), last...), nil
+		}
+		if len(out) == 0 {
+			return []ScreenRow{}, nil
+		}
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("缺少 %s 前 12 小时的 1H K 线，无法按成交额回放全市场", fmtTime(end))
@@ -546,6 +547,9 @@ func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
 		rows, err := r.marketRank(now)
 		if err != nil {
 			return nil, err
+		}
+		if q.Top <= 0 || q.Top > MaxMarketTop { // ctx.screener queries skip validUniverse
+			q.Top = MaxMarketTop
 		}
 		if len(q.Filter) > 0 {
 			// rows are in rank order: compute factors only until Top rows pass the filter
