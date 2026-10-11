@@ -12,7 +12,7 @@ Rules for every AI agent (Claude Code, Codex, …) working in this repository. R
 
 ## Working rules
 
-- **English** in all docs, comments, commits, issues and PRs. Talk to the owner in Chinese. Exceptions approved by the owner: the comments in built-in strategies (`strategies/library/`), editor templates and the in-app help articles (`web/src/docs/`) are Chinese, because they are teaching material for the owner.
+- **English** in all docs, comments, commits, issues and PRs. Talk to the owner in Chinese. Exceptions approved by the owner: the comments in built-in strategies (`strategies/library/`), editor templates, the in-app help articles (`web/src/docs/`) and the owner's research reports (`docs/research/*.html` with their `research/report/history.json`; 2026-10-11) are Chinese, because they are teaching material for the owner.
 - Work from an issue ([requirements](docs/contributing.md#requirements), [bugs](docs/contributing.md#bugs)); claim it before starting ([claiming work](docs/contributing.md#claiming-work)).
 - Parallel work uses one worktree per issue and a self-reviewed pull request: [worktree workflow](docs/worktree-workflow.md). Direct commits to `main` only when the owner asks.
 - Commits and PR titles follow [Conventional Commits](docs/contributing.md#commits). `git pull --rebase` before pushing; never force-push `main`.

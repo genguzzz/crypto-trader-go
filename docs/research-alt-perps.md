@@ -2,7 +2,8 @@
 
 Issue [#8](https://github.com/genguzzz/crypto-trader-go/issues/8). Outcome: the built-in strategy
 `alt-regime-trend` (`strategies/library/alt_regime.py`) and the offline backtest `research/altbt/`.
-Research scripts and intermediate data live outside the repository (owner's workspace, `alt-study/`).
+The owner-facing interactive report (Chinese: all plans so far, charts, position-size calculator) is
+[docs/research/alt-perps-report.html](research/alt-perps-report.html), built by `research/report/`.
 
 ## Question
 
