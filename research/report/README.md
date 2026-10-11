@@ -3,8 +3,9 @@
 `docs/research/alt-perps-report.html` is the owner-facing report of the altcoin strategy research:
 every plan so far (pump shorting, BTC/ETH trend, ctg pool scores, alt-regime-trend), the current
 strategy, backtest results, risk, a position-size calculator, the experiment log and the changelog.
-It is a single self-contained file (no external scripts or fonts): open it in a browser, or from
-GitHub via "Download raw file". Written in Chinese for the owner (exception in AGENTS.md); the
+It is a single self-contained file (no external scripts or fonts): the web app serves a copy at
+`/research/alt-perps-report.html` (from `web/public/research/`, written by the same build), or open
+the file from the repository in a browser. Written in Chinese for the owner (exception in AGENTS.md); the
 engineering record stays in English in `docs/research-alt-perps.md`.
 
 | File | What |

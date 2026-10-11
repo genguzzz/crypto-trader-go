@@ -1,4 +1,5 @@
-"""Build the self-contained research report (docs/research/alt-perps-report.html).
+"""Build the self-contained research report (docs/research/alt-perps-report.html, plus the copy the
+web app serves at /research/alt-perps-report.html).
 
   python3 research/report/build.py
 
@@ -12,6 +13,8 @@ import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 OUT = os.path.join(ROOT, "docs", "research", "alt-perps-report.html")
+# a copy the web app serves as a static file: https://<ctg host>/research/alt-perps-report.html
+WEB = os.path.join(ROOT, "web", "public", "research", "alt-perps-report.html")
 
 
 def load(name):
@@ -23,9 +26,10 @@ def main():
             "grid": load("results/robust-grid.json")}
     blob = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     html = open(os.path.join(HERE, "template.html"), encoding="utf-8").read().replace("__DATA__", blob)
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    open(OUT, "w", encoding="utf-8").write(html)
-    print(f"wrote {os.path.relpath(OUT, ROOT)} ({len(html) // 1024} KB)")
+    for path in (OUT, WEB):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "w", encoding="utf-8").write(html)
+        print(f"wrote {os.path.relpath(path, ROOT)} ({len(html) // 1024} KB)")
 
 
 if __name__ == "__main__":
