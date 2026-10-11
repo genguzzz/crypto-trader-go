@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -444,6 +445,29 @@ func TestEventTimeoutKills(t *testing.T) {
 	// The instance slot is free again for a restart.
 	if _, err := h.Start(context.Background(), inst, ver, trade.ModeLive, nil, fakeMD{}, &fakeSink{}); err != nil {
 		t.Fatalf("restart: %v", err)
+	}
+}
+
+func TestUniverseBudgetGrowsWithAdded(t *testing.T) {
+	h, path := newHost(t, Options{EventTimeout: 100 * time.Millisecond})
+	startSup(t, path, func(c *client, ev map[string]any) bool {
+		if ev["type"] == "universe" {
+			time.Sleep(200 * time.Millisecond) // within 100 ms + 30 × 10 ms
+		}
+		return true
+	})
+	waitFor(t, h.Available)
+	s, err := h.Start(context.Background(), inst, ver, trade.ModeLive, nil, fakeMD{}, &fakeSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop(context.Background())
+	added := make([]string, 30)
+	for i := range added {
+		added[i] = fmt.Sprintf("X%d-USDT-SWAP", i)
+	}
+	if err := s.Universe(context.Background(), added, nil, added); err != nil {
+		t.Fatalf("universe: %v", err)
 	}
 }
 

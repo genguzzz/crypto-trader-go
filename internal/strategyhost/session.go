@@ -115,7 +115,7 @@ func (s *session) Bars(ctx context.Context, tf string, bars []trade.InstBar) err
 		items[i] = map[string]any{"instId": x.InstID, "bar": barJSON(x.Bar)}
 		closes[x.InstID] = x.Bar.C
 	}
-	return s.event(ctx, "bars", map[string]any{"tf": tf, "bars": items, "_closes": closes})
+	return s.eventWith(ctx, "bars", map[string]any{"tf": tf, "bars": items}, evOpts{closes: closes, extra: len(closes)})
 }
 
 func (s *session) Timer(ctx context.Context, name string) error {
@@ -129,8 +129,9 @@ func (s *session) Status() string {
 }
 
 func (s *session) Universe(ctx context.Context, added, removed, current []string) error {
-	return s.event(ctx, "universe", map[string]any{"added": strs(added), "removed": strs(removed),
-		"current": strs(current)})
+	// the strategy may warm up every added instrument: the same per-instrument allowance as a bar batch
+	return s.eventWith(ctx, "universe", map[string]any{"added": strs(added), "removed": strs(removed),
+		"current": strs(current)}, evOpts{extra: len(added)})
 }
 
 func (s *session) Fill(ctx context.Context, f trade.Fill) error {
@@ -184,24 +185,32 @@ func (s *session) Err() error {
 
 // ---------- lifecycle ----------
 
+// evOpts are the per-event settings that are not sent: the bar closes (reference prices for
+// signals sent during the event) and the number of instruments that earn extra time.
+type evOpts struct {
+	closes map[string]float64
+	extra  int
+}
+
 // event sends one seq-numbered message and waits for its done.
 func (s *session) event(ctx context.Context, typ string, fields map[string]any) error {
+	return s.eventWith(ctx, typ, fields, evOpts{})
+}
+
+func (s *session) eventWith(ctx context.Context, typ string, fields map[string]any, o evOpts) error {
 	s.evMu.Lock()
 	defer s.evMu.Unlock()
 	if err := s.deadErr(); err != nil {
 		return err
 	}
-	msg := map[string]any{}
-	var closes map[string]float64
+	msg := make(map[string]any, len(fields)+3)
 	for k, v := range fields {
-		if k == "_closes" {
-			closes = v.(map[string]float64)
-			continue
-		}
 		msg[k] = v
 	}
-	// a batch of bars gets the per-event budget plus a little per instrument
-	evCtx, cancel := context.WithTimeout(ctx, s.h.opts.EventTimeout+time.Duration(len(closes))*s.h.opts.EventTimeout/10)
+	closes, extra := o.closes, o.extra
+	// a batch of bars (or a universe change) gets the per-event budget plus a little per instrument
+	budget := s.h.opts.EventTimeout + time.Duration(extra)*s.h.opts.EventTimeout/10
+	evCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
 	s.mu.Lock()
@@ -234,7 +243,7 @@ func (s *session) event(ctx context.Context, typ string, fields map[string]any) 
 		if ctx.Err() != nil {
 			err = fmt.Errorf("%w: %s event: %w", trade.ErrFaulted, typ, ctx.Err())
 		} else {
-			err = fmt.Errorf("%w: %s event not acknowledged within %s", trade.ErrFaulted, typ, s.h.opts.EventTimeout)
+			err = fmt.Errorf("%w: %s event not acknowledged within %s", trade.ErrFaulted, typ, budget)
 		}
 		s.kill(err)
 		return err

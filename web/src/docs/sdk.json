@@ -185,8 +185,8 @@
   "group": "params",
   "name": "Screener",
   "kind": "class",
-  "sig": "(rule: 'str' = '', side: 'str' = 'long', top: 'int' = 20, min_score: 'float | None' = None, filter: 'dict[str, tuple[float, float]] | None' = None, refresh: 'str' = '1H')",
-  "doc": "Dynamic universe: the top instruments of the pool by a rule's score, re-evaluated every `refresh`.\n\nside: long | short | both (ranked by the stronger side)."
+  "sig": "(rule: 'str' = '', side: 'str' = 'long', top: 'int' = 20, min_score: 'float | None' = None, filter: 'dict[str, tuple[float, float]] | None' = None, refresh: 'str' = '1H', scope: 'str' = 'pool')",
+  "doc": "Dynamic universe re-evaluated every `refresh`.\n\nscope=\"pool\" (default): the active pool, ranked by a rule's score on `side` (long | short | both,\nthe stronger side), else by pool rank; top 1–50.\nscope=\"market\": every recorded crypto USDT swap ranked by 12h USDT turnover, descending; top 1–300.\nNo rule or min_score (scores exist only for pool rows); `filter` still applies."
  },
  {
   "group": "Signal",
@@ -297,8 +297,8 @@
   "group": "ctx",
   "name": "screener",
   "kind": "method",
-  "sig": "(rule: 'str' = '', side: 'str' = 'long', top: 'int' = 20, min_score: 'float | None' = None, filter: 'dict | None' = None)",
-  "doc": ""
+  "sig": "(rule: 'str' = '', side: 'str' = 'long', top: 'int' = 20, min_score: 'float | None' = None, filter: 'dict | None' = None, scope: 'str' = 'pool')",
+  "doc": "Like Screener(...): scope=\"pool\" ranks the active pool (by `rule` when given), scope=\"market\"\nevery recorded crypto swap by 12h USDT turnover (no rule). Rows: inst_id, rank, last, long,\nshort, values; an unscored side is NaN (always for market rows)."
  },
  {
   "group": "ctx",

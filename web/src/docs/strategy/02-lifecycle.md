@@ -13,7 +13,7 @@ summary: 类属性、每个处理函数在实时和回测里什么时候被调�
 |---|---|---|
 | `name` | 类名转小写加 `-`（`MyBreakout` → `my-breakout`） | 唯一标识，2–40 个小写字母、数字或 `-` |
 | `description` | 类的 docstring | 一句话说明，显示在策略卡片上 |
-| `universe` | `[]` | 交易的合约：固定列表 `["BTC-USDT-SWAP", …]`（最多 50 个），或 `Screener(...)` 动态池，见 [多币种与组合](/help/strategy/portfolio) |
+| `universe` | `[]` | 交易的合约：固定列表 `["BTC-USDT-SWAP", …]`（最多 50 个），或 `Screener(...)` 动态池（活跃池按评分最多 50 个，全市场按成交额最多 300 个），见 [多币种与组合](/help/strategy/portfolio) |
 | `timeframe` | `"1H"` | K 线周期：`1m` `5m` `15m` `1H` `4H` `1D`；写成 `Timeframe("4H")` 可让每个实例自己选，见 [参数声明](/help/strategy/params) |
 | `can_long` / `can_short` | `True` / `True` | 策略可能开的方向，显示在卡片上，订单层会据此拦截；配合 `self.allows()` 使用 |
 | `warmup` | `0` | 策略要读多少根历史 K 线，只是给人看的说明，不会自动等待 |

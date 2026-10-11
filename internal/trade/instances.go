@@ -25,8 +25,11 @@ type instRT struct {
 	sess     Session
 	q        []sessCall
 	universe []string
-	paused   bool
-	hbSaved  int64
+	// a forced refresh (session start) failed, e.g. the market snapshot was not ready: retry every
+	// minute instead of waiting up to a whole refresh interval with no universe
+	universeRetry bool
+	paused        bool
+	hbSaved       int64
 	// consecutive events whose strategy handler raised (3 → paused)
 	handlerErrs int
 	state       []byte
@@ -134,8 +137,22 @@ func (s *Service) validUniverse(u Universe) (Universe, error) {
 		if q.Side != "" && q.Side != "long" && q.Side != "short" && q.Side != "both" {
 			return u, errBad("筛选方向需为 long / short / both")
 		}
-		if q.Top < 1 || q.Top > 50 {
-			return u, errBad("筛选数量 top 需在 1–50")
+		q.Scope = strings.ToLower(strings.TrimSpace(q.Scope))
+		switch q.Scope {
+		case "", ScopePool:
+			q.Scope = ""
+			if q.Top < 1 || q.Top > MaxPoolTop {
+				return u, errBad(fmt.Sprintf("筛选数量 top 需在 1–%d", MaxPoolTop))
+			}
+		case ScopeMarket:
+			if _, err := q.MarketQuery(); err != nil { // the same rule/minScore check as at runtime
+				return u, errBad(err.Error())
+			}
+			if q.Top < 1 || q.Top > MaxMarketTop {
+				return u, errBad(fmt.Sprintf("全市场筛选数量 top 需在 1–%d", MaxMarketTop))
+			}
+		default:
+			return u, errBad("筛选范围 scope 需为 pool 或 market")
 		}
 		if q.MinScore < 0 || q.MinScore > 100 {
 			return u, errBad("最低分需在 0–100")
@@ -533,7 +550,9 @@ func (s *Service) runLive(ctx context.Context, ri *instRT) {
 				st = StPaused
 			}
 			s.setRTState(ri, st, "")
-			s.refreshUniverse(ri, s.md.Now(), true)
+			if err := s.refreshUniverse(ri, s.md.Now(), true); err != nil {
+				log.Printf("trade: instance %d universe (retrying every minute): %v", ri.inst.ID, err)
+			}
 			s.updateKeep()
 			began := time.Now()
 			err = s.pump(ctx, ri, sess)
@@ -601,6 +620,13 @@ func (s *Service) pump(ctx context.Context, ri *instRT, sess Session) error {
 			return err
 		}
 	}
+}
+
+// eventBudget is the deadline of an event carrying n instruments (a bar batch, or a universe change
+// with n additions). The strategy host allows its event timeout + 10 % per instrument; the same
+// proportion of SessionTimeout (configured ≥ the host's timeout) leaves the host room to answer first.
+func (s *Service) eventBudget(n int) time.Duration {
+	return s.opts.SessionTimeout + time.Duration(n)*s.opts.SessionTimeout/10
 }
 
 // call runs one session event; faults (timeout, dead process) end the session, other errors are
@@ -681,6 +707,10 @@ func (s *Service) persistState(ri *instRT, sess Session, write bool) {
 // the change for the strategy.
 func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	inst := ri.instance()
+	ri.mu.Lock()
+	retrying := ri.universeRetry
+	force = force || retrying
+	ri.mu.Unlock()
 	var cur []string
 	if q := inst.Universe.Screener; q != nil {
 		every, _ := refreshMillis(q.Refresh)
@@ -689,6 +719,14 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 		}
 		rows, err := ri.b.market().Screener(*q)
 		if err != nil {
+			if force {
+				ri.mu.Lock()
+				ri.universeRetry = true
+				ri.mu.Unlock()
+				if retrying {
+					return nil // already reported when the retries began; keep trying quietly
+				}
+			}
 			return fmt.Errorf("筛选器：%w", err)
 		}
 		for _, r := range rows {
@@ -702,6 +740,7 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	}
 	sort.Strings(cur)
 	ri.mu.Lock()
+	ri.universeRetry = false
 	added, removed := diffSets(ri.universe, cur)
 	if !force && len(added) == 0 && len(removed) == 0 {
 		ri.mu.Unlock()
@@ -710,7 +749,8 @@ func (s *Service) refreshUniverse(ri *instRT, now int64, force bool) error {
 	ri.universe = cur
 	ri.mu.Unlock()
 	cp := append([]string{}, cur...)
-	ri.push(sessCall{name: "universe", fn: func(ctx context.Context, x Session) error { return x.Universe(ctx, added, removed, cp) }})
+	ri.push(sessCall{name: "universe", fn: func(ctx context.Context, x Session) error { return x.Universe(ctx, added, removed, cp) },
+		timeout: s.eventBudget(len(added))})
 	return nil
 }
 

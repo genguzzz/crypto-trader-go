@@ -70,3 +70,13 @@ Thumbs.db
 
 # symlinked node_modules in worktrees
 node_modules
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# research outputs (rebuild with the scripts)
+research/altstudy/*.npz
+research/altstudy/*.npy
+research/altstudy/*.pkl
+research/altstudy/*.csv

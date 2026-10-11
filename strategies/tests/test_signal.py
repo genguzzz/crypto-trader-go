@@ -73,6 +73,35 @@ class StrategyTest(unittest.TestCase):
                                                       "minScore": 60.0, "filter": {"spread_bps": [0.0, 10.0]}}})
 
 
+class ScreenerScopeTest(unittest.TestCase):
+    def test_wire(self):
+        self.assertNotIn("scope", Screener(rule="r").to_wire())
+        self.assertNotIn("scope", Screener(rule="r", scope="pool").to_wire())
+        w = Screener(top=300, scope="market", filter={"spread_bps": (0, 10)}).to_wire()
+        self.assertEqual((w["scope"], w["top"], w["rule"]), ("market", 300, ""))
+        from ctg.context import Context
+        with self.assertRaises(ValueError):  # a typo must not silently fall back to the pool
+            Context(None).screener(top=200, scope="Market")
+        with self.assertRaises(ValueError):  # the server would reject it; do not send it silently
+            Context(None).screener(top=50, scope="market", min_score=70)
+
+    def _msgs(self, screener: str) -> list[str]:
+        code = ("from ctg import Strategy, Screener\n"
+                "class S(Strategy):\n"
+                f"    universe = {screener}\n")
+        return [d["message"] for d in check(code)["diagnostics"] if ".universe" in d["message"]]
+
+    def test_check(self):
+        self.assertEqual(self._msgs('Screener(top=300, scope="market")'), [])
+        self.assertEqual(self._msgs('Screener(rule="r", top=50)'), [])
+        self.assertTrue(any("1–50" in m for m in self._msgs('Screener(rule="r", top=51)')))
+        self.assertTrue(any("1–300" in m for m in self._msgs('Screener(top=301, scope="market")')))
+        self.assertTrue(any("rule" in m for m in self._msgs('Screener(rule="r", top=10, scope="market")')))
+        self.assertTrue(any("min_score" in m for m in self._msgs('Screener(top=10, min_score=50, scope="market")')))
+        self.assertEqual(self._msgs('Screener(top=10, min_score=0, scope="market")'), [])   # 0 = not set, like the server
+        self.assertTrue(any("scope" in m for m in self._msgs('Screener(top=10, scope="all")')))
+
+
 class NewSignalTest(unittest.TestCase):
     def test_percent_trailing_time_limit(self):
         w = Signal.open("X", "short", stop_loss="2%", take_profit="1%", trailing_stop="1.5atr", time_limit="6h").to_wire(100, 2)
@@ -194,3 +223,21 @@ class PortfolioTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RankUnscoredTest(unittest.TestCase):
+    """An unscored side arrives as null (never 0) and must never win in side="both"."""
+
+    class RT:
+        def query(self, method, args):
+            return [{"instId": "A", "long": None, "short": 85}, {"instId": "B", "long": 70, "short": None},
+                    {"instId": "C", "long": 60, "short": 65}, {"instId": "D", "long": None, "short": None}]
+
+    def test_both_sides(self):
+        from ctg.context import Context
+        ctx = Context(self.RT())
+        got = [(r.inst_id, r.side, r.score) for r in ctx.rank("r", side="both")]
+        self.assertEqual(got, [("A", "short", 85), ("B", "long", 70), ("C", "short", 65)])
+        rows = ctx.screener("r")
+        self.assertTrue(math.isnan(rows[0].long) and rows[0].short == 85)
+        self.assertFalse(rows[3].short < 30)   # NaN compares False instead of raising

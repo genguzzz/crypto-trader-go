@@ -22,7 +22,8 @@ import (
 // (candles_1h). Factors are computed with features.Compute on 1H bars, OI and settled funding at
 // the last hour close (the replayable fields only); Score and Screener read the hourly
 // score_snapshots (live record preferred over replay) and the per-minute pool membership
-// (universe_snapshots).
+// (universe_snapshots); a market-scope Screener ranks the crypto swaps by the 1H quote volume of
+// the 12 complete hours before the clock.
 type replayer struct {
 	st       *store.Store
 	db       *sql.DB
@@ -31,14 +32,20 @@ type replayer struct {
 	base     int64
 	table    string
 
-	mu      sync.RWMutex
-	now     int64
-	bars    map[string]*barSeries // base bars
-	fine    map[string]*barSeries // 1m bars for timeframes below an hourly base (read on demand)
-	hourly  map[string]*barSeries // 1H bars for factors
-	oi      map[string][]store.OISample
-	funding map[string][]store.FundingSample // settled, ascending
-	scores  map[string]*scoreSet
+	mu          sync.RWMutex
+	now         int64
+	bars        map[string]*barSeries // base bars
+	fine        map[string]*barSeries // 1m bars for timeframes below an hourly base (read on demand)
+	hourly      map[string]*barSeries // 1H bars for factors
+	oi          map[string][]store.OISample
+	funding     map[string][]store.FundingSample // settled, ascending
+	scores      map[string]*scoreSet
+	crypto      []string    // crypto swaps with 1H history (market screener), nil until loaded
+	cryptoRetry int64       // replay clock before which an empty crypto list is not looked up again
+	market      []ScreenRow // last full market ranking (kept across a gap in candles_1h)
+	marketAt    int64       // replay clock of that ranking
+	marketEnd   int64       // window end of the last computed result (the ranking changes once per hour)
+	marketRes   []ScreenRow // that result
 }
 
 type barSeries struct {
@@ -436,8 +443,145 @@ func (r *replayer) poolAt(now int64) ([]ScreenRow, error) {
 	return out, rows.Err()
 }
 
+// cryptoIDs lists the crypto swaps with stored 1H candles (once per run; instruments without a
+// known spec cannot be traded and are left out).
+func (r *replayer) cryptoIDs() ([]string, error) {
+	r.mu.RLock()
+	cached, retry, now := r.crypto, r.cryptoRetry, r.now
+	r.mu.RUnlock()
+	if cached != nil {
+		return cached, nil
+	}
+	if now < retry {
+		return nil, nil
+	}
+	if r.specs == nil {
+		return nil, fmt.Errorf("缺少合约规格，无法按品类筛选全市场")
+	}
+	ids, err := r.st.InstIDs("candles_1h") // a full scan: done without holding r.mu
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, id := range ids {
+		if sp, ok := r.specs(id); ok && sp.Category == CategoryCrypto {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	r.mu.Lock()
+	if len(out) > 0 {
+		r.crypto = out
+	} else { // the catalog may not be loaded yet: ask again, at most once per replay day (a full scan)
+		r.cryptoRetry = r.now + dayMs
+	}
+	r.mu.Unlock()
+	return out, nil
+}
+
+// marketGapMs is how long a market ranking is kept across a gap in the 1H history.
+const marketGapMs = 24 * hourMs
+
+// marketRank ranks the crypto swaps by USDT turnover over the 12 complete hours before now
+// (candles_1h quote volume; an instrument missing any of the 12 hours is left out — a gap, not
+// zero), descending.
+func (r *replayer) marketRank(now int64) ([]ScreenRow, error) {
+	ids, err := r.cryptoIDs()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("没有已知规格的加密合约 1H K 线（合约目录可能尚未加载），无法按成交额回放全市场")
+	}
+	end := now / hourMs * hourMs
+	r.mu.Lock()
+	if r.marketRes != nil && r.marketEnd == end {
+		res := append([]ScreenRow(nil), r.marketRes...)
+		r.mu.Unlock()
+		return res, nil
+	}
+	r.mu.Unlock()
+	var out []ScreenRow
+	var turn []float64
+	// one primary-key range per instrument (candles_1h has no ts index)
+	stmt, err := r.db.Prepare(`SELECT COUNT(quote), COALESCE(SUM(quote), 0),
+		COALESCE((SELECT c FROM candles_1h WHERE inst_id=?1 AND ts<?3 ORDER BY ts DESC LIMIT 1), 0)
+		FROM candles_1h WHERE inst_id=?1 AND ts>=?2 AND ts<?3`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	for _, id := range ids {
+		var n int
+		var v, last float64
+		if err := stmt.QueryRow(id, end-12*hourMs, end).Scan(&n, &v, &last); err != nil {
+			return nil, err
+		}
+		if n == 12 && v > 0 {
+			out = append(out, ScreenRow{InstID: id, Last: last, Long: math.NaN(), Short: math.NaN()})
+			turn = append(turn, v)
+		}
+	}
+	r.mu.Lock()
+	last, lastAt := r.market, r.marketAt
+	r.mu.Unlock()
+	// A gap in the stored 1H history (recorder downtime) leaves out every instrument missing an
+	// hour: when fewer than half of the last ranking remain, keep that ranking for up to a day,
+	// then run with an empty universe until data resumes, rather than failing the run. Only a run
+	// that has never had a ranking fails.
+	if last != nil && (len(out) == 0 || len(out) < len(last)/2) {
+		if now-lastAt <= marketGapMs {
+			return r.keepMarket(end, last), nil
+		}
+		if len(out) == 0 {
+			return r.keepMarket(end, []ScreenRow{}), nil
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("缺少 %s 前 12 小时的 1H K 线，无法按成交额回放全市场", fmtTime(end))
+	}
+	ranked := RankByTurnover(out, turn)
+	r.mu.Lock()
+	r.market, r.marketAt = ranked, now
+	r.mu.Unlock()
+	return r.keepMarket(end, ranked), nil
+}
+
+// keepMarket caches the result for the window ending at end and returns a copy.
+func (r *replayer) keepMarket(end int64, rows []ScreenRow) []ScreenRow {
+	r.mu.Lock()
+	r.marketEnd, r.marketRes = end, rows
+	r.mu.Unlock()
+	return append([]ScreenRow(nil), rows...)
+}
+
 func (r *replayer) Screener(q ScreenerQuery) ([]ScreenRow, error) {
 	now := r.Now()
+	if q.Market() {
+		q, err := q.MarketQuery()
+		if err != nil {
+			return nil, err
+		}
+		rows, err := r.marketRank(now)
+		if err != nil {
+			return nil, err
+		}
+		if len(q.Filter) > 0 {
+			// rows are in rank order: compute factors only until Top rows pass the filter
+			var kept []ScreenRow
+			for i := range rows {
+				rows[i].Values, _ = r.Factors(rows[i].InstID)
+				if len(SelectScreen(rows[i:i+1], q)) == 1 {
+					kept = append(kept, rows[i])
+					if q.Top > 0 && len(kept) >= q.Top {
+						break
+					}
+				}
+			}
+			rows = kept
+		}
+		return SelectScreen(rows, q), nil // Last = close of the last complete hour (from the ranking query)
+	}
 	pool, err := r.poolAt(now)
 	if err != nil {
 		return nil, err

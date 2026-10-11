@@ -7,7 +7,7 @@ import { ruleOptions, store } from '../../store'
 import SearchInput from '../ui/SearchInput.vue'
 import NumInput from '../ui/NumInput.vue'
 import CoinIcon from '../CoinIcon.vue'
-import { sym } from './meta'
+import { screenerMaxTop, sym } from './meta'
 
 /** Instrument universe of a strategy instance: a fixed list (catalog search) or a screener query. */
 const u = defineModel<Universe>({ required: true })
@@ -41,11 +41,29 @@ function remove(id: string) { u.value = { static: picked.value.filter(x => x !==
 const majors = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP']
 
 const sc = computed(() => u.value.screener!)
+// pool = active pool ranked by a rule's score; market = every recorded crypto swap by 12h USDT turnover
+const scope = computed<'pool' | 'market'>({
+  get: () => (sc.value.scope === 'market' ? 'market' : 'pool'),
+  set: v => {
+    const q = sc.value
+    if (v === 'market') {
+      q.scope = 'market'
+      delete q.rule
+      delete q.minScore
+      delete q.side
+    } else {
+      delete q.scope
+      q.rule = store.ruleId || undefined
+      q.side = 'long'
+      q.top = Math.min(q.top, 50)
+    }
+  },
+})
 </script>
 
 <template>
   <div class="up">
-    <Segmented v-model="kind" size="sm" aria-label="标的来源" :options="[{ value: 'static', label: '固定列表' }, { value: 'screener', label: '规则筛选' }]" />
+    <Segmented v-model="kind" size="sm" aria-label="标的来源" :options="[{ value: 'static', label: '固定列表' }, { value: 'screener', label: '动态筛选' }]" />
 
     <template v-if="kind === 'static'">
       <div class="picked">
@@ -68,12 +86,16 @@ const sc = computed(() => u.value.screener!)
     </template>
 
     <div v-else class="scr">
-      <label class="f"><span>评分规则</span>
-        <USelect :model-value="sc.rule || ''" :options="ruleOptions()" aria-label="筛选规则" @update:model-value="v => (sc.rule = String(v))" /></label>
-      <label class="f"><span>方向</span>
-        <Segmented :model-value="sc.side || 'long'" size="sm" aria-label="方向" :options="[{ value: 'long', label: '多头分', tone: 'up' }, { value: 'short', label: '空头分', tone: 'down' }, { value: 'both', label: '较强一侧', title: '多空两侧里分数更高的一侧' }]" @update:model-value="v => (sc.side = v as 'long' | 'short' | 'both')" /></label>
-      <label class="f"><span>取前 N</span><NumInput v-model="sc.top" unit="个" :min="1" :max="100" :step="1" /></label>
-      <label class="f"><span>最低分（可选）</span><NumInput :model-value="sc.minScore ?? NaN" unit="分" :min="0" :max="100" @update:model-value="v => (sc.minScore = isFinite(v) ? v : undefined)" /></label>
+      <label class="f wide"><span>排序依据</span>
+        <Segmented v-model="scope" size="sm" aria-label="筛选范围" :options="[{ value: 'pool', label: '活跃池按评分', title: '只在活跃池里按评分规则排序（上限 50 个）' }, { value: 'market', label: '全市场按成交额', title: '所有在录的加密货币永续按 12 小时 USDT 成交额排序（上限 300 个）' }]" /></label>
+      <template v-if="scope === 'pool'">
+        <label class="f"><span>评分规则</span>
+          <USelect :model-value="sc.rule || ''" :options="ruleOptions()" aria-label="筛选规则" @update:model-value="v => (sc.rule = String(v))" /></label>
+        <label class="f"><span>方向</span>
+          <Segmented :model-value="sc.side || 'long'" size="sm" aria-label="方向" :options="[{ value: 'long', label: '多头分', tone: 'up' }, { value: 'short', label: '空头分', tone: 'down' }, { value: 'both', label: '较强一侧', title: '多空两侧里分数更高的一侧' }]" @update:model-value="v => (sc.side = v as 'long' | 'short' | 'both')" /></label>
+      </template>
+      <label class="f"><span>取前 N（1–{{ screenerMaxTop(sc) }}）</span><NumInput v-model="sc.top" unit="个" :min="1" :max="screenerMaxTop(sc)" :step="1" /></label>
+      <label v-if="scope === 'pool'" class="f"><span>最低分（可选）</span><NumInput :model-value="sc.minScore ?? NaN" unit="分" :min="0" :max="100" @update:model-value="v => (sc.minScore = isFinite(v) ? v : undefined)" /></label>
       <label class="f"><span>重新筛选</span>
         <Segmented :model-value="sc.refresh || '1H'" size="sm" aria-label="刷新间隔" :options="['15m', '1H', '4H', '1D'].map(v => ({ value: v, label: v }))" @update:model-value="v => (sc.refresh = v)" /></label>
     </div>
@@ -97,6 +119,7 @@ const sc = computed(() => u.value.screener!)
 .small { font-size: var(--fs-xs); }
 .scr { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px 16px; }
 .f { display: grid; gap: 4px; min-width: 0; justify-items: start; }
+.f.wide { grid-column: 1 / -1; }
 .f > span { font-size: var(--fs-xs); color: var(--text-3); }
 .f :deep(.sel-trigger) { width: 100%; }
 </style>

@@ -5,9 +5,30 @@ import (
 	"sort"
 )
 
+// RankByTurnover orders market-scope rows by turnover, descending (ties by instId), and sets
+// Rank = position; live (mdlive.MarketRows) and replay share it so both rank the same way.
+func RankByTurnover(rows []ScreenRow, turnover []float64) []ScreenRow {
+	idx := make([]int, len(rows))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		if turnover[idx[a]] != turnover[idx[b]] {
+			return turnover[idx[a]] > turnover[idx[b]]
+		}
+		return rows[idx[a]].InstID < rows[idx[b]].InstID
+	})
+	out := make([]ScreenRow, len(rows))
+	for i, k := range idx {
+		out[i] = rows[k]
+		out[i].Rank = i + 1
+	}
+	return out
+}
+
 // SelectScreen filters and ranks screener candidates (shared by the live adapter and the
-// replayer). Candidates carry NaN for an unscored side; the returned rows carry 0 there and
-// only finite fact-panel values.
+// replayer). An unscored side stays NaN (null on the wire: unscored, never 0); only finite
+// fact-panel values are kept.
 func SelectScreen(rows []ScreenRow, q ScreenerQuery) []ScreenRow {
 	score := func(r ScreenRow) float64 {
 		switch q.Side {
@@ -58,13 +79,7 @@ func SelectScreen(rows []ScreenRow, q ScreenerQuery) []ScreenRow {
 	if q.Top > 0 && len(out) > q.Top {
 		out = out[:q.Top]
 	}
-	for i := range out {
-		if math.IsNaN(out[i].Long) {
-			out[i].Long = 0
-		}
-		if math.IsNaN(out[i].Short) {
-			out[i].Short = 0
-		}
+	for i := range out { // an unscored side stays NaN (null on the wire): unscored, never 0
 		if out[i].Values != nil {
 			v := make(map[string]float64, len(out[i].Values))
 			for k, x := range out[i].Values {
