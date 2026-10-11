@@ -107,20 +107,20 @@ Two years (2024-11-01 → 2026-10-10), the strategy file run through the SDK by 
 
 | Style | Deposit | Margin per trade | Trades | Net | Y1 | Y2 | Y2 w/o Apr-26 | Net w/o best 5 | Max DD | Lowest equity |
 |---|---|---|---|---|---|---|---|---|---|---|
-| conservative | 3 000 | 125 fixed | 1 211 | +65 986 | +9 075 | +56 911 | +5 089 | +6 325 | −34 794 (37 %) | 2 513 |
-| aggressive | 3 000 | 125 fixed | 1 633 | +45 959 | +4 150 | +41 809 | +6 135 | +5 994 | −17 068 (50 %) | 2 392 |
-| conservative | 3 000 | auto, aggressiveness 1 (starts at 25) | 1 211 | +25 441 | +1 988 | +23 453 | +3 292 | −1 977 | −16 907 (39 %) | 2 898 |
-| aggressive | 3 000 | auto, aggressiveness 1 (starts at 30) | 1 633 | +20 093 | +887 | +19 206 | +4 045 | −1 820 | −7 890 (34 %) | 2 848 |
-| aggressive | 3 000 | auto, aggressiveness 0.5 (starts at 18) | 1 633 | +9 739 | +566 | +9 173 | +1 726 | +105 | −3 703 (29 %) | 2 910 |
+| conservative | 3 000 | 125 fixed | 1 210 | +66 302 | +9 403 | +56 899 | +5 077 | +6 644 | −34 794 (37 %) | 2 513 |
+| aggressive | 3 000 | 125 fixed | 1 632 | +46 229 | +4 394 | +41 835 | +6 160 | +6 229 | −17 069 (50 %) | 2 392 |
+| conservative | 3 000 | auto, aggressiveness 1 (starts at 25) | 1 210 | +26 041 | +2 097 | +23 944 | +3 340 | −1 973 | −17 278 (39 %) | 2 898 |
+| aggressive | 3 000 | auto, aggressiveness 1 (starts at 30) | 1 632 | +20 591 | +963 | +19 628 | +4 171 | −1 815 | −8 045 (34 %) | 2 848 |
+| aggressive | 3 000 | auto, aggressiveness 0.5 (starts at 18) | 1 632 | +9 904 | +608 | +9 296 | +1 762 | +135 | −3 747 (29 %) | 2 910 |
 
-The offline run matches the research engine (conservative 1 211 vs 1 210 trades, aggressive 1 633 vs
+The offline run matches the research engine (conservative 1 210 vs 1 210 trades, aggressive 1 632 vs
 1 593); it holds the RAVE run longer because the midline exit is checked on 4H closes, not hourly.
 Auto margins compound with equity, so their drawdowns are mostly givebacks of earlier gains.
 
 **Start-date risk** (125 USDT fixed margin; for each of 344 start days, trades opened in the following
 365 days, realised P&L): the deepest dip below the starting equity was −2 848 (conservative) /
 −2 912 (aggressive), 5th percentile −2 399 / −2 164; every one-year window ended positive (5th
-percentile +6 282 / +4 149). The windows overlap heavily — two years of data are one or two
+percentile +6 610 / +4 394). The windows overlap heavily — two years of data are one or two
 independent samples — and open-position losses are not included. With 3 000 USDT and 125 USDT
 margins the worst historical start leaves ~100–150 USDT: the bootstrap's warning (dd95 ≈ 50–60
 margins ≈ 6–7.5 k USDT) is the safer planning number.
