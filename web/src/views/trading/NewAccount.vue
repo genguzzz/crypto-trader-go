@@ -12,7 +12,7 @@ import SettingRow from '../../components/settings/SettingRow.vue'
 import NumInput from '../../components/ui/NumInput.vue'
 import Modal from '../../components/Modal.vue'
 import Loading from '../../components/ui/Loading.vue'
-import { amt, confirmLabel, day, execLabel, limitErrors, modeLabel, paramError, parseDay, pct, universeText } from '../../components/trade/meta'
+import { amt, confirmLabel, day, execLabel, limitErrors, modeLabel, paramError, parseDay, pct, universeError, universeText } from '../../components/trade/meta'
 
 const route = useRoute()
 const router = useRouter()
@@ -102,8 +102,8 @@ const err2 = computed(() => {
   return e
 })
 function draftError(d: Draft) {
-  if (d.universe.static && !d.universe.static.length && !d.universe.screener) return '请至少选择一个合约'
-  if (d.universe.screener && !(d.universe.screener.top >= 1)) return '取前 N 至少为 1'
+  const ue = universeError(d.universe)
+  if (ue) return ue
   for (const p of d.version.params || []) if (paramError(p, d.params[p.name])) return `参数 ${p.name}：${paramError(p, d.params[p.name])}`
   return ''
 }

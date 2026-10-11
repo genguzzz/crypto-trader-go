@@ -64,9 +64,8 @@ func (s *Service) queueBars(ri *instRT, T int64) {
 			items = append(items, InstBar{InstID: id, Bar: bars[len(bars)-1]})
 		}
 		if len(items) > 0 {
-			// the host allows 5 s + 0.5 s per instrument for a batch; leave it room to answer first
 			ri.push(sessCall{"bars", func(ctx context.Context, x Session) error { return x.Bars(ctx, tf, items) },
-				s.opts.SessionTimeout + time.Duration(len(items))*600*time.Millisecond})
+				s.eventBudget(len(items))})
 		}
 	}
 	for _, name := range sortedKeys(ri.ver.Meta.Schedule) {
@@ -240,6 +239,12 @@ func (s *Service) updateKeep() {
 	}
 	s.kept = want
 	s.mu.Unlock()
+	if kb, ok := s.md.(KeepBatcher); ok {
+		if len(on) > 0 || len(off) > 0 {
+			kb.KeepMany(on, off)
+		}
+		return
+	}
 	for _, id := range on {
 		s.md.Keep(id, true)
 	}

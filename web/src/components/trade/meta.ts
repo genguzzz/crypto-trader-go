@@ -1,4 +1,4 @@
-import type { Account, Action, AiStatus, ConfirmMode, ExecMode, InstanceState, Limits, Mode, ParamSpec, OrderState, OrderType, SignalOutcome, Universe } from '../../tradeApi'
+import type { Account, Action, AiStatus, ConfirmMode, ExecMode, InstanceState, Limits, Mode, ParamSpec, OrderState, OrderType, ScreenerQuery, SignalOutcome, Universe } from '../../tradeApi'
 
 /** Tag class (style.css .tag variants) + Chinese label for every enum shown in the trading pages. */
 export interface Lbl { t: string; c: '' | 'good' | 'warn' | 'bad' | 'info' }
@@ -105,12 +105,29 @@ export function universeText(u: Universe | undefined, ruleName?: (id: string) =>
   if (!u) return '—'
   if (u.screener) {
     const q = u.screener
+    if (q.scope === 'market') return `全市场 · 成交额前 ${q.top} · 每 ${q.refresh || '1H'}`
     const r = q.rule ? (ruleName?.(q.rule) || q.rule) : '默认规则'
     return `筛选 · ${r} ${q.side === 'short' ? '空' : q.side === 'both' ? '多空' : '多'} 前 ${q.top}${q.minScore ? ` · ≥${q.minScore}` : ''} · 每 ${q.refresh || '1H'}`
   }
   const s = u.static || []
   if (!s.length) return '—'
   return s.length > 4 ? `${s.slice(0, 4).map(sym).join(', ')} 等 ${s.length} 个` : s.map(sym).join(', ')
+}
+
+/** Screener top limit by scope (the server validates the same). */
+export const screenerMaxTop = (q: ScreenerQuery) => (q.scope === 'market' ? 300 : 50)
+
+/** Client-side validation of a universe; '' when fine. */
+export function universeError(u: Universe) {
+  if (u.static && !u.static.length && !u.screener) return '请至少选择一个合约'
+  const q = u.screener
+  if (q) {
+    const max = screenerMaxTop(q)
+    if (!(Number.isInteger(q.top) && q.top >= 1 && q.top <= max)) return `取前 N 需为 1–${max} 的整数`
+    if (q.scope === 'market' && q.rule) return '全市场筛选按成交额排序，不能指定评分规则'
+    if (q.scope === 'market' && q.minScore) return '全市场筛选没有评分，不能设最低分'
+  }
+  return ''
 }
 
 /** Date (display zone handled by fmt.time) for backtest ranges: yyyy-mm-dd in UTC+8. */

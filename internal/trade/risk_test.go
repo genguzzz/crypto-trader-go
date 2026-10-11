@@ -1,6 +1,7 @@
 package trade
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -84,7 +85,7 @@ func TestSelectScreen(t *testing.T) {
 		{InstID: "D", Rank: 4, Long: 60, Short: 40, Values: map[string]float64{"ret_1h": -0.02}},
 	}
 	got := SelectScreen(rows, ScreenerQuery{Rule: "r", Side: "long", Top: 2})
-	if len(got) != 2 || got[0].InstID != "B" || got[1].InstID != "A" || got[1].Short != 0 {
+	if len(got) != 2 || got[0].InstID != "B" || got[1].InstID != "A" || !math.IsNaN(got[1].Short) { // unscored stays unscored, never 0
 		t.Fatalf("long top2 = %+v", got)
 	}
 	got = SelectScreen(rows, ScreenerQuery{Rule: "r", Side: "long", MinScore: 61, Filter: map[string][2]float64{"ret_1h": {0, 0.02}}})

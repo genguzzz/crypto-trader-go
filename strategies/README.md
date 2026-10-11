@@ -64,7 +64,9 @@ class MyBreakout(Strategy):
 ## API summary
 
 **Class attributes**: `name`, `description` (default: docstring), `universe` (list of up to 50
-instIds or `Screener(rule, side=long|short|both, top=1..50, min_score=0..100, filter, refresh=5m..1D)`),
+instIds or `Screener(rule, side=long|short|both, top, min_score=0..100, filter, refresh=5m..1D, scope="pool")`;
+`scope="pool"` ranks the active pool by the rule's score (top 1..50), `scope="market"` ranks every recorded
+crypto USDT swap by 12h USDT turnover (top 1..300, no rule / min_score)),
 `timeframe`, `can_long` / `can_short` (declared directions; the order layer rejects opens of an
 undeclared side unless both are False),
 `warmup` (informational), `schedule` (`{"name": "15m"}` → `on_timer`).
@@ -101,7 +103,7 @@ per-instrument margin and lot size (`internal/trade/risk.go`). One pending signa
 
 **ctx**: `bars(inst, tf=None, n=200)` (confirmed only, n ≤ 1000; backtests build finer timeframes from 1m history), `series(inst, field, tf, n)`
 (`oi`, `funding`, `buy`, `sell`, `delta`), `factors(inst)`, `rank(rule, side, among, min_score, top)`,
-`screener(...)`, `score(rule, inst)` (NaN for an unscored side), `position(inst)`, `positions()`, `account()`, `spec(inst)`,
+`screener(rule, side, top, min_score, filter, scope)`, `score(rule, inst)` (NaN for an unscored side), `position(inst)`, `positions()`, `account()`, `spec(inst)`,
 `state` (JSON dict ≤ 64 KB, persisted after every event), `submit(signal)`, `log(msg, level)`,
 `notify(text, level, **data)` (live accounts only; ≤ 1000 characters, 30/hour, identical text once per 10 min),
 `now`, `mode`, `params`, `universe`, `timeframe`, `instance_id`.

@@ -8,7 +8,9 @@ package trade
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"math"
 	"time"
 )
 
@@ -154,13 +156,43 @@ type Universe struct {
 	Screener *ScreenerQuery `json:"screener,omitempty"`
 }
 
+// ScreenerQuery selects a dynamic universe. Scope "" / "pool" ranks the active pool (by a rule's
+// score on Side, else by pool rank); scope "market" ranks every recorded crypto USDT swap by its
+// 12h USDT turnover (no rule: scores exist only for pool rows).
 type ScreenerQuery struct {
-	Rule     string                `json:"rule,omitempty"` // rule id; sort by its score on Side
-	Side     string                `json:"side,omitempty"` // long | short | both (the stronger side)
+	Scope    string                `json:"scope,omitempty"` // "" | pool | market
+	Rule     string                `json:"rule,omitempty"`  // rule id; sort by its score on Side
+	Side     string                `json:"side,omitempty"`  // long | short | both (the stronger side)
 	Top      int                   `json:"top"`
 	MinScore float64               `json:"minScore,omitempty"`
 	Filter   map[string][2]float64 `json:"filter,omitempty"`  // field → [min,max] on fact-panel values (NaN-free)
 	Refresh  string                `json:"refresh,omitempty"` // "1H" default
+}
+
+const (
+	ScopePool      = "pool"
+	ScopeMarket    = "market"
+	MaxPoolTop     = 50  // screener top, pool scope
+	MaxMarketTop   = 300 // screener top, market scope
+	CategoryCrypto = "1" // OKX instCategory of crypto swaps
+)
+
+// Market reports whether the query ranks the whole recorded crypto market.
+func (q ScreenerQuery) Market() bool { return q.Scope == ScopeMarket }
+
+// MarketQuery checks a market-scope query sent at runtime (ctx.screener does not pass
+// validUniverse) and bounds Top, so live and replay answer it the same way.
+func (q ScreenerQuery) MarketQuery() (ScreenerQuery, error) {
+	if q.Rule != "" {
+		return q, errors.New("全市场筛选按成交额排序，不能指定评分规则（评分只覆盖活跃池）")
+	}
+	if q.MinScore != 0 {
+		return q, errors.New("全市场筛选没有评分，不能设最低分")
+	}
+	if q.Top <= 0 || q.Top > MaxMarketTop {
+		q.Top = MaxMarketTop
+	}
+	return q, nil
 }
 
 // StrategyVersion is an immutable (code, param schema) pair. ID = first 12 hex of sha256(code).
@@ -352,6 +384,7 @@ type Spec struct {
 	LotSz    float64
 	MinSz    float64
 	MaxLever float64
+	Category string // OKX instCategory: "1" crypto, "3" stock/ETF, "4" commodity, …
 }
 
 // Quote is a top-of-book view for live fills. Asks/Bids may be empty (then Last ± half spread).
@@ -375,13 +408,38 @@ type MarketData interface {
 	Keep(instID string, on bool)                                 // keep the instrument streaming while a position/universe needs it
 }
 
+// KeepBatcher is optionally implemented by live MarketData: Keep for many instruments at once
+// (one stream subscription update for a large universe).
+type KeepBatcher interface {
+	KeepMany(on, off []string)
+}
+
 type ScreenRow struct {
 	InstID string             `json:"instId"`
 	Rank   int                `json:"rank"`
 	Last   float64            `json:"last"`
-	Long   float64            `json:"long"`
-	Short  float64            `json:"short"`
+	Long   float64            `json:"long"`  // NaN = unscored (null in JSON)
+	Short  float64            `json:"short"` // NaN = unscored (null in JSON)
 	Values map[string]float64 `json:"values"`
+}
+
+// MarshalJSON writes an unscored side (NaN) as null: missing input is unscored, never 0.
+func (r ScreenRow) MarshalJSON() ([]byte, error) {
+	f := func(x float64) *float64 {
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return nil
+		}
+		return &x
+	}
+	type row struct {
+		InstID string             `json:"instId"`
+		Rank   int                `json:"rank"`
+		Last   *float64           `json:"last"`
+		Long   *float64           `json:"long"`
+		Short  *float64           `json:"short"`
+		Values map[string]float64 `json:"values"`
+	}
+	return json.Marshal(row{r.InstID, r.Rank, f(r.Last), f(r.Long), f(r.Short), r.Values})
 }
 
 // Interactor is the human interaction layer (internal/interact). Notify is fire-and-forget

@@ -37,8 +37,9 @@ export interface Account {
 export interface BacktestStatus {
   state: 'idle' | 'running' | 'done' | 'failed'; progress: number; clock?: number; error?: string; startedAt?: number; finishedAt?: number
 }
+/** scope: pool (default, omitted) = active pool by a rule's score; market = every recorded crypto swap by 12h USDT turnover (no rule). */
 export interface ScreenerQuery {
-  rule?: string; side?: 'long' | 'short' | 'both'; top: number; minScore?: number
+  scope?: 'pool' | 'market'; rule?: string; side?: 'long' | 'short' | 'both'; top: number; minScore?: number
   filter?: Record<string, [number, number]>; refresh?: string
 }
 export interface Universe { static?: string[]; screener?: ScreenerQuery }
