@@ -54,15 +54,17 @@
 - **Liquidations**: OKX public `liquidation-orders` REST (every fill, unthrottled, OKX keeps ~24h; the WS channel pushes only one per contract per second) is synced each minute for the order-flow set and stored for 30 days (`liquidations.go`). `GET /liquidations` serves per-bar long/short liquidation totals and recent fills; `GET /liqmap?days=1|7` serves an *estimated* liquidation map (the same kind of model as CoinGlass's liquidation map): OI increments spread across 5–100x leverage tiers at their approximate liquidation prices, shrunk as OI falls and removed once price trades through. Steps are 5m (5m candles + per-minute OI, including the forming bar and latest OI sample) where that data is unbroken (`fine`), hourly before; each bin carries per-tier amounts (`longBy`/`shortBy`, order of `levers`) so the chart stacks bars by leverage. Cached 5 s per instrument; an open chart refetches it and the liquidation bars every 10 s (a liquidation query syncs OKX at most every 8 s). Amounts are OKX-only USDT estimates; CoinGlass aggregates exchanges with its own leverage mix and relative scale, so compare cluster positions, not amounts.
 - **Market cap / unlocks**: CoinGecko free API, top 1500 (refreshed ~2 h, symbol match takes the largest market cap); display only, never used by the pool or scores.
 - **Open interest bar**: scanner rows carry `oiUsd` (latest OI in USD, ≤ 15 min old). The UI fills each row by `r/(1+r)`, `r = √(OI / half point)`; the half point (default 5M USDT) is a per-browser display setting.
-- **Data tiers and retention**: each instrument takes its highest tier: watchlist > active pool (in the pool or left < 7 days ago) > recently viewed (3 days) > universe recording > untracked. Each table has its own retention and quota (default cap 2 GB: 1m 45%, OI 10%, 1H 10%, funding 5%, order flow 18%, taker volume 2%, other 10%):
+- **Data tiers and retention**: each instrument takes its highest tier: watchlist > active pool (in the pool or left < 7 days ago) > recently viewed (3 days) > universe recording > untracked. Each table has its own retention and quota (default cap 2 GB: 1m 28%, OI 10%, 1H 25%, funding 7%, order flow 18%, taker volume 2%, other 10%):
 
   | Table | Watchlist | Active pool | Recently viewed | Universe | Untracked | Floor under quota pressure |
   |---|---|---|---|---|---|---|
   | 1m candles / OI samples | 30 d | 7 d | 7 d | 2 d | deleted | 26 h (watchlist 3 d) |
-  | 1H candles | 180 d | 60 d | 60 d | 30 d | 30 d | 21 d (watchlist 30 d, untracked 7 d) |
-  | Funding settled / intraperiod observations | 365 / 7 d | 90 / 3 d | 90 / 3 d | 90 / 3 d | 30 / 1 d | 14 d / 1 d |
+  | 1H candles | 400 d | 400 d | 400 d | 400 d | 400 d | 90 d (watchlist 180 d, untracked 30 d) |
+  | Funding settled / intraperiod observations | 400 / 7 d | 400 / 3 d | 400 / 3 d | 400 / 3 d | 400 / 1 d | 14 d / 1 d |
   | Order flow (1m + footprint) | 14 d | 3 d | 3 d | deleted | deleted | 12 h (watchlist 2 d) |
   | Taker volume (rubik) | 90 d | 30 d | 30 d | 7 d | 3 d | 1–7 d |
+
+  1H candles and settled funding are kept 400 days for every instrument (delisted ones too) so strategy backtests can replay any window of the past year with warm-up: after go-live and then daily, `hourhistory.go` pages `/market/history-candles` (1H, 100 per request) back to 400 days or the listing for every recorded instrument, re-paging from now when coverage is below 99 %, and pages settled funding as far as OKX serves it (≈ 3 months). Progress is on the System page.
 
   Over quota, retention is multiplied by 2/3 tier by tier starting from "untracked" until usage is back under 90% of the quota or the floor is reached; on-demand and backfill downloads follow the effective retention so nothing is downloaded only to be deleted. Score snapshots, rules and settings are never deleted; pool snapshots are kept 30 days.
 - **Track record**: Spearman Rank IC between score rank and forward h-hour return rank within the pool at the same time, sampled without overlap; t-stat; top-quintile excess and net return after 5 bps taker per side plus spread.

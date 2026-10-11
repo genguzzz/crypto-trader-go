@@ -27,7 +27,7 @@ export interface SystemStatus {
   phase: string; uptime: string; backfillDone: number; backfillTotal: number
   restRequests: number; restErrors: number; restRateLimited: number; ws: WSStatus[] | null
   coverage: { eligible: number; ready: number; warming: number; stale: number; new: number; active: number }
-  asOfMinute: number; computedAt: number; replay: string; history: string
+  asOfMinute: number; computedAt: number; replay: string; history: string; hourHistory?: string
   db: Record<string, number> | null
   config: { threshold: number; topN: number; storageCapMB: number; replayHours: number }
   mem?: { heapAllocMB: number; heapSysMB: number; sysMB: number; goroutines: number; numGC: number; insts: number; flowDecodeErrors: number }

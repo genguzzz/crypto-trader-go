@@ -378,6 +378,7 @@ type Status struct {
 	ComputedAt    int64            `json:"computedAt"`
 	Replay        string           `json:"replay"`
 	History       string           `json:"history"`
+	HourHistory   string           `json:"hourHistory"` // deep 1H + funding backfill for backtests
 	DB            map[string]int64 `json:"db"`
 	Config        map[string]any   `json:"config"`
 	Mem           MemStats         `json:"mem"`
@@ -455,7 +456,8 @@ func (e *Engine) Status() Status {
 	return Status{Phase: e.Phase(), Uptime: time.Since(e.started).Round(time.Second).String(), BackfillDone: e.bfDone.Load(),
 		BackfillTotal: e.bfTotal.Load(), RestRequests: e.rest.Requests.Load(), RestErrors: e.rest.Errors.Load(),
 		RestRateHits: e.rest.RateHits.Load(), WS: wss, Coverage: s.Coverage, AsOfMinute: s.AsOfMinute, ComputedAt: s.ComputedAt,
-		Replay: e.replayMsg.Load().(string), History: e.historyMsg.Load().(string), DB: counts,
+		Replay: e.replayMsg.Load().(string), History: e.historyMsg.Load().(string),
+		HourHistory: e.hourHistMsg.Load().(string), DB: counts,
 		Config: map[string]any{"threshold": e.conf().Threshold, "topN": e.conf().TopN, "categories": cats, "replayHours": e.conf().ReplayHours,
 			"storageCapMB": e.conf().StorageCap >> 20, "takerFeeBps": 5, "replaySpreadBpsAssumed": ReplaySpreadBps}, Mem: e.memStats()}
 }

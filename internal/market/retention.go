@@ -51,17 +51,19 @@ type tableRule struct {
 }
 
 var retentionRules = []tableRule{
-	{Name: "candles_1m", Table: "candles_1m", Group: "candles_1m", Share: 0.45,
+	{Name: "candles_1m", Table: "candles_1m", Group: "candles_1m", Share: 0.28,
 		Age:   [nTiers]time.Duration{0, 2 * day, 7 * day, 7 * day, 30 * day},
 		Floor: [nTiers]time.Duration{0, 26 * time.Hour, 26 * time.Hour, 26 * time.Hour, 3 * day}},
 	{Name: "oi_samples", Table: "oi_samples", Group: "oi_samples", Share: 0.10,
 		Age:   [nTiers]time.Duration{0, 2 * day, 7 * day, 7 * day, 30 * day},
 		Floor: [nTiers]time.Duration{0, 26 * time.Hour, 26 * time.Hour, 26 * time.Hour, 3 * day}},
-	{Name: "candles_1h", Table: "candles_1h", Group: "candles_1h", Share: 0.10,
-		Age:   [nTiers]time.Duration{30 * day, 30 * day, 60 * day, 60 * day, 180 * day},
-		Floor: [nTiers]time.Duration{7 * day, 21 * day, 21 * day, 21 * day, 30 * day}},
-	{Name: "funding_settled", Table: "funding_samples", Where: "settled=1", Group: "funding_samples", Share: 0.05,
-		Age:   [nTiers]time.Duration{30 * day, 90 * day, 90 * day, 90 * day, 365 * day},
+	// 1H candles back strategy backtests over any window of the past year (hourhistory.go backfills
+	// HourHistoryDays for every recorded instrument; delisted ones keep theirs: no survivorship bias)
+	{Name: "candles_1h", Table: "candles_1h", Group: "candles_1h", Share: 0.25,
+		Age:   [nTiers]time.Duration{HourHistoryDays * day, HourHistoryDays * day, HourHistoryDays * day, HourHistoryDays * day, HourHistoryDays * day},
+		Floor: [nTiers]time.Duration{30 * day, 90 * day, 90 * day, 90 * day, 180 * day}},
+	{Name: "funding_settled", Table: "funding_samples", Where: "settled=1", Group: "funding_samples", Share: 0.07,
+		Age:   [nTiers]time.Duration{HourHistoryDays * day, HourHistoryDays * day, HourHistoryDays * day, HourHistoryDays * day, HourHistoryDays * day},
 		Floor: [nTiers]time.Duration{7 * day, 14 * day, 14 * day, 14 * day, 30 * day}},
 	{Name: "funding_obs", Table: "funding_samples", Where: "settled=0", Group: "funding_samples",
 		Age:   [nTiers]time.Duration{day, 3 * day, 3 * day, 3 * day, 7 * day},

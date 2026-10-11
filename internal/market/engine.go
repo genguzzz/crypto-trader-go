@@ -120,16 +120,17 @@ type Engine struct {
 	rmu   sync.RWMutex
 	rules map[string]*rules.Rule
 
-	snap       atomic.Pointer[Snapshot]
-	seq        atomic.Int64
-	phase      atomic.Value
-	bfDone     atomic.Int64
-	bfTotal    atomic.Int64
-	started    time.Time
-	replay     *replayTable
-	replayMu   sync.Mutex
-	replayMsg  atomic.Value
-	historyMsg atomic.Value
+	snap        atomic.Pointer[Snapshot]
+	seq         atomic.Int64
+	phase       atomic.Value
+	bfDone      atomic.Int64
+	bfTotal     atomic.Int64
+	started     time.Time
+	replay      *replayTable
+	replayMu    sync.Mutex
+	replayMsg   atomic.Value
+	historyMsg  atomic.Value
+	hourHistMsg atomic.Value // deep 1H backfill progress (hourhistory.go)
 
 	barCh  chan store.InstBar
 	oiCh   chan store.OISample
@@ -163,6 +164,7 @@ func New(cfg Config, rest *okx.REST, st *store.Store) *Engine {
 	e.phase.Store("starting")
 	e.replayMsg.Store("等待实时数据就绪")
 	e.historyMsg.Store("等待实时数据就绪")
+	e.hourHistMsg.Store("等待实时数据就绪")
 	e.pub = okx.NewWS("public", okx.PublicWSURL)
 	e.biz = okx.NewWS("business", okx.BusinessWSURL)
 	e.pub.OnMessage = e.onPublic
@@ -200,6 +202,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	go e.retentionLoop(ctx)
 	go e.flowLoop(ctx)
 	go e.liqLoop(ctx)
+	go e.hourHistoryLoop(ctx)
 	return nil
 }
 
