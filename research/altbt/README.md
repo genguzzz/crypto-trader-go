@@ -1,8 +1,8 @@
 # altbt — offline multi-coin backtest
 
 Runs a strategy file from `strategies/` through the real SDK runtime over an hourly OKX panel, for
-spans and universes the in-app backtest cannot cover (production keeps ~50 days of 1H candles; a
-backtest account is limited to one year and to stored history). Used for `alt-regime-trend`
+fast parameter sweeps and spans beyond what production stores (it keeps 400 days of 1H candles; a
+backtest account covers at most 365 days). Used for `alt-regime-trend`
 (research: [docs/research-alt-perps.md](../../docs/research-alt-perps.md)).
 
 ```sh

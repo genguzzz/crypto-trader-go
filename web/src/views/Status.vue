@@ -191,6 +191,11 @@ const lagText = computed(() => { const x = Math.max(0, Math.round((h.value?.lagM
             <span class="v"><span class="tag" :class="jobState(s.history).c">{{ jobState(s.history).t }}</span></span>
             <span class="msg">{{ s.history }}</span>
           </div>
+          <div class="row job">
+            <span class="k">1H 历史回补</span>
+            <span class="v"><span class="tag" :class="jobState(s.hourHistory || '等待').c">{{ jobState(s.hourHistory || '等待').t }}</span></span>
+            <span class="msg">{{ s.hourHistory || '等待' }}</span>
+          </div>
         </div>
       </section>
 

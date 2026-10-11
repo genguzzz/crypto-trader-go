@@ -2,7 +2,7 @@
 
 Runs the strategy file itself through the real SDK runtime (`ctg.runtime.Runtime.handle`), with a
 Python mirror of the Go order layer's backtest model (internal/trade: risk.go sizing, broker.go bar
-model). It exists because the production database keeps ~50 days of 1H history, while strategy
+model). It complements in-app backtests (400 days of stored 1H history) with fast sweeps, while strategy
 research needs one to two years across hundreds of instruments.
 
 Model (same as the Go backtest unless noted):
