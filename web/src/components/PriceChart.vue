@@ -119,21 +119,22 @@ async function load(mode: 'fit' | 'anchor' | 'keep' = 'keep') {
   else if (mode !== 'keep') loading.value = true
   try {
     const f = fetchAll()
+    // cold open on the plain candle layer: paint the candles as soon as they arrive, overlays follow
+    // (the liq map and delta/footprint shape the layout, so with those on everything lands together)
     let painted = false
-    if (!hit && mode === 'fit') {
+    if (!hit && mode === 'fit' && layer.value === 'k' && !withMap.value) {
       f.candles.then(cs => {
-        if (my !== seq || !chart || painted) return
-        painted = true // candles first; overlays are added when everything has arrived
+        if (my !== seq || !chart) return
+        painted = true
         apply({ cs }, mode, view)
         loading.value = false
       }, () => {}) // the error surfaces through f.all
     }
-    const d = await f.all
+    let d = await f.all
     if (my !== seq || !chart) return // a newer request superseded this one
+    if (painted) d = { ...d, cs: bars.value } // the forming bars may have moved on since the early paint
     cache.set(key, d)
-    // after the early paint keep the user's view, except that the liquidation map needs its right-hand room
-    apply(d, hit ? 'keep' : painted && !d.lm ? 'keep' : mode, view)
-    painted = true
+    apply(d, hit || painted ? 'keep' : mode, view)
     err.value = ''
     if (d.lq?.syncing) setTimeout(() => my === seq && load(), 2000) // server is still fetching liquidations: pick them up shortly
   } catch (e: any) {
