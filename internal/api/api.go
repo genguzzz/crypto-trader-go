@@ -235,7 +235,7 @@ func (s *Server) series(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, err.Error())
 		return
 	}
-	writeJSON(w, pts)
+	writeJSON(w, market.LastPerStep(pts, int64(atoiDefault(q.Get("step"), 0))))
 }
 
 func (s *Server) saveRule(w http.ResponseWriter, r *http.Request) {

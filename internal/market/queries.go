@@ -282,6 +282,24 @@ func (e *Engine) Series(id, field string, hours int) ([]SeriesPoint, error) {
 	return nil, fmt.Errorf("field must be oi or funding")
 }
 
+// LastPerStep keeps the last point of each step-ms bucket (buckets aligned to the epoch, input
+// ascending). Charts that bin a series by bar period only use that sample, so a minute-level OI
+// series can be sent at the bar's resolution. Reuses pts' backing array; step <= 0 returns pts unchanged.
+func LastPerStep(pts []SeriesPoint, step int64) []SeriesPoint {
+	if step <= 0 || len(pts) < 2 {
+		return pts
+	}
+	out := pts[:0] // compacts in place: the write index never passes the read index
+	for _, p := range pts {
+		if n := len(out); n > 0 && out[n-1].T/step == p.T/step {
+			out[n-1] = p
+		} else {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 type InstrumentInfo struct {
 	InstID      string        `json:"instId"`
 	Category    string        `json:"category"`
