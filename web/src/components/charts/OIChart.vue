@@ -18,9 +18,9 @@ let s: ISeriesApi<'Line'> | undefined
 const { busy, track } = useBusy()
 const load = track(loadData)
 async function loadData() {
-  // recorded per minute; ≤ ~2000 points is plenty for this width (7 days → 5 min)
-  const step = Math.max(1, Math.ceil((props.hours * 60) / 2016)) * 60e3
-  const pts = (await api.series(props.id, 'oi', props.hours, step)) || []
+  // recorded per minute; ≤ ~2000 points is plenty for this width (7 days → 5 min, 1 day → as recorded)
+  const min = Math.ceil((props.hours * 60) / 2016)
+  const pts = (await api.series(props.id, 'oi', props.hours, min > 1 ? min * 60e3 : 0)) || []
   const data: { time: any; value: number }[] = []
   for (const p of pts) {
     const t = chartTime(p.t), v = props.unit === 'usd' ? p.u || 0 : p.v
