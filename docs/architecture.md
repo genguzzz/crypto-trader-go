@@ -111,6 +111,8 @@ docs/                  documentation
 `PUT settings|watchlist/{id}`, `POST rules`, `DELETE rules/{id}|watchlist/{id}`; `GET positions` always returns "not connected" (until I4).
 Monitoring: `GET|POST alerts/rules`, `PUT|DELETE alerts/rules/{id}`, `GET|PUT alerts/channels` (secrets are returned masked; empty/masked = unchanged), `DELETE alerts/channels/{telegram|webhook}`, `POST alerts/channels/{ch}/test`, `GET alerts/history?limit=`.
 
+`series?instId=&field=oi|funding&hours=&step=` — `step` (ms, optional) keeps only the last point of each step bucket; the price chart passes its bar period (OI is recorded per minute, the chart plots one value per bar), the OI chart keeps ≤ ~2,000 points.
+
 Developer (owner UI, same access as the rest of `/api/v1`): `GET|PUT dev/config` (external API switch, server-wide limit), `GET|POST dev/keys`, `PATCH|DELETE dev/keys/{id}` (rename, limits, revoke), `GET dev/log` (last 200 external calls, memory only), `GET dev/endpoints` (registry for the Dev tab).
 
 ### External access for agents (`internal/devapi`)
