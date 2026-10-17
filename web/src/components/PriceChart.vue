@@ -83,25 +83,28 @@ const shown = computed(() => {
 const pct = (v: number, d = 2) => (v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%'
 const tone = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : '')
 
-// ---- loading: every source in parallel, newest request wins, results cached per view ----
+// ---- loading: every source in parallel, newest request wins, results cached per view;
+// on a cold open the candles paint as soon as they arrive and the overlays follow ----
 interface Loaded { cs: Candle[]; of?: OrderFlow; ss?: Candle[]; oi?: SeriesPoint[]; lq?: Liquidations; lm?: LiqMap }
 const cache = new Map<string, Loaded>() // switching back to a period/layer paints at once, then refreshes
 const cacheKey = () => [bar.value, layer.value, withSpot.value && props.hasSpot, withOIL.value || withOID.value, withLiq.value, withMap.value, mapDays.value].join('|')
 let seq = 0
 
-async function fetchAll(): Promise<Loaded> {
+function fetchAll(): { candles: Promise<Candle[]>; all: Promise<Loaded> } {
   const b = bar.value, n = depth[b] || 400, lay = layer.value
   const hours = Math.min(24 * 30, Math.ceil((n * barMs[b]) / 3600e3) + 1)
   const wantMap = withMap.value && props.hasOi
-  const [cs, of, ss, oi, lq, lm] = await Promise.all([
-    api.candles(props.id, b, n),
+  const candles = api.candles(props.id, b, n)
+  const all = Promise.all([
+    candles,
     lay !== 'k' ? api.orderflow(props.id, b, n, lay === 'foot') : undefined,
     withSpot.value && props.hasSpot ? api.candles(props.id, b, Math.min(n, 1000), 'spot') : undefined,
-    (withOIL.value || withOID.value) && props.hasOi ? api.series(props.id, 'oi', hours) : undefined,
+    // OI is recorded per minute; applyOI keeps the last sample per bar, so ask for that only
+    (withOIL.value || withOID.value) && props.hasOi ? api.series(props.id, 'oi', hours, barMs[b]) : undefined,
     withLiq.value ? api.liquidations(props.id, b, n).catch(() => undefined) : undefined,
     wantMap ? api.liqmap(props.id, +mapDays.value).catch(() => undefined) : undefined,
-  ])
-  return { cs, of, ss, oi: oi || undefined, lq, lm }
+  ]).then(([cs, of, ss, oi, lq, lm]) => ({ cs, of, ss, oi: oi || undefined, lq, lm }))
+  return { candles, all }
 }
 
 /**
@@ -115,10 +118,22 @@ async function load(mode: 'fit' | 'anchor' | 'keep' = 'keep') {
   if (hit) apply(hit, mode, view)
   else if (mode !== 'keep') loading.value = true
   try {
-    const d = await fetchAll()
+    const f = fetchAll()
+    let painted = false
+    if (!hit && mode === 'fit') {
+      f.candles.then(cs => {
+        if (my !== seq || !chart || painted) return
+        painted = true // candles first; overlays are added when everything has arrived
+        apply({ cs }, mode, view)
+        loading.value = false
+      }, () => {}) // the error surfaces through f.all
+    }
+    const d = await f.all
     if (my !== seq || !chart) return // a newer request superseded this one
     cache.set(key, d)
-    apply(d, hit ? 'keep' : mode, view)
+    // after the early paint keep the user's view, except that the liquidation map needs its right-hand room
+    apply(d, hit ? 'keep' : painted && !d.lm ? 'keep' : mode, view)
+    painted = true
     err.value = ''
     if (d.lq?.syncing) setTimeout(() => my === seq && load(), 2000) // server is still fetching liquidations: pick them up shortly
   } catch (e: any) {
