@@ -36,6 +36,9 @@ Building the app needs Xcode (macOS); on Linux only the web side and `cap sync` 
 
 ## Gotchas
 
+- Capacitor hard-codes `scrollView.bounces = false`; `ShellPlugin` turns the page rubber-band back on. CSS `overscroll-behavior: none` on `html`/`body` would kill it again.
+- `scripts/ios-ota.sh` hashes the working tree for the runtime id: stash uncommitted native edits before publishing a bundle for the released binary.
+
 - `capacitor://localhost` is a different origin: anything that bypasses `fetch`/`EventSource` (image `src`, links) must go through `apiUrl()`.
 - Hidden files and `bundle.json` are excluded from the bundle version hash; `bundle.json` itself is part of the file list so a downloaded bundle knows its own version.
 - Capacitor clears the staged bundle when a new binary is installed (it compares `CFBundleVersion`), so a fresh IPA always starts from its own bundled build.
