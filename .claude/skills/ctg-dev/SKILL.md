@@ -15,7 +15,7 @@ description: Build, run and verify crypto-trader-go (OKX research desk) — Go b
 | `internal/rules` / `internal/track` / `internal/alerts` | rules and presets (`Presets()`), track-record stats, monitoring |
 | `internal/api/api.go` | HTTP routes |
 | `web/src` | `views/` pages, `components/` (ui library in `components/ui`), types in `api.ts`, formatting in `fmt.ts`, tokens in `style.css` |
-| `web/ios`, `web/native`, `web/src/native.ts` | iOS app (Capacitor) and its over-the-air updates — see `docs/ios.md`; API paths that bypass `fetch` need `apiUrl()` |
+| `web/ios`, `web/native`, `web/src/native.ts` | iOS app (Capacitor) — see `docs/ios.md`; push web changes to the app with `scripts/ios-ota.sh "说明"` (~1 min, no CI); API paths that bypass `fetch` need `apiUrl()` |
 
 ## Commands
 

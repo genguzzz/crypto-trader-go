@@ -11,10 +11,11 @@ import (
 	"sync"
 )
 
-// The iOS app (Capacitor, web/ios) bundles the web build and loads it from capacitor://localhost.
-// It calls this API cross-origin and keeps its bundle current over the air: GET /api/v1/app/bundle
-// describes the web build embedded in this binary; the app downloads changed files from / and
-// verifies them against these hashes (docs/ios.md).
+// The iOS app (Capacitor, web/ios) bundles the web build and loads it from capacitor://localhost,
+// so it calls this API cross-origin. Over-the-air bundles now come from scripts/ios-ota.sh (static
+// files on apps.gugenzzz.top); GET /api/v1/app/bundle, which describes the web build embedded in
+// this binary (files fetched from /), only bootstraps IPAs 1.0.1–1.0.3, whose built-in web code
+// still asks here (docs/ios.md).
 
 // appOrigins are the web view origins of the native app.
 var appOrigins = map[string]bool{"capacitor://localhost": true, "ionic://localhost": true}

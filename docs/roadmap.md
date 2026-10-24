@@ -42,7 +42,7 @@ The backlog of smaller, not yet filed items is listed in the Roadmap issue. Issu
 | 2026-10-02 | Paper trading (#3): Python strategy SDK and runner (static or screener universes, Pine-like `ta`), Go order layer with risk, sizing, OCO stops/targets and a simulated broker (live order book / bar model), backtest accounts sharing the same code, two-way Telegram interaction with confirmations and commands (dedicated bot, owner only), optional AI review via the Claude Agent SDK with audit, memory and parameter proposals, trading UI; owner key for trading writes until #1 |
 | 2026-10-10 | Altcoin strategy `alt-regime-trend` (regime-gated breakouts + weak-alt shorts, owner sizing with equity-based suggested margin), market-wide turnover screener (`scope="market"`, top ≤ 300), offline multi-coin backtest `research/altbt`; research in [research-alt-perps](research-alt-perps.md) (#8) |
 | 2026-10-17 | Faster instrument detail (#15): OI series sent at the chart's bar resolution (15m chart: ~630 KB → ~40 KB raw, 164 KB → 12 KB gzip), candles paint before the overlays arrive |
-| 2026-10-24 | iOS app ([ios](ios.md)): Capacitor shell around the web build, self-hosted over-the-air web bundles (`/api/v1/app/bundle`, native live-update plugin with rollback), unsigned IPA built in GitHub Actions and published to the owner's software source |
+| 2026-10-24 | iOS app ([ios](ios.md)): Capacitor shell around the web build, self-hosted over-the-air web bundles published from the workstation (`scripts/ios-ota.sh`, native live-update plugin with rollback), unsigned IPA built in GitHub Actions and published to the owner's software source |
 
 ## Rules
 

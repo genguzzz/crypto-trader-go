@@ -34,7 +34,7 @@ Push to `main` (documentation-only changes excluded) → `.github/workflows/depl
 
 ### iOS app
 
-`.github/workflows/ios.yml` builds and publishes the iOS app when native files change; web changes reach installed apps over the air after the normal deploy. See [ios](ios.md).
+`.github/workflows/ios.yml` builds and publishes the iOS app when native files change; web changes reach installed apps over the air with `scripts/ios-ota.sh`. See [ios](ios.md).
 
 ## Manual deploy (workstation)
 

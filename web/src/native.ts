@@ -1,6 +1,6 @@
 // iOS app shell (Capacitor). The same build runs in the browser and in the app: in the app the
 // page is served from capacitor://localhost, so API calls go to production, and new web builds
-// arrive as over-the-air bundles (docs/ios.md).
+// arrive as over-the-air bundles published with scripts/ios-ota.sh (docs/ios.md).
 import { Capacitor, registerPlugin } from '@capacitor/core'
 
 export const isNative = Capacitor.isNativePlatform()
@@ -32,8 +32,11 @@ function patchNetwork() {
   }
 }
 
+/** Over-the-air bundles published by scripts/ios-ota.sh (static files on the software source). */
+const OTA_MANIFEST = 'https://apps.gugenzzz.top/ota/ctg/manifest.json'
+
 let checking = false
-/** Download the server's web bundle when it differs from ours; it is switched to in the background. */
+/** Download the published web bundle when it differs from ours; it is switched to in the background. */
 async function checkUpdate() {
   if (checking) return
   checking = true
@@ -41,11 +44,11 @@ async function checkUpdate() {
     const [state, local, remote] = await Promise.all([
       LiveUpdate.getState(),
       fetch('/bundle.json').then(r => r.json()) as Promise<{ version: string }>,
-      fetch(`${apiOrigin}/api/v1/app/bundle`, { cache: 'no-store' }).then(r => r.json()) as Promise<{ version: string; runtime: string; files: BundleFile[] }>,
+      fetch(OTA_MANIFEST, { cache: 'no-store' }).then(r => r.json()) as Promise<{ version: string; runtime: string; baseUrl: string; files: BundleFile[] }>,
     ])
-    if (String(remote.runtime) !== state.runtime) return // needs a new binary
+    if (remote.runtime !== state.runtime) return // needs a new binary
     if (remote.version === local.version || remote.version === state.staged || state.failed.includes(remote.version)) return
-    await LiveUpdate.download({ version: remote.version, baseUrl: apiOrigin, files: remote.files })
+    await LiveUpdate.download({ version: remote.version, baseUrl: remote.baseUrl, files: remote.files })
   } catch (e) {
     console.warn('live update:', e)
   } finally {

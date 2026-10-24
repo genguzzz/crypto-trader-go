@@ -4,7 +4,7 @@ name: iOS IPA
 # like Murmur, to the self-hosted 全能签 source https://apps.gugenzzz.top. See docs/ios.md.
 #   push to main touching native files → build + publish when the native runtime id changed
 #   manual run                          → build + publish regardless
-# Web-only changes never come here: they reach installed apps over the air after deploy.yml.
+# Web-only changes never come here: scripts/ios-ota.sh sends them to installed apps over the air.
 on:
   push:
     branches: [main]
