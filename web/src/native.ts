@@ -2,6 +2,7 @@
 // page is served from capacitor://localhost, so API calls go to production, and new web builds
 // arrive as over-the-air bundles published with scripts/ios-ota.sh (docs/ios.md).
 import { Capacitor, registerPlugin } from '@capacitor/core'
+import { reactive } from 'vue'
 
 export const isNative = Capacitor.isNativePlatform()
 
@@ -17,6 +18,7 @@ interface LiveUpdatePlugin {
   getState(): Promise<LiveUpdateState>
   download(o: { version: string; baseUrl: string; files: BundleFile[] }): Promise<{ version: string }>
   ready(): Promise<{ running: string }>
+  apply(): Promise<void> // binaries before 1.0.8 lack it: the bundle then switches when the app goes to the background
   reset(): Promise<void>
 }
 export const LiveUpdate = registerPlugin<LiveUpdatePlugin>('LiveUpdate')
@@ -34,9 +36,39 @@ function patchNetwork() {
 
 /** Over-the-air bundles published by scripts/ios-ota.sh (static files on the software source). */
 const OTA_MANIFEST = 'https://apps.gugenzzz.top/ota/ctg/manifest.json'
+/** The software source the IPA is installed from (全能签). */
+const APP_SOURCE = 'https://apps.gugenzzz.top/appstore.json'
+const BUNDLE_ID = 'top.gugenzzz.ctg'
+const DISMISS_KEY = 'ctg.update.dismissedBinary'
+
+/** What the update prompt (AppUpdateBar) shows. */
+export const appUpdate = reactive({
+  /** A new web bundle is downloaded and can be switched to now. */
+  ready: false,
+  message: '',
+  applying: false,
+  /** apply() is missing in this binary: the bundle switches when the app goes to the background. */
+  applyLater: false,
+  /** A newer IPA is in the software source. */
+  binary: null as null | { version: string; notes: string },
+})
+
+const newer = (a: string, b: string) => {
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number)
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0)
+  return false
+}
+
+async function checkBinary(state: LiveUpdateState) {
+  const src = await fetch(APP_SOURCE, { cache: 'no-store' }).then(r => r.json()) as { apps: { bundleId: string; version: string; versionDescription?: string }[] }
+  const app = src.apps.find(a => a.bundleId === BUNDLE_ID)
+  if (app && state.binary && newer(app.version, state.binary) && localStorage.getItem(DISMISS_KEY) !== app.version) {
+    appUpdate.binary = { version: app.version, notes: app.versionDescription || '' }
+  }
+}
 
 let checking = false
-/** Download the published web bundle when it differs from ours; it is switched to in the background. */
+/** Look for a newer web bundle (downloaded in the background) and a newer IPA; both end up in appUpdate. */
 async function checkUpdate() {
   if (checking) return
   checking = true
@@ -44,16 +76,35 @@ async function checkUpdate() {
     const [state, local, remote] = await Promise.all([
       LiveUpdate.getState(),
       fetch('/bundle.json').then(r => r.json()) as Promise<{ version: string }>,
-      fetch(OTA_MANIFEST, { cache: 'no-store' }).then(r => r.json()) as Promise<{ version: string; runtime: string; baseUrl: string; files: BundleFile[] }>,
+      fetch(OTA_MANIFEST, { cache: 'no-store' }).then(r => r.json()) as Promise<{ version: string; runtime: string; message?: string; baseUrl: string; files: BundleFile[] }>,
     ])
+    checkBinary(state).catch(e => console.warn('app source:', e))
     if (remote.runtime !== state.runtime) return // needs a new binary
-    if (remote.version === local.version || remote.version === state.staged || state.failed.includes(remote.version)) return
-    await LiveUpdate.download({ version: remote.version, baseUrl: remote.baseUrl, files: remote.files })
+    if (remote.version === local.version || state.failed.includes(remote.version)) return
+    if (remote.version !== state.staged) await LiveUpdate.download({ version: remote.version, baseUrl: remote.baseUrl, files: remote.files })
+    appUpdate.message = remote.message || ''
+    appUpdate.ready = true
   } catch (e) {
     console.warn('live update:', e)
   } finally {
     checking = false
   }
+}
+
+/** Switch to the downloaded bundle now (the page reloads). */
+export async function applyUpdate() {
+  appUpdate.applying = true
+  try {
+    await LiveUpdate.apply()
+  } catch {
+    appUpdate.applying = false
+    appUpdate.applyLater = true
+  }
+}
+
+export function dismissBinary() {
+  if (appUpdate.binary) localStorage.setItem(DISMISS_KEY, appUpdate.binary.version)
+  appUpdate.binary = null
 }
 
 export async function bundleInfo() {

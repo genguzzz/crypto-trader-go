@@ -14,6 +14,10 @@ The web UI also ships as an iOS app (**OKX Helper**, `top.gugenzzz.ctg`): a [Cap
 | Runtime id | `web/scripts/native-runtime.mjs` | Hash of `web/ios`, `web/native`, `capacitor.config.ts` and native plugin versions. The web build writes it into `dist/bundle.json`, CI into the IPA's `Info.plist` (`CTGRuntime`); a bundle is only installed by a binary with the same id |
 | IPA | `.github/workflows/ios.yml` | Unsigned archive on `macos-latest` → GitHub Release `ios-1.0.<run>` → over the deploy SSH key, Murmur's publisher on ctg-prod (`127.0.0.1:8791/admin/publish`, token read on the server) → listed at `https://apps.gugenzzz.top/appstore.json` |
 
+## Update prompts
+
+`src/components/AppUpdateBar.vue` (app only, above the tab bar): **新版本已就绪** once a web bundle is downloaded — 立即更新 calls `LiveUpdate.apply()` and the page reloads into it (binaries before 1.0.8 lack `apply()`: the bar says to background the app instead); **App 有新版本** when `appstore.json` lists a higher IPA version than the running binary (dismissed per version).
+
 ## Shipping changes
 
 - **Web-only change** (anything under `web/src`, styles, docs pages): `scripts/ios-ota.sh "说明"` publishes it to the apps in about a minute, straight from the workstation (no CI). Installed apps download it on their next launch/foreground and switch to it the next time they go to the background. The bundle calls the production API, so deploy backend changes it needs first; push to `main` as usual so the website gets the change too. The script refuses when native files differ from the last released IPA (`FORCE=1` overrides).

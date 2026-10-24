@@ -7,6 +7,8 @@ import { store } from './store'
 import LayoutMenu from './components/LayoutMenu.vue'
 import AdminKeyModal from './components/AdminKeyModal.vue'
 import CoinIcon from './components/CoinIcon.vue'
+import AppUpdateBar from './components/AppUpdateBar.vue'
+import { isNative } from './native'
 import { useDesktop } from './composables/device'
 import { devTab } from './composables/devtab'
 import { time, clock, usd, price, logPct } from './fmt'
@@ -98,6 +100,7 @@ const pulse = computed(() =>
   </header>
   <div class="banner" v-if="store.error">后端不可用：{{ store.error }}</div>
   <main><RouterView /></main>
+  <AppUpdateBar v-if="isNative" />
 
   <!-- mobile bottom tab bar -->
   <nav class="tabbar" aria-label="主导航" :style="{ gridTemplateColumns: `repeat(${tabMain.length + (tabMore.length ? 1 : 0)}, minmax(0, 1fr))` }">
