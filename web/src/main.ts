@@ -54,7 +54,7 @@ for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEve
 document.addEventListener('touchmove', e => { const s = (e as TouchEvent & { scale?: number }).scale; if (s !== undefined && s !== 1) e.preventDefault() }, { passive: false }) // older iOS
 window.addEventListener('wheel', e => { if (e.ctrlKey && (e.target as Element | null)?.closest?.('.tv-lightweight-charts, canvas')) e.preventDefault() }, { passive: false })
 
-initNative(router)
+initNative()
 startStream()
 createApp(App).use(router).component('InfoTip', InfoTip).component('ScoringExplainer', ScoringExplainer).component('Segmented', Segmented).component('USelect', Select).mount('#app')
 nativeReady()

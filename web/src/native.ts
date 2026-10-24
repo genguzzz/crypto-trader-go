@@ -2,7 +2,6 @@
 // page is served from capacitor://localhost, so API calls go to production, and new web builds
 // arrive as over-the-air bundles published with scripts/ios-ota.sh (docs/ios.md).
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import type { Router } from 'vue-router'
 
 export const isNative = Capacitor.isNativePlatform()
 
@@ -21,40 +20,6 @@ interface LiveUpdatePlugin {
   reset(): Promise<void>
 }
 export const LiveUpdate = registerPlugin<LiveUpdatePlugin>('LiveUpdate')
-
-interface ShellPlugin {
-  capture(o: { position: number }): Promise<void>
-  didNavigate(o: { position: number; top: number; bottom: number }): Promise<void>
-  reset(): Promise<void>
-}
-const Shell = registerPlugin<ShellPlugin>('Shell')
-
-/**
- * Native back swipe (ShellPlugin): the page being left is snapshotted before each route change; after
- * a navigation the shell learns the history position and the fixed header / tab bar heights, which
- * stay in place while the content slides.
- */
-function nativeSwipeBack(router: Router) {
-  const position = () => (history.state as { position?: number } | null)?.position ?? 0
-  const fixed = () => {
-    const header = document.querySelector('.topbar')?.getBoundingClientRect()
-    const tabbar = document.querySelector('.tabbar')
-    const tab = tabbar && getComputedStyle(tabbar).display !== 'none' ? tabbar.getBoundingClientRect() : null
-    return { top: header ? Math.max(0, header.bottom) : 0, bottom: tab ? Math.max(0, innerHeight - tab.top) : 0 }
-  }
-  // history.state already points at the target during popstate, so remember where we are.
-  let current = position()
-  Shell.reset().catch(() => {})
-  router.beforeEach(async (_to, from) => {
-    if (from.matched.length) await Shell.capture({ position: current }).catch(() => {})
-  })
-  const report = () => requestAnimationFrame(() => requestAnimationFrame(() => {
-    current = position()
-    Shell.didNavigate({ position: current, ...fixed() }).catch(() => {})
-  }))
-  router.afterEach(report)
-  addEventListener('resize', report)
-}
 
 /** Route relative /api requests to the API origin. Call before anything fetches. */
 function patchNetwork() {
@@ -97,12 +62,11 @@ export async function bundleInfo() {
   return { ...state, version: local.version as string }
 }
 
-/** Before the app starts: route API calls, hook the router for the back swipe. */
-export function initNative(router: Router) {
+/** Before the app starts: route API calls. */
+export function initNative() {
   if (!isNative) return
   document.documentElement.classList.add('native')
   patchNetwork()
-  nativeSwipeBack(router)
 }
 
 /** After the app has mounted: confirm this bundle (otherwise it is rolled back), then look for a newer one. */
