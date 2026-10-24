@@ -2,7 +2,7 @@
   "name": "ctg-live-update",
   "version": "1.0.0",
   "private": true,
-  "description": "In-app web bundle updates for the ctg iOS app (JS side lives in web/src/native.ts)",
+  "description": "Native plugins of the ctg iOS app: live web bundle updates, shell gestures (JS side lives in web/src/native.ts)",
   "files": ["ios/Sources", "Package.swift"],
   "capacitor": { "ios": { "src": "ios" } }
 }

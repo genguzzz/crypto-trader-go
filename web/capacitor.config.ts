@@ -6,7 +6,7 @@ const config: CapacitorConfig = {
   appName: 'OKX Helper',
   webDir: 'dist',
   backgroundColor: '#000000',
-  ios: { contentInset: 'never', backgroundColor: '#000000', scrollEnabled: true },
+  ios: { contentInset: 'never', backgroundColor: '#000000', scrollEnabled: true, allowsLinkPreview: false },
   plugins: {
     SplashScreen: { launchShowDuration: 0, launchAutoHide: true, backgroundColor: '#000000' },
     StatusBar: { style: 'DARK', overlaysWebView: false, backgroundColor: '#000000' },
