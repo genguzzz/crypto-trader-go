@@ -3,6 +3,7 @@
 // arrive as over-the-air bundles published with scripts/ios-ota.sh (docs/ios.md).
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { reactive } from 'vue'
+import type { Router } from 'vue-router'
 
 export const isNative = Capacitor.isNativePlatform()
 
@@ -40,6 +41,8 @@ const OTA_MANIFEST = 'https://apps.gugenzzz.top/ota/ctg/manifest.json'
 const APP_SOURCE = 'https://apps.gugenzzz.top/appstore.json'
 const BUNDLE_ID = 'top.gugenzzz.ctg'
 const DISMISS_KEY = 'ctg.update.dismissedBinary'
+/** Downloaded bundle waiting to run: { version, message, path? } — read by the bundle itself once it starts. */
+const PENDING_KEY = 'ctg.update.pending'
 
 /** What the update prompt (AppUpdateBar) shows. */
 export const appUpdate = reactive({
@@ -49,6 +52,8 @@ export const appUpdate = reactive({
   applying: false,
   /** apply() is missing in this binary: the bundle switches when the app goes to the background. */
   applyLater: false,
+  /** Just switched to a new bundle: its release note, shown briefly. */
+  updated: null as null | string,
   /** A newer IPA is in the software source. */
   binary: null as null | { version: string; notes: string },
 })
@@ -87,6 +92,7 @@ export async function checkUpdate(): Promise<UpdateCheck> {
     if (remote.version !== state.staged) await LiveUpdate.download({ version: remote.version, baseUrl: remote.baseUrl, files: remote.files })
     appUpdate.message = remote.message || ''
     appUpdate.ready = true
+    localStorage.setItem(PENDING_KEY, JSON.stringify({ version: remote.version, message: appUpdate.message }))
     return 'ready'
   } catch (e) {
     console.warn('live update:', e)
@@ -100,6 +106,8 @@ export async function checkUpdate(): Promise<UpdateCheck> {
 export async function applyUpdate() {
   appUpdate.applying = true
   try {
+    const pending = JSON.parse(localStorage.getItem(PENDING_KEY) || '{}')
+    localStorage.setItem(PENDING_KEY, JSON.stringify({ ...pending, path: location.pathname + location.search + location.hash }))
     await LiveUpdate.apply()
   } catch {
     appUpdate.applying = false
@@ -125,10 +133,28 @@ export function initNative() {
   patchNetwork()
 }
 
+/** First start of a freshly applied bundle: say so, and return to the page "立即更新" was tapped on. */
+async function announceUpdate(router: Router) {
+  const raw = localStorage.getItem(PENDING_KEY)
+  if (!raw) return
+  try {
+    const pending = JSON.parse(raw) as { version?: string; message?: string; path?: string }
+    const local = await fetch('/bundle.json').then(r => r.json()) as { version: string }
+    if (pending.version !== local.version) return // not switched yet
+    localStorage.removeItem(PENDING_KEY)
+    if (pending.path && pending.path !== router.currentRoute.value.fullPath) router.replace(pending.path).catch(() => {})
+    appUpdate.updated = pending.message || ''
+    setTimeout(() => (appUpdate.updated = null), 4000)
+  } catch {
+    localStorage.removeItem(PENDING_KEY)
+  }
+}
+
 /** After the app has mounted: confirm this bundle (otherwise it is rolled back), then look for a newer one. */
-export function nativeReady() {
+export function nativeReady(router: Router) {
   if (!isNative) return
   LiveUpdate.ready().catch(() => {})
+  announceUpdate(router)
   setTimeout(checkUpdate, 3000)
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate() })
 }

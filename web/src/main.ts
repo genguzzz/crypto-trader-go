@@ -57,4 +57,4 @@ window.addEventListener('wheel', e => { if (e.ctrlKey && (e.target as Element | 
 initNative()
 startStream()
 createApp(App).use(router).component('InfoTip', InfoTip).component('ScoringExplainer', ScoringExplainer).component('Segmented', Segmented).component('USelect', Select).mount('#app')
-nativeReady()
+nativeReady(router)

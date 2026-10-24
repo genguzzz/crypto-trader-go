@@ -1,12 +1,20 @@
 <script setup lang="ts">
 // iOS app only: tells the user a new version is ready (web bundle downloaded, or a newer IPA in the
 // software source). See src/native.ts and docs/ios.md.
-import { RefreshCw, Download, X } from 'lucide-vue-next'
+import { RefreshCw, Download, X, CircleCheck } from 'lucide-vue-next'
 import { appUpdate, applyUpdate, dismissBinary } from '../native'
 </script>
 
 <template>
-  <div v-if="appUpdate.ready || appUpdate.binary" class="upd">
+  <div v-if="appUpdate.ready || appUpdate.binary || appUpdate.updated !== null" class="upd">
+    <div v-if="appUpdate.updated !== null" class="card">
+      <CircleCheck :size="18" class="ic" />
+      <div class="txt">
+        <b>已更新到新版本</b>
+        <span v-if="appUpdate.updated">{{ appUpdate.updated }}</span>
+      </div>
+      <button class="x" aria-label="关闭" @click="appUpdate.updated = null"><X :size="16" /></button>
+    </div>
     <div v-if="appUpdate.ready" class="card">
       <RefreshCw :size="18" class="ic" />
       <div class="txt">
