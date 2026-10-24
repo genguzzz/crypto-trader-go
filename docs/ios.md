@@ -6,7 +6,7 @@ The web UI also ships as an iOS app (**OKX Helper**, `top.gugenzzz.ctg`): a [Cap
 
 | Piece | Where | What |
 |---|---|---|
-| Shell | `web/ios/` (Xcode project, Swift Package Manager), `web/capacitor.config.ts` | WKWebView serving the bundled web build from `capacitor://localhost`; plugins: splash screen, status bar, live update |
+| Shell | `web/ios/` (Xcode project, Swift Package Manager), `web/capacitor.config.ts` | WKWebView serving the bundled web build from `capacitor://localhost`; plugins: splash screen, status bar, live update, shell (`ShellPlugin.swift`: back swipe that slides the page over a snapshot of the previous route, header and tab bar fixed — WKWebView's own gesture shows no preview for pushState navigations) |
 | API access | `web/src/native.ts` | In the app, `/api/...` fetches and the SSE stream go to `https://ctg.gugenzzz.top` (`apiUrl()` for `<img>`/links); the server answers the app's origin with CORS (`internal/api/app.go`) |
 | Live update (native) | `web/native/live-update` (local Capacitor plugin) | Downloads a bundle file by file (unchanged files copied from the current bundle), verifies SHA-256, stages it where Capacitor loads persisted deploys from; switches when the app goes to the background or on next launch; rolls back a bundle that does not call `ready()` within 15 s |
 | Live update (publishing) | `scripts/ios-ota.sh` | Builds `web/` on this machine and uploads it to ctg-prod `/var/www/apps/ota/ctg/<version>/`; `https://apps.gugenzzz.top/ota/ctg/manifest.json` (version, runtime, base URL, files with SHA-256) points at the newest; keeps 5 versions |
