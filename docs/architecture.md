@@ -99,7 +99,7 @@ internal/alerts/       monitoring rules (types registered in conditions.go), del
 internal/trade/        paper-trading order layer (docs/trading-design.md): accounts, instances, signals, risk/sizing, SimBroker, backtest replayer, /api/v1/trade/*; trade/mdlive adapts market.Engine (market/tradeapi.go)
 internal/devapi/       external access: API keys / tokens, rate limits, endpoint registry → open REST API, OpenAPI document, MCP server
 internal/api/          HTTP routes, SSE, icon proxy, gzip
-web/                   frontend (src/views pages, src/components components, embed.go embeds the build)
+web/                   frontend (src/views pages, src/components components, embed.go embeds the build); ios/ + native/ iOS app shell (docs/ios.md)
 deploy/                docker-compose.yml (server runtime), deploy.sh (build/upload/swap/rollback)
 research/poc/          research probes (separate Go module, not production code)
 docs/                  documentation
@@ -108,6 +108,7 @@ docs/                  documentation
 ## 6. API (/api/v1)
 
 `GET health|status|meta|settings|catalog|storage|orderflow|liquidations|liqmap|universe?scope=active|all|watch|instruments/{id}|candles|compare|series|rules|rules/{id}/track|icons/{ccy}.png|stream(SSE)`;
+`GET app/bundle` describes the embedded web build for the iOS app's over-the-air updates ([ios](ios.md)); requests from the app's origin `capacitor://localhost` get CORS headers.
 `PUT settings|watchlist/{id}`, `POST rules`, `DELETE rules/{id}|watchlist/{id}`; `GET positions` always returns "not connected" (until I4).
 Monitoring: `GET|POST alerts/rules`, `PUT|DELETE alerts/rules/{id}`, `GET|PUT alerts/channels` (secrets are returned masked; empty/masked = unchanged), `DELETE alerts/channels/{telegram|webhook}`, `POST alerts/channels/{ch}/test`, `GET alerts/history?limit=`.
 

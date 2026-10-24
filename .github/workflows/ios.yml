@@ -1,0 +1,127 @@
+name: iOS IPA
+
+# Builds the Capacitor iOS app (web/ios) as an unsigned IPA on a GitHub-hosted Mac and publishes it
+# to the software source https://apps.gugenzzz.top (signed on the phone by 全能签). See docs/ios.md.
+#   push to main touching native files → build + publish when the native runtime id changed
+#   manual run                          → build + publish regardless
+# Web-only changes never come here: they reach installed apps over the air after deploy.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/ios/**'
+      - 'web/native/**'
+      - 'web/capacitor.config.ts'
+      - 'web/package-lock.json'
+      - 'web/scripts/native-runtime.mjs'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ios
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: web
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: 1.0.${{ github.run_number }}
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+
+      - run: npm ci
+
+      - name: Native runtime
+        run: |
+          RUNTIME=$(node scripts/native-runtime.mjs)
+          echo "RUNTIME=$RUNTIME" >> "$GITHUB_ENV"
+          # package-lock.json changes usually touch web-only deps: skip unless the binary would differ.
+          LAST=$(gh release list --limit 20 --json tagName --jq '[.[] | select(.tagName | startswith("ios-"))][0].tagName // ""')
+          if [ -n "$LAST" ] && [ "${{ github.event_name }}" = "push" ] \
+             && gh release view "$LAST" --json body --jq .body | grep -qx "runtime: $RUNTIME"; then
+            echo "runtime $RUNTIME already released as $LAST; nothing to build"
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+          echo "runtime $RUNTIME, version $VERSION"
+
+      - name: Build web and sync into the Xcode project
+        if: env.SKIP != '1'
+        run: |
+          npm run build
+          test "$(node -p "require('./dist/bundle.json').runtime")" = "$RUNTIME"
+          npx cap sync ios
+
+      - name: Archive (no signing)
+        if: env.SKIP != '1'
+        working-directory: web/ios/App
+        run: |
+          set -o pipefail
+          /usr/libexec/PlistBuddy -c "Set :CTGRuntime $RUNTIME" App/Info.plist
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/app.xcarchive" archive \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tee "$RUNNER_TEMP/xcodebuild.log" | grep -E "error:|\*\* ARCHIVE" || true
+          test -d "$RUNNER_TEMP/app.xcarchive/Products/Applications"
+
+      - name: Package IPA
+        if: env.SKIP != '1'
+        run: |
+          APP=$(ls -d "$RUNNER_TEMP"/app.xcarchive/Products/Applications/*.app | head -1)
+          PL="$APP/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PL")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CTGRuntime' "$PL")" = "$RUNTIME"
+          test -f "$APP/public/index.html"
+          echo "BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PL")" >> "$GITHUB_ENV"
+          echo "APP_NAME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$PL")" >> "$GITHUB_ENV"
+          echo "MIN_IOS=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PL")" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" && cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          IPA="$RUNNER_TEMP/OKX-Helper-$VERSION.ipa"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$IPA" Payload)
+          echo "IPA=$IPA" >> "$GITHUB_ENV"
+          ls -la "$IPA"
+
+      - uses: actions/upload-artifact@v4
+        if: env.SKIP != '1'
+        with:
+          name: OKX-Helper-${{ env.VERSION }}
+          path: ${{ env.IPA }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: xcodebuild-log-${{ github.run_number }}
+          path: ${{ runner.temp }}/xcodebuild.log
+
+      - name: GitHub Release
+        if: env.SKIP != '1'
+        run: |
+          NOTES="$(git log -1 --format=%s)"
+          printf '%s\n\nruntime: %s\n' "$NOTES" "$RUNTIME" > "$RUNNER_TEMP/notes.md"
+          gh release create "ios-$VERSION" "$IPA" --target "$GITHUB_SHA" --title "OKX Helper iOS $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          echo "NOTES=$NOTES" >> "$GITHUB_ENV"
+
+      - name: Publish to software source
+        if: env.SKIP != '1'
+        env:
+          ADMIN_TOKEN: ${{ secrets.APPHUB_ADMIN_TOKEN }}
+        run: |
+          [ -n "$ADMIN_TOKEN" ] || { echo "::error::secret APPHUB_ADMIN_TOKEN is not set (docs/ios.md)"; exit 1; }
+          curl -sS --fail-with-body --retry 3 -X POST https://voice.gugenzzz.top/admin/publish \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -F "ipa=@$IPA" -F "icon=@ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png" \
+            -F "bundleId=$BUNDLE_ID" -F "version=$VERSION" -F "build=$BUILD_NUMBER" \
+            -F "name=$APP_NAME" -F "minIos=$MIN_IOS" -F "notes=${NOTES:0:1000}"

@@ -1,6 +1,7 @@
 /** Connection snippets for the open API and the MCP server; `key` falls back to a placeholder. */
+import { apiOrigin } from '../../native'
 export const KEY_PLACEHOLDER = '<YOUR_KEY>'
-export const origin = () => location.origin
+export const origin = () => apiOrigin || location.origin
 export const restBase = () => `${origin()}/api/open/v1`
 export const mcpUrl = () => `${origin()}/mcp`
 

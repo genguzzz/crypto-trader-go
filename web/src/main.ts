@@ -9,6 +9,7 @@ import Alerts from './views/Alerts.vue'
 import SettingsView from './views/Settings.vue'
 import Dev from './views/Dev.vue'
 import { startStream } from './store'
+import { initNative, nativeReady } from './native'
 import './style.css'
 import InfoTip from './components/InfoTip.vue'
 import ScoringExplainer from './components/ScoringExplainer.vue'
@@ -53,5 +54,7 @@ for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEve
 document.addEventListener('touchmove', e => { const s = (e as TouchEvent & { scale?: number }).scale; if (s !== undefined && s !== 1) e.preventDefault() }, { passive: false }) // older iOS
 window.addEventListener('wheel', e => { if (e.ctrlKey && (e.target as Element | null)?.closest?.('.tv-lightweight-charts, canvas')) e.preventDefault() }, { passive: false })
 
+initNative()
 startStream()
 createApp(App).use(router).component('InfoTip', InfoTip).component('ScoringExplainer', ScoringExplainer).component('Segmented', Segmented).component('USelect', Select).mount('#app')
+nativeReady()

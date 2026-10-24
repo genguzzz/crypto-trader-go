@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { apiUrl } from '../native'
 const props = withDefaults(defineProps<{ instId: string; size?: number }>(), { size: 18 })
 const ccy = computed(() => props.instId.split('-')[0])
 const failed = ref(false)
@@ -9,7 +10,7 @@ const hue = computed(() => [...ccy.value].reduce((h, c) => (h * 31 + c.charCodeA
 </script>
 
 <template>
-  <img v-if="!failed" class="coin" :src="`/api/v1/icons/${ccy.toLowerCase()}.png`" :width="size" :height="size" :alt="ccy" loading="lazy" @error="failed = true" />
+  <img v-if="!failed" class="coin" :src="apiUrl(`/api/v1/icons/${ccy.toLowerCase()}.png`)" :width="size" :height="size" :alt="ccy" loading="lazy" @error="failed = true" />
   <span v-else class="coin fb" :style="{ width: size + 'px', height: size + 'px', fontSize: size * 0.5 + 'px', background: `hsl(${hue},45%,35%)` }">{{ ccy.slice(0, 2) }}</span>
 </template>
 

@@ -112,12 +112,13 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /api/v1/icons/{ccy}", s.Icons)
 	}
 	if s.Web != nil {
+		mux.HandleFunc("GET /api/v1/app/bundle", s.appBundle(bundleManifest(s.Web)))
 		mux.Handle("/", spa(s.Web))
 	}
 	for _, m := range s.Mounts {
 		m(mux)
 	}
-	return logRequests(withGzip(adminGate(s.AdminKey, mux)))
+	return logRequests(withAppCORS(withGzip(adminGate(s.AdminKey, mux))))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

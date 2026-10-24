@@ -8,6 +8,7 @@ import KeyForm from '../components/dev/KeyForm.vue'
 import Tester from '../components/dev/Tester.vue'
 import CopyBlock from '../components/dev/CopyBlock.vue'
 import { claudeCodeSnippet, mcpJsonSnippet, mcpUrl, restBase } from '../components/dev/snippets'
+import { apiUrl } from '../native'
 
 const keys = ref<ApiKey[] | null>(null)
 const cfg = ref<DevConfig | null>(null)
@@ -150,7 +151,7 @@ const logCls = (s: number) => (s === 200 ? 'good' : s === 429 ? 'warn' : 'bad')
               <span v-else class="muted">—</span></div>
             <CopyBlock :text="restBase()" label="REST 基础地址" />
             <CopyBlock :text="mcpUrl()" label="MCP 地址" />
-            <a class="oa" href="/api/open/v1/openapi.json" target="_blank" rel="noopener"><FileJson :size="14" />OpenAPI 文档（openapi.json）</a>
+            <a class="oa" :href="apiUrl('/api/open/v1/openapi.json')" target="_blank" rel="noopener"><FileJson :size="14" />OpenAPI 文档（openapi.json）</a>
             <div class="sn">
               <Segmented v-model="snip" size="sm" aria-label="配置格式" :options="[{ value: 'claude', label: 'Claude Code' }, { value: 'json', label: 'MCP JSON' }]" />
               <CopyBlock :text="snip === 'claude' ? claudeCodeSnippet(testKey || undefined) : mcpJsonSnippet(testKey || undefined)" />

@@ -15,6 +15,7 @@ description: Build, run and verify crypto-trader-go (OKX research desk) — Go b
 | `internal/rules` / `internal/track` / `internal/alerts` | rules and presets (`Presets()`), track-record stats, monitoring |
 | `internal/api/api.go` | HTTP routes |
 | `web/src` | `views/` pages, `components/` (ui library in `components/ui`), types in `api.ts`, formatting in `fmt.ts`, tokens in `style.css` |
+| `web/ios`, `web/native`, `web/src/native.ts` | iOS app (Capacitor) and its over-the-air updates — see `docs/ios.md`; API paths that bypass `fetch` need `apiUrl()` |
 
 ## Commands
 
@@ -47,7 +48,7 @@ scripts/dev.sh stop
 ## Gotchas
 
 - Local shells carry Surge proxy variables that Go's default transport uses; the server connects to OKX directly. Networks that can't reach OKX: `CTG_PROXY` / `-doh`.
-- Go 1.25 is required (modernc sqlite).
+- Go 1.25 is required (modernc sqlite). On the dev box `/usr/bin/go` is older: `export PATH=/usr/local/go/bin:$PATH`; `-race` fails there (ThreadSanitizer VMA), so run `go vet ./... && go test ./...` instead of `make test`.
 - `GOMEMLIMIT` must stay well above the ~180 MB resident heap (scripts use 384MiB); a limit near it makes the GC spin at 100%+ CPU.
 - 1m candles in memory are a 1500-minute ring; older ones only in SQLite — chart queries merge DB + memory.
 - OKX `/market/candles` gives only the latest 1440 1m bars; older via `/market/history-candles` (300 per page, separate rate limit).

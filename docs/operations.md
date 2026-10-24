@@ -32,6 +32,10 @@ Push to `main` (documentation-only changes excluded) → `.github/workflows/depl
 - Works from cloud sessions: change code → `make test` → merge to `main` → `gh run watch` → verify online, no SSH needed.
 - Merging a pull request into `main` deploys it. Paths ignored by the workflow: `**.md`, `docs/**`, `research/**`, `.claude/**`.
 
+### iOS app
+
+`.github/workflows/ios.yml` builds and publishes the iOS app when native files change; web changes reach installed apps over the air after the normal deploy. See [ios](ios.md).
+
 ## Manual deploy (workstation)
 
 ```bash

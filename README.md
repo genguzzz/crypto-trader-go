@@ -77,6 +77,8 @@ deploy/deploy.sh --status      # container state and logs
 
 Data and settings live in the server's SQLite and survive upgrades. See [operations](docs/operations.md).
 
+**iOS app**: the same UI as a Capacitor app with over-the-air web updates; IPAs are built by GitHub Actions and published to a self-hosted software source. See [ios](docs/ios.md).
+
 ## Layout
 
 ```
