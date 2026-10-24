@@ -17,7 +17,7 @@ The web UI also ships as an iOS app (**OKX Helper**, `top.gugenzzz.ctg`): a [Cap
 
 - **Web-only change** (anything under `web/src`, styles, docs pages): push to `main`. `deploy.yml` deploys the server; the server now serves the new bundle, installed apps download it on their next launch/foreground and switch to it the next time they go to the background. Nothing else to do.
 - **Native change** (plugin added or upgraded, `web/ios`, `web/native`, `capacitor.config.ts`): push to `main`. The runtime id changes, so `ios.yml` builds and publishes a new IPA; old binaries stop taking web updates until the new IPA is installed from the source. Run `npx cap sync ios` in `web/` after adding a plugin so `web/ios/App/CapApp-SPM/Package.swift` is updated, and commit it.
-- **Rebuild an IPA anyway**: `gh workflow run ios`. A push that changes only `package-lock.json` without changing the runtime id skips the build.
+- **Rebuild an IPA anyway**: `gh workflow run ios.yml`. A push that changes only `package-lock.json` without changing the runtime id skips the build.
 
 ## Local work
 
