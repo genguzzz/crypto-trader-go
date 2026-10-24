@@ -17,6 +17,8 @@ import { devTab, setDevTab } from '../composables/devtab'
 import InteractSection from '../components/settings/InteractSection.vue'
 import AiAuthSection from '../components/settings/AiAuthSection.vue'
 import AdminKeySection from '../components/settings/AdminKeySection.vue'
+import AppVersionSection from '../components/settings/AppVersionSection.vue'
+import { isNative } from '../native'
 
 const clone = (x: Settings): Settings => JSON.parse(JSON.stringify(x))
 // Render immediately from settings already loaded with /meta; refresh in the background.
@@ -262,6 +264,7 @@ onBeforeRouteLeave(() => !nChanged.value || window.confirm('有未保存的设�
     <InteractSection />
     <AiAuthSection />
     <AdminKeySection />
+    <AppVersionSection v-if="isNative" />
 
     <!-- 开发者 -->
     <SettingsSection id="dev" title="开发者" :icon="Code2">

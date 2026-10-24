@@ -67,10 +67,12 @@ async function checkBinary(state: LiveUpdateState) {
   }
 }
 
+export type UpdateCheck = 'latest' | 'ready' | 'binary' | 'busy' | 'error'
+
 let checking = false
 /** Look for a newer web bundle (downloaded in the background) and a newer IPA; both end up in appUpdate. */
-async function checkUpdate() {
-  if (checking) return
+export async function checkUpdate(): Promise<UpdateCheck> {
+  if (checking) return 'busy'
   checking = true
   try {
     const [state, local, remote] = await Promise.all([
@@ -78,14 +80,17 @@ async function checkUpdate() {
       fetch('/bundle.json').then(r => r.json()) as Promise<{ version: string }>,
       fetch(OTA_MANIFEST, { cache: 'no-store' }).then(r => r.json()) as Promise<{ version: string; runtime: string; message?: string; baseUrl: string; files: BundleFile[] }>,
     ])
-    checkBinary(state).catch(e => console.warn('app source:', e))
-    if (remote.runtime !== state.runtime) return // needs a new binary
-    if (remote.version === local.version || state.failed.includes(remote.version)) return
+    await checkBinary(state).catch(e => console.warn('app source:', e))
+    if (remote.runtime !== state.runtime || remote.version === local.version || state.failed.includes(remote.version)) {
+      return appUpdate.binary ? 'binary' : 'latest'
+    }
     if (remote.version !== state.staged) await LiveUpdate.download({ version: remote.version, baseUrl: remote.baseUrl, files: remote.files })
     appUpdate.message = remote.message || ''
     appUpdate.ready = true
+    return 'ready'
   } catch (e) {
     console.warn('live update:', e)
+    return 'error'
   } finally {
     checking = false
   }
