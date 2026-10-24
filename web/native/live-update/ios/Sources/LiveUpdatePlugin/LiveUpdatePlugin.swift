@@ -9,7 +9,7 @@ import Capacitor
 /// download(); files land in Library/NoCloud/ionic_built_snapshots/<version>, the folder
 /// Capacitor itself loads a persisted `serverBasePath` from, so the next launch serves the new
 /// bundle (a new binary resets it). A staged bundle is also switched to as soon as the app goes
-/// to the background. A bundle that doesn't call ready() within `readyTimeout` seconds of
+/// to the background, or right away by apply() when the user taps the update prompt. A bundle that doesn't call ready() within `readyTimeout` seconds of
 /// being active is rolled back to the last confirmed one and never offered again.
 @objc(LiveUpdatePlugin)
 public class LiveUpdatePlugin: CAPPlugin, CAPBridgedPlugin {
@@ -19,6 +19,7 @@ public class LiveUpdatePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "getState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "download", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "ready", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "apply", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "reset", returnType: CAPPluginReturnPromise)
     ]
 
@@ -153,6 +154,27 @@ public class LiveUpdatePlugin: CAPPlugin, CAPBridgedPlugin {
             self.confirmed = current
             if !self.downloading { self.cleanup(keep: Set([current, self.staged].compactMap { $0 })) }
             call.resolve(["running": current ?? ""])
+        }
+    }
+
+    /// Switches to the staged bundle now (the user tapped "update"); the web view reloads.
+    @objc func apply(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard !self.downloading, let next = self.staged, next != self.running, !self.failed.contains(next) else {
+                call.reject("no update staged")
+                return
+            }
+            let dir = self.snapshots.appendingPathComponent(next, isDirectory: true)
+            guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("index.html").path) else {
+                call.reject("staged bundle missing")
+                return
+            }
+            call.resolve()
+            CAPLog.print("LiveUpdate: applying bundle \(next)")
+            self.watchdog?.cancel()
+            self.watchdog = nil
+            self.viewController?.setServerBasePath(path: dir.path)
+            self.armWatchdog()
         }
     }
 
