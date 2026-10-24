@@ -11,7 +11,7 @@ The web UI also ships as an iOS app (**OKX Helper**, `top.gugenzzz.ctg`): a [Cap
 | Live update (native) | `web/native/live-update` (local Capacitor plugin) | Downloads a bundle file by file (unchanged files copied from the current bundle), verifies SHA-256, stages it where Capacitor loads persisted deploys from; switches when the app goes to the background or on next launch; rolls back a bundle that does not call `ready()` within 15 s |
 | Live update (server) | `GET /api/v1/app/bundle` | Version, native runtime and file list (path, SHA-256, size) of the web build embedded in the running binary; files are fetched from `/` |
 | Runtime id | `web/scripts/native-runtime.mjs` | Hash of `web/ios`, `web/native`, `capacitor.config.ts` and native plugin versions. The web build writes it into `dist/bundle.json`, CI into the IPA's `Info.plist` (`CTGRuntime`); a bundle is only installed by a binary with the same id |
-| IPA | `.github/workflows/ios.yml` | Unsigned archive on `macos-latest` → GitHub Release `ios-1.0.<run>` → `POST https://voice.gugenzzz.top/admin/publish` (Murmur's publisher, secret `APPHUB_ADMIN_TOKEN`) → listed at `https://apps.gugenzzz.top/appstore.json` |
+| IPA | `.github/workflows/ios.yml` | Unsigned archive on `macos-latest` → GitHub Release `ios-1.0.<run>` → over the deploy SSH key, Murmur's publisher on ctg-prod (`127.0.0.1:8791/admin/publish`, token read on the server) → listed at `https://apps.gugenzzz.top/appstore.json` |
 
 ## Shipping changes
 

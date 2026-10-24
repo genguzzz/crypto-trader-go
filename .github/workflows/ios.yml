@@ -1,7 +1,7 @@
 name: iOS IPA
 
-# Builds the Capacitor iOS app (web/ios) as an unsigned IPA on a GitHub-hosted Mac and publishes it
-# to the software source https://apps.gugenzzz.top (signed on the phone by 全能签). See docs/ios.md.
+# Builds the Capacitor iOS app (web/ios) as an unsigned IPA on a GitHub-hosted Mac and publishes it,
+# like Murmur, to the self-hosted 全能签 source https://apps.gugenzzz.top. See docs/ios.md.
 #   push to main touching native files → build + publish when the native runtime id changed
 #   manual run                          → build + publish regardless
 # Web-only changes never come here: they reach installed apps over the air after deploy.yml.
@@ -27,6 +27,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
+    environment: production # deploy key for publishing (same as deploy.yml)
     timeout-minutes: 60
     defaults:
       run:
@@ -117,11 +118,26 @@ jobs:
       - name: Publish to software source
         if: env.SKIP != '1'
         env:
-          ADMIN_TOKEN: ${{ secrets.APPHUB_ADMIN_TOKEN }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        # Same deploy key as deploy.yml; Murmur's publisher (127.0.0.1:8791 on ctg-prod) writes the
+        # IPA into /var/www/apps and appstore.json. Its admin token is read on the server, never here.
         run: |
-          [ -n "$ADMIN_TOKEN" ] || { echo "::error::secret APPHUB_ADMIN_TOKEN is not set (docs/ios.md)"; exit 1; }
-          curl -sS --fail-with-body --retry 3 -X POST https://voice.gugenzzz.top/admin/publish \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            -F "ipa=@$IPA" -F "icon=@ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png" \
-            -F "bundleId=$BUNDLE_ID" -F "version=$VERSION" -F "build=$BUILD_NUMBER" \
-            -F "name=$APP_NAME" -F "minIos=$MIN_IOS" -F "notes=${NOTES:0:1000}"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf 'Host ctg-prod\n  HostName %s\n  User root\n  IdentityFile ~/.ssh/deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ConnectTimeout 15\n' "$DEPLOY_HOST" > ~/.ssh/config
+          REMOTE=/tmp/ctg-ios-$VERSION
+          ssh ctg-prod "mkdir -p $REMOTE"
+          scp -q "$IPA" ctg-prod:$REMOTE/app.ipa
+          scp -q ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png ctg-prod:$REMOTE/icon.png
+          printf '%s' "${NOTES:0:1000}" | ssh ctg-prod "cat > $REMOTE/notes.txt"
+          ssh ctg-prod "cd $REMOTE && TOKEN=\$(grep '^ADMIN_TOKEN=' /opt/voicememo/.env | cut -d= -f2-) && \
+            curl -sS --fail-with-body -X POST http://127.0.0.1:8791/admin/publish -H \"Authorization: Bearer \$TOKEN\" \
+              -F ipa=@app.ipa -F icon=@icon.png -F bundleId=$BUNDLE_ID -F version=$VERSION -F build=$BUILD_NUMBER \
+              -F 'name=$APP_NAME' -F minIos=$MIN_IOS -F notes=\"<notes.txt\"; rc=\$?; cd / && rm -rf $REMOTE; exit \$rc"
+          curl -fsS https://apps.gugenzzz.top/appstore.json | grep -q "top.gugenzzz.ctg-$VERSION.ipa"
+
+      - if: always()
+        run: rm -f ~/.ssh/deploy_key ~/.ssh/config
