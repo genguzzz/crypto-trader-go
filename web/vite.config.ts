@@ -27,7 +27,12 @@ function bundleManifest(): Plugin {
 
 // Help articles (src/docs/**/*.md) compile to Vue components at build time; code blocks are
 // highlighted by Shiki then, so the browser gets plain HTML.
+// Voice input in the iOS app needs NSMicrophoneUsageDescription in the native build this web bundle
+// targets (the bundle's runtime id covers Info.plist, so the two always match).
+const nativeMic = readFileSync('ios/App/App/Info.plist', 'utf8').includes('NSMicrophoneUsageDescription')
+
 export default defineConfig({
+  define: { __NATIVE_MIC__: JSON.stringify(nativeMic) },
   plugins: [
     vue({ include: [/\.vue$/, /\.md$/] }),
     Markdown({

@@ -231,3 +231,10 @@ async def test(config: dict, proxy: str) -> dict:
     m = meta("test", "", res, model)
     m["reply"] = (res.get("text") or "").strip()[:200]
     return m
+
+
+async def chat(msg: dict, config: dict, proxy: str, emit) -> dict:
+    """One chat turn with tools (agent.py); events go through emit."""
+    import agent  # lazy: agent imports this module
+
+    return await agent.chat(msg, config, proxy, emit)

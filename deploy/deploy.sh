@@ -60,16 +60,17 @@ fi
 sync_sidecars() {
   echo "▸ syncing sidecars (strategies/, ai/) and compose file"
   tar -C "$ROOT" --exclude='__pycache__' --exclude='*.pyc' --exclude='tests' -czf - strategies ai deploy/docker-compose.yml |
-    remote "set -e; cd $DIR; mkdir -p data/run; chown 65532:65532 data/run; rm -rf .sync && mkdir .sync && tar -xzf - -C .sync
+    remote "set -e; cd $DIR; mkdir -p data/run data/sbx data/ai-home; chown 65532:65532 data/run data/sbx data/ai-home
+      rm -rf .sync && mkdir .sync && tar -xzf - -C .sync
       cp .sync/deploy/docker-compose.yml docker-compose.yml
-      for d in strategies ai; do
-        old=\$( [ -d \$d ] && cat \$d/Dockerfile \$d/requirements.txt 2>/dev/null | sha256sum | cut -c1-16 || echo none)
-        rm -rf \$d && mv .sync/\$d \$d
-        new=\$(cat \$d/Dockerfile \$d/requirements.txt 2>/dev/null | sha256sum | cut -c1-16)
-        if [ \"\$old\" != \"\$new\" ] || ! docker image inspect ctg-\${d%ies}\$( [ \$d = strategies ] && echo y ):local >/dev/null 2>&1; then
-          echo \"  building \$d image\"; docker compose build -q ctg-\$( [ \$d = strategies ] && echo strategy || echo ai )
-        fi
-      done
+      # strategies/ is bind-mounted (image = Dockerfile + requirements); ai/ and ai/sandbox/ are baked in (image = every file)
+      sig() { case \$1 in strategies) cat \$1/Dockerfile \$1/requirements.txt 2>/dev/null ;; *) find \$1 -type f | sort | xargs cat ;; esac | sha256sum | cut -c1-16; }
+      old_s=\$( [ -d strategies ] && sig strategies || echo none); old_a=\$( [ -d ai ] && find ai -path ai/sandbox -prune -o -type f -print | sort | xargs cat | sha256sum | cut -c1-16 || echo none)
+      old_x=\$( [ -d ai/sandbox ] && sig ai/sandbox || echo none)
+      rm -rf strategies ai && mv .sync/strategies strategies && mv .sync/ai ai
+      new_a=\$(find ai -path ai/sandbox -prune -o -type f -print | sort | xargs cat | sha256sum | cut -c1-16)
+      build() { if [ \"\$2\" != \"\$3\" ] || ! docker image inspect \$1:local >/dev/null 2>&1; then echo \"  building \$1\"; docker compose build -q \$1; fi; }
+      build ctg-strategy \$old_s \$(sig strategies); build ctg-ai \$old_a \$new_a; build ctg-sandbox \$old_x \$(sig ai/sandbox)
       rm -rf .sync"
 }
 sync_sidecars
@@ -80,7 +81,7 @@ echo "▸ swapping binary and restarting container"
 remote "set -e; cd $DIR; chmod 755 bin/ctg.new; if [ -f bin/ctg ]; then cp -p bin/ctg bin/ctg.prev; fi; mv bin/ctg.new bin/ctg
   rm -f bin/ctg.bad
   # up -d recreates services whose compose config or env_file changed; restart picks up the new binary.
-  docker compose up -d >/dev/null 2>&1; docker compose restart ctg ctg-strategy ctg-ai >/dev/null 2>&1"
+  docker compose up -d >/dev/null 2>&1; docker compose restart ctg ctg-strategy ctg-ai ctg-sandbox >/dev/null 2>&1"
 if wait_healthy; then
   echo "✓ deployed $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD || echo '+dirty')"
 else

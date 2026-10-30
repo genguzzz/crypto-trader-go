@@ -24,6 +24,7 @@ import llm
 
 PROTOCOL = "1"
 MAX_INFLIGHT = 3
+MAX_CHATS = 2  # chat turns run long; they get their own slots so reviews are never queued behind them
 MAX_LINE = 16 << 20
 HELLO_URL = "https://api.anthropic.com/api/hello"
 PROXY_OK_INTERVAL = 60.0
@@ -132,9 +133,10 @@ class Worker:
     def __init__(self, socket_path: str, gate: ProxyGate, calls: Any = llm, max_inflight: int = MAX_INFLIGHT):
         self.socket_path = socket_path
         self.gate = gate
-        self.calls = calls  # module-like: review, reflect, test coroutines
+        self.calls = calls  # module-like: review, reflect, test, chat coroutines
         self.config: dict[str, Any] = {}
         self.sem = asyncio.Semaphore(max_inflight)
+        self.chat_sem = asyncio.Semaphore(MAX_CHATS)
         self.tasks: dict[str, asyncio.Task] = {}
         self.writer: asyncio.StreamWriter | None = None
         self.wlock = asyncio.Lock()
@@ -207,14 +209,14 @@ class Worker:
             await self.send({"type": "pong"})
         elif kind == "config":
             self.config = {"credential": msg.get("credential"), "model": msg.get("model") or llm.DEFAULT_MODEL,
-                           "effort": msg.get("effort")}
+                           "effort": msg.get("effort"), "agent": msg.get("agent") or {}}
             cred = self.config["credential"] or {}
             log.info("config: model %s, credential %s", self.config["model"], cred.get("kind") or "none")
         elif kind == "cancel":
             t = self.tasks.pop(str(msg.get("id")), None)
             if t:
                 t.cancel()
-        elif kind in ("review", "reflect", "test"):
+        elif kind in ("review", "reflect", "test", "chat"):
             cid = str(msg.get("id") or "")
             if not cid:
                 return
@@ -245,7 +247,7 @@ class Worker:
     async def handle(self, kind: str, cid: str, msg: dict) -> None:
         config = dict(self.config)  # snapshot: a config change does not affect a running call
         secret = (config.get("credential") or {}).get("value", "")
-        timeout = self.timeout_for(msg, 300.0 if kind == "reflect" else 90.0)
+        timeout = self.timeout_for(msg, {"reflect": 300.0, "chat": 600.0}.get(kind, 90.0))
         try:
             out = await asyncio.wait_for(self._run(kind, msg, config), timeout)
         except asyncio.CancelledError:
@@ -261,6 +263,14 @@ class Worker:
         await self.send({"id": cid, **out})
 
     async def _run(self, kind: str, msg: dict, config: dict) -> dict:
+        if kind == "chat":
+            cid = str(msg.get("id"))
+
+            async def emit(ev: dict) -> None:
+                await self.send({"type": "event", "id": cid, "event": ev})
+
+            async with self.chat_sem:
+                return {"type": "result", "result": await self.calls.chat(msg, config, self.gate.proxy, emit)}
         async with self.sem:
             proxy = self.gate.proxy
             if kind == "review":

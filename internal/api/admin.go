@@ -12,7 +12,7 @@ import (
 // confirmations, proposals) needs no key. Until owner login (#1) exists, these writes need the
 // owner key; real-money trading will join this list.
 var adminPaths = []string{"/api/v1/interact/config", "/api/v1/interact/test", "/api/v1/ai/credential", "/api/v1/ai/model",
-	"/api/v1/ai/test", "/api/v1/ai/memory/", "/api/v1/trade/sources", "/api/v1/trade/sources/", "/api/v1/trade/check",
+	"/api/v1/ai/test", "/api/v1/ai/memory/", "/api/v1/ai/chat", "/api/v1/ai/chats/", "/api/v1/ai/transcribe", "/api/v1/trade/sources", "/api/v1/trade/sources/", "/api/v1/trade/check",
 	"/api/v1/trade/trial"}
 
 // adminGate requires header X-CTG-Admin == key for non-GET requests to adminPaths.

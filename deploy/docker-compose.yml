@@ -58,11 +58,33 @@ services:
     environment:
       CTG_RUN_DIR: /run/ctg
       CTG_AI_PROXY: http://127.0.0.1:17080
-      HOME: /tmp/home
+      HOME: /home/agent                                # chat session transcripts (resume across turns and restarts)
     tmpfs: [/tmp]
     volumes:
       - ./data/run:/run/ctg
-    mem_limit: 768m
+      - ./data/ai-home:/home/agent
+      - ./data/sbx:/run/sbx                            # the sandbox's socket
+    mem_limit: 1g
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # Sandbox for the chat agent's shell tool: bash + Python (numpy/pandas) + the crypto-analyzer CLI.
+  # Own bridge network (internet for OKX / news; host loopback services unreachable), no credentials
+  # (the worker sends an in-memory read-only data key per command), read-only root, tmpfs work dirs.
+  ctg-sandbox:
+    build: ./ai/sandbox
+    image: ctg-sandbox:local
+    container_name: ctg-sandbox
+    restart: unless-stopped
+    read_only: true
+    user: "65532:65532"
+    tmpfs: ["/tmp:size=256m", "/work:size=512m,uid=65532,gid=65532"]
+    volumes:
+      - ./data/sbx:/run/sbx
+    mem_limit: 512m
+    pids_limit: 128
+    cpus: 1.0
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }

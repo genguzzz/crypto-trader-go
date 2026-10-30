@@ -92,6 +92,10 @@ type Gate struct {
 	onProposal func(Proposal)
 	apply      func(instanceID int64, params map[string]float64) error
 
+	agent Agent
+	runMu sync.Mutex
+	runs  map[int64]*chatRun
+
 	reflectMu sync.Mutex
 	propMu    sync.Mutex // serializes proposal decisions
 }
@@ -130,7 +134,7 @@ func New(st *store.Store, opts Options) (*Gate, error) {
 	if opts.Logf == nil {
 		opts.Logf = log.Printf
 	}
-	if _, err := st.DB.Exec(schema); err != nil {
+	if _, err := st.DB.Exec(schema + chatSchema); err != nil {
 		return nil, fmt.Errorf("aigate schema: %w", err)
 	}
 	g := &Gate{st: st, opts: opts, sock: SocketPath(opts), sealer: newSealer(opts.SecretKey), model: opts.Model}

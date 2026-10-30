@@ -414,6 +414,20 @@ type Denial struct {
 func (d *Denial) Error() string { return d.Msg }
 
 // Authorize authenticates the request and charges `cost` against the key and global buckets.
+// InternalKey mints an in-memory key for an in-process client (the AI agent): never stored, gone on
+// restart, and only reachable by whoever receives the secret. It still passes the global limit.
+func (s *Service) InternalKey(name string, ratePerMin, burst int) string {
+	raw := make([]byte, 24)
+	rand.Read(raw)
+	secret := "ctg_in_" + base64.RawURLEncoding.EncodeToString(raw)
+	k := &keyState{APIKey: store.APIKey{ID: -1, Kind: KindKey, Name: name, Prefix: secret[:12], Hash: hashSecret(secret),
+		RatePerMin: ratePerMin, Burst: burst, CreatedAt: s.now().UnixMilli()}}
+	s.mu.Lock()
+	s.byHash[k.Hash] = k // not in s.keys: not listed, not persisted
+	s.mu.Unlock()
+	return secret
+}
+
 func (s *Service) Authorize(r *http.Request, cost int) (*Caller, *Quota, *Denial) {
 	secret := secretFrom(r)
 	s.mu.Lock()

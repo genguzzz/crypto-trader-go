@@ -8,6 +8,9 @@ import LayoutMenu from './components/LayoutMenu.vue'
 import AdminKeyModal from './components/AdminKeyModal.vue'
 import CoinIcon from './components/CoinIcon.vue'
 import AppUpdateBar from './components/AppUpdateBar.vue'
+import AiOrb from './components/ai/AiOrb.vue'
+import AiPanel from './components/ai/AiPanel.vue'
+import { ai } from './composables/ai'
 import { isNative } from './native'
 import { useDesktop } from './composables/device'
 import { devTab } from './composables/devtab'
@@ -43,6 +46,8 @@ const route = useRoute()
 const moreActive = computed(() => tabMore.value.some(n => route.path === n.to || route.path.startsWith(n.to + '/')))
 const moreOpen = ref(false)
 watch(() => route.path, () => (moreOpen.value = false))
+// the AI chat gets the instrument page the owner is on as context
+watch(() => route.params.id, id => { ai.instId = route.path.startsWith('/instrument/') && typeof id === 'string' ? id : '' }, { immediate: true })
 
 /** Market pulse: BTC / ETH live price + 24h change from the current snapshot. */
 const pulse = computed(() =>
@@ -120,6 +125,8 @@ const pulse = computed(() =>
       </PopoverPortal>
     </PopoverRoot>
   </nav>
+  <AiOrb />
+  <AiPanel />
   <AdminKeyModal />
 </template>
 

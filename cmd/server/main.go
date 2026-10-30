@@ -119,6 +119,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Chat agent tools: the external API's MCP endpoint on loopback with keys that live only in memory.
+	mcpHost := *addr
+	if strings.HasPrefix(mcpHost, ":") || strings.HasPrefix(mcpHost, "0.0.0.0:") {
+		mcpHost = "127.0.0.1:" + mcpHost[strings.LastIndex(mcpHost, ":")+1:]
+	}
+	gate.SetAgent(aigate.Agent{MCPURL: "http://" + mcpHost + devapi.MCPPath, MCPToken: dev.InternalKey("ai-agent", 600, 120),
+		SandboxToken: dev.InternalKey("ai-sandbox", 120, 30)})
 	gate.SetApplyParams(func(instanceID int64, params map[string]float64) error {
 		_, err := tsvc.UpdateInstance(instanceID, trade.InstancePatch{Params: params})
 		return err

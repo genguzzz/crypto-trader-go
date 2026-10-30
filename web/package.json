@@ -27,6 +27,7 @@
     "ctg-live-update": "file:native/live-update",
     "lightweight-charts": "^5.2.1",
     "lucide-vue-next": "^0.577.0",
+    "markdown-it": "^15.0.2",
     "reka-ui": "^2.10.5",
     "vue": "^3.5.43",
     "vue-router": "^4.6.4"
@@ -36,7 +37,6 @@
     "@shikijs/markdown-it": "^4.5.0",
     "@types/markdown-it": "^14.2.0",
     "@vitejs/plugin-vue": "^6.0.9",
-    "markdown-it": "^15.0.2",
     "playwright-core": "^1.63.0",
     "shiki": "^4.5.0",
     "typescript": "~5.9",

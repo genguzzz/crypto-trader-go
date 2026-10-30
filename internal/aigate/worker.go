@@ -21,7 +21,8 @@ import (
 // proxyOk, proxyError} (on change) · decision {id, decision, meta} · result {id, result} (test and
 // reflect) · error {id, error} · pong.
 // Go → worker: config {credential, model} · review {id, request, deadlineMs} · test {id, deadlineMs} ·
-// reflect {id, request, deadlineMs} · cancel {id} · ping.
+// reflect {id, request, deadlineMs} · chat {id, chatId, sessionId, message, instId, deadlineMs} ·
+// cancel {id} · ping. Worker → Go also: event {id, event} (chat progress, the call stays pending).
 //
 // Additive to §5: reflect/result, cancel, status and the ready/proxy fields.
 
@@ -46,6 +47,7 @@ type inbound struct {
 	Decision   json.RawMessage `json:"decision,omitempty"`
 	Meta       json.RawMessage `json:"meta,omitempty"`
 	Result     json.RawMessage `json:"result,omitempty"`
+	Event      json.RawMessage `json:"event,omitempty"`
 }
 
 // WorkerInfo is what the connected worker reported.
@@ -212,6 +214,16 @@ func (g *Gate) serve(ctx context.Context, c net.Conn) {
 			g.mu.Lock()
 			applyStatus(&w.info, m)
 			g.mu.Unlock()
+		case "event": // a streaming call's progress; the call stays pending
+			w.mu.Lock()
+			ch := w.pending[m.ID]
+			w.mu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- m:
+				default:
+				}
+			}
 		case "decision", "result", "error":
 			w.mu.Lock()
 			ch := w.pending[m.ID]
@@ -351,5 +363,5 @@ func (g *Gate) configMsgLocked() map[string]any {
 	if g.cred.configured() {
 		cred = map[string]string{"kind": g.cred.Kind, "value": g.cred.Value}
 	}
-	return map[string]any{"type": "config", "credential": cred, "model": g.model}
+	return map[string]any{"type": "config", "credential": cred, "model": g.model, "agent": g.agent}
 }
