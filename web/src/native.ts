@@ -2,7 +2,7 @@
 // page is served from capacitor://localhost, so API calls go to production, and new web builds
 // arrive as over-the-air bundles published with scripts/ios-ota.sh (docs/ios.md).
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import type { Router } from 'vue-router'
 
 export const isNative = Capacitor.isNativePlatform()
@@ -73,6 +73,8 @@ async function checkBinary(state: LiveUpdateState) {
 }
 
 export type UpdateCheck = 'latest' | 'ready' | 'binary' | 'busy' | 'error'
+/** Why the last check failed, by step (shown in Settings → App 版本). */
+export const updateError = ref('')
 
 let checking = false
 /** Look for a newer web bundle (downloaded in the background) and a newer IPA; both end up in appUpdate. */
@@ -80,22 +82,25 @@ export async function checkUpdate(): Promise<UpdateCheck> {
   if (checking) return 'busy'
   checking = true
   try {
+    updateError.value = ''
+    const step = <T,>(name: string, p: Promise<T>) => p.catch(e => { throw new Error(`${name}: ${e?.message || e}`) })
     const [state, local, remote] = await Promise.all([
-      LiveUpdate.getState(),
-      fetch('/bundle.json').then(r => r.json()) as Promise<{ version: string }>,
-      fetch(OTA_MANIFEST, { cache: 'no-store' }).then(r => r.json()) as Promise<{ version: string; runtime: string; message?: string; baseUrl: string; files: BundleFile[] }>,
+      step('原生插件', LiveUpdate.getState()),
+      step('本地版本', fetch('/bundle.json').then(r => r.json()) as Promise<{ version: string }>),
+      step('更新清单', fetch(OTA_MANIFEST, { cache: 'no-store' }).then(r => r.json()) as Promise<{ version: string; runtime: string; message?: string; baseUrl: string; files: BundleFile[] }>),
     ])
     await checkBinary(state).catch(e => console.warn('app source:', e))
     if (remote.runtime !== state.runtime || remote.version === local.version || state.failed.includes(remote.version)) {
       return appUpdate.binary ? 'binary' : 'latest'
     }
-    if (remote.version !== state.staged) await LiveUpdate.download({ version: remote.version, baseUrl: remote.baseUrl, files: remote.files })
+    if (remote.version !== state.staged) await step('下载', LiveUpdate.download({ version: remote.version, baseUrl: remote.baseUrl, files: remote.files }))
     appUpdate.message = remote.message || ''
     appUpdate.ready = true
     localStorage.setItem(PENDING_KEY, JSON.stringify({ version: remote.version, message: appUpdate.message }))
     return 'ready'
   } catch (e) {
     console.warn('live update:', e)
+    updateError.value = (e as Error)?.message || String(e)
     return 'error'
   } finally {
     checking = false

@@ -2,7 +2,7 @@
 // iOS app only: which binary and web bundle are running, and a manual update check (docs/ios.md).
 import { onMounted, ref } from 'vue'
 import { Smartphone } from 'lucide-vue-next'
-import { appUpdate, applyUpdate, bundleInfo, checkUpdate, type UpdateCheck } from '../../native'
+import { appUpdate, applyUpdate, bundleInfo, checkUpdate, updateError, type UpdateCheck } from '../../native'
 import SettingsSection from './SettingsSection.vue'
 import SettingRow from './SettingRow.vue'
 
@@ -39,7 +39,7 @@ onMounted(load)
     <SettingRow label="网页版本" :desc="info?.running ? '已通过热更新升级' : 'App 内置版本'">
       <span class="tnum mono">{{ info?.version ?? '—' }}</span>
     </SettingRow>
-    <SettingRow label="检查更新" :desc="result ? RESULT[result] : '打开 App 时会自动检查'">
+    <SettingRow label="检查更新" :desc="result ? RESULT[result] + (result === 'error' && updateError ? `（${updateError}）` : '') : '打开 App 时会自动检查'">
       <div class="line">
         <button v-if="appUpdate.ready && !appUpdate.applyLater" type="button" class="primary" :disabled="appUpdate.applying" @click="applyUpdate">{{ appUpdate.applying ? '更新中…' : '立即更新' }}</button>
         <button type="button" :disabled="busy" @click="check">{{ busy ? '检查中…' : '检查更新' }}</button>
