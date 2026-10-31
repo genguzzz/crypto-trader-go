@@ -1,8 +1,8 @@
 """Chat agent: one multi-turn Claude Agent SDK session per ctg conversation.
 
-Tools: the ctg MCP endpoint (market data, read-only, in-memory key from Go), WebSearch/WebFetch, a
-`shell` tool that runs in the separate ctg-sandbox container, the `perp-analysis` skill and two
-debate subagents (bull / bear). Progress is streamed to Go as compact events; the session is resumed
+Tools: the ctg MCP endpoint (small market-data lookups, read-only, in-memory key from Go),
+WebSearch/WebFetch, a `shell` tool that runs in the separate ctg-sandbox container, `remember`, and
+the skills `perp-analysis` and `ctg-platform`. One agent argues both sides of a trade itself. Progress is streamed to Go as compact events; the session is resumed
 by id on the next turn (transcripts live under $HOME/.claude, a persistent volume in compose).
 """
 
@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable
 import llm
 
 AGENT_DIR = Path(__file__).resolve().parent / "agent"  # cwd: holds .claude/skills
-CHAT_PROMPT = "chat_v1"
+CHAT_PROMPT = "chat_v2"
 CHAT_MAX_TURNS = 60
 CHAT_MODELS = ("claude-sonnet-5", "claude-opus-5-5")  # chosen per turn in the app
 SANDBOX_SOCKET = os.environ.get("CTG_SANDBOX_SOCKET", "/run/sbx/sbx.sock")
@@ -40,7 +40,6 @@ TOOL_LABELS = {
     "compare_with_majors": "对比 BTC/ETH", "get_universe": "监控池", "search_instruments": "搜索合约",
     "list_rules": "规则", "get_rule_track_record": "规则战绩", "get_alert_events": "告警", "get_system_status": "数据状态",
     "list_fields": "字段定义", "get_usage": "接口额度", "remember": "记住偏好", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
-    "Task": "子分析", "Agent": "子分析",
 }
 # the analysis CLI's commands, as the owner would call them
 CA_LABELS = {
@@ -49,17 +48,6 @@ CA_LABELS = {
     "depth": "盘口深度", "quote": "报价", "rank": "涨跌榜", "rules": "规则战绩", "alerts": "告警", "ctg": "查询数据",
     "tokenomics": "代币经济", "holders": "持仓分布", "security": "合约安全", "dex": "DEX 数据", "status": "数据状态",
 }
-SUBAGENT_LABELS = {"bull": "多头研究员", "bear": "空头研究员"}
-
-BULL_PROMPT = """你是多头研究员，任务是为做多这个合约建立最有力的论证（参考 TradingAgents 的 bull researcher）。
-基于给你的证据（可以再查数据补强），给出 3 条最强的做多论据：每条有具体数字和时间窗，并说明这个信号在永续合约上通常意味着什么。
-直接反驳空方最可能提出的 1–2 个论点。最后写：做多入场区、止损、目标，以及让多头观点失效的价位/事件，和多头信心 0–10。
-中文，简洁有力，不超过 300 字，不写免责声明。"""
-BEAR_PROMPT = """你是空头研究员，任务是为做空这个合约建立最有力的论证（参考 TradingAgents 的 bear researcher）。
-基于给你的证据（可以再查数据补强），给出 3 条最强的做空论据：每条有具体数字和时间窗，并说明这个信号在永续合约上通常意味着什么。
-直接反驳多方最可能提出的 1–2 个论点。最后写：做空入场区、止损、目标，以及让空头观点失效的价位/事件，和空头信心 0–10。
-中文，简洁有力，不超过 300 字，不写免责声明。"""
-
 
 def label_for(name: str, inp: Any = None) -> str:
     """Owner-facing label: what the step does, never how (no "sandbox" / tool ids)."""
@@ -74,8 +62,6 @@ def label_for(name: str, inp: Any = None) -> str:
         return "计算"
     if short == "shell":
         return "计算"
-    if short in ("Task", "Agent") and isinstance(inp, dict):
-        return SUBAGENT_LABELS.get(str(inp.get("subagent_type", "")), "子分析")
     return TOOL_LABELS.get(short, short)
 
 
@@ -99,8 +85,6 @@ def brief_input(name: str, inp: Any) -> str:
         return ""
     if short == "remember":
         return str(inp.get("text", ""))[:80]
-    if short in ("Task", "Agent"):
-        return ""
     keep = [str(v) for k, v in inp.items() if k in ("instId", "q")]
     keep += [f"{v}" for k, v in inp.items() if k in ("bar", "field", "days")]
     return " · ".join(keep)[:80]
@@ -110,8 +94,6 @@ def full_input(name: str, inp: Any) -> str:
     """The call's arguments for the expanded view: the command itself, or JSON."""
     if isinstance(inp, dict) and name.split("__")[-1] == "shell":
         return str(inp.get("cmd", ""))[:4000]
-    if isinstance(inp, dict) and name.split("__")[-1] in ("Task", "Agent"):
-        return str(inp.get("prompt", ""))[:4000]
     try:
         return json.dumps(inp, ensure_ascii=False, indent=1)[:4000]
     except (TypeError, ValueError):
@@ -179,21 +161,19 @@ def memory_server(emit: Emit):
 
 
 def notes_block(notes: Any) -> str:
-    if not isinstance(notes, list) or not notes:
-        return "\n\n## 主人的偏好与记忆\n（暂无。主人说出长期偏好时用 remember 记下。）\n"
-    lines = [f"[{n.get('id')}] {n.get('text')}" for n in notes if isinstance(n, dict) and n.get("text")]
-    return ("\n\n## 主人的偏好与记忆（必须遵守；要更新某条时用 remember 并传 replaces=编号）\n" + "\n".join(lines) + "\n")
+    lines = [f"[{n.get('id')}] {n.get('text')}" for n in (notes if isinstance(notes, list) else []) if isinstance(n, dict) and n.get("text")]
+    return "\n\n<owner_notes>\n" + ("\n".join(lines) or "(none yet)") + "\n</owner_notes>\n"
 
 
 def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes: Any = None, emit: Emit | None = None):
-    from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions
+    from claude_agent_sdk import ClaudeAgentOptions
 
     agent = config.get("agent") or {}
     env = llm.build_env(config.get("credential"), proxy)
     prompt, _ = llm.load_prompt(CHAT_PROMPT)
     prompt += notes_block(notes)
     mcp: dict[str, Any] = {"sandbox": sandbox_server(chat, agent.get("sandboxToken", ""))}
-    allowed = ["mcp__sandbox__shell", "WebSearch", "WebFetch", "Skill", "Task", "Agent"]
+    allowed = ["mcp__sandbox__shell", "WebSearch", "WebFetch", "Skill"]
     if emit is not None:
         mcp["memory"] = memory_server(emit)
         allowed.append("mcp__memory__remember")
@@ -202,12 +182,11 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
         mcp["ctg"] = {"type": "http", "url": agent["mcpUrl"], "headers": {"Authorization": "Bearer " + agent["mcpToken"]}}
         ctg_tools = [f"mcp__ctg__{t}" for t in CTG_DIRECT]
         allowed += ctg_tools
-    data_tools = ctg_tools + ["mcp__sandbox__shell", "WebSearch", "WebFetch"]
     env["MAX_MCP_OUTPUT_TOKENS"] = MCP_OUTPUT_TOKENS
     kw: dict[str, Any] = dict(
         system_prompt=prompt,
         model=config.get("model") or llm.DEFAULT_MODEL,
-        tools=["WebSearch", "WebFetch", "Skill", "Task", "Agent"],  # Task was renamed Agent in newer CLIs
+        tools=["WebSearch", "WebFetch", "Skill"],  # one agent argues both sides itself: no subagents
         allowed_tools=allowed,
         disallowed_tools=[f"mcp__ctg__{t}" for t in CTG_HIDDEN],  # not even listed to the model
         mcp_servers=mcp,
@@ -219,10 +198,6 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
         env=env,
         cwd=str(AGENT_DIR),
         include_partial_messages=True,
-        agents={
-            "bull": AgentDefinition(description="多头研究员：给出做多的最强论据与失效条件", prompt=BULL_PROMPT, tools=data_tools, model="inherit", maxTurns=12),
-            "bear": AgentDefinition(description="空头研究员：给出做空的最强论据与失效条件", prompt=BEAR_PROMPT, tools=data_tools, model="inherit", maxTurns=12),
-        },
     )
     if session:
         kw["resume"] = session

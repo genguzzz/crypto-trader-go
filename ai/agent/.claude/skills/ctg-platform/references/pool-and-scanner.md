@@ -1,56 +1,56 @@
-# 监控池与扫描页
+# Monitored pool and Scanner
 
-## 监控池（活跃池）定义
+## Monitored pool (active pool) definition
 
-- **可入池**：OKX 上 `live` 状态的 USDT 本位线性永续，非盘前，类别在设置里勾选的范围内（加密 / 股票·ETF / 商品，默认全选）。
-- **12h 成交额** = 最近 **720 根连续、已确认（已收盘）的 1m K 线** 的 `volCcyQuote`（USDT 成交额）之和，每确认一分钟重算一次。
-  - 缺任何一分钟 = 数据缺口，不是 0 成交（OKX 空闲分钟也会发 0 成交 K 线）；有缺口的合约暂不参与排名（状态 stale），系统从最早缺失分钟补洞。
-  - `volCcy24h`（OKX 的 24h 量）不是 USDT 成交额，不用于入池。
-- **入池**：12h 成交额**严格大于阈值**（默认 500 万 USDT），按成交额从高到低取前 **N**（默认 200）。达标不足 N 就只显示实际数量，不拿低流动性合约凑数。实测阈值决定池子大小，N 很少用满。
-- 没有滞回：每分钟重新判断。移出的合约在扫描页“最近移出”里保留 30 分钟，带移出原因。
-- 上市不足 12h 的新合约要满 12h 才参与；刚开始录制的合约处于“预热中”。
-- 阈值、N、类别在 [设置](/settings) → 监控池调整，“预计入池”按最新 12h 成交额即时估算，保存后以服务端重算为准。
-- 启动时 1m 窗口补齐前，用 5m × 144 根近似（“临时名单”，实测与精确结果一致）。
+- **Eligible**: OKX USDT-margined linear perpetuals in `live` state, not pre-market, in a category ticked in Settings (crypto / stocks·ETF / commodities — 加密 / 股票·ETF / 商品; all by default).
+- **12h turnover** = sum of `volCcyQuote` (USDT turnover) over the latest **720 contiguous, confirmed (closed) 1m candles**, recomputed each confirmed minute.
+  - Any missing minute = data gap, not zero volume (OKX sends zero-volume candles for idle minutes too); contracts with gaps are excluded from ranking for now (status stale), and the system backfills from the earliest missing minute.
+  - `volCcy24h` (OKX's 24h volume) is not USDT turnover and isn't used for pool entry.
+- **Entry**: 12h turnover **strictly above the threshold** (default 5 million USDT), top **N** by turnover (default 200). If fewer than N qualify, only that many are shown; low-liquidity contracts are never added to fill up. In practice the threshold sets pool size; N is rarely reached.
+- No hysteresis: re-evaluated every minute. Removed contracts stay in the Scanner's "Recently removed" (最近移出) for 30 minutes with the reason.
+- New contracts listed < 12h join only after 12h; contracts that just started recording are "warming up" (预热中).
+- Threshold, N and categories are set in [设置](/settings) → Monitored pool (监控池); "Expected pool" (预计入池) estimates instantly from the latest 12h turnover; after saving, the server's recomputation is authoritative.
+- At startup, before the 1m window is complete, 5m × 144 candles are used as an approximation ("provisional list" 临时名单; measured to match the exact result).
 
-## 顶栏状态（每页都有）
+## Top-bar status (on every page)
 
-- `达标数/上限`：当前入池数 / N；旁边是阈值。
-- 第一个时间：最近一次确认的已收盘分钟，池子增删只在这时发生。
-- 第二个时间（闪烁）：盘中每 10 秒用未收盘分钟重算的预览时间；预览会变，不进战绩。
-- 标签：`临时名单`、`快速建池`、`回填中`、`启动中`；圆点 绿 = 推送已连接，黄 = 启动/回填，红 = 断开重连中。
-- PC 顶栏还有 BTC / ETH 现价与 24h 涨跌（点击打开）。
+- `qualified/cap` (达标数/上限): current pool count / N; the threshold next to it.
+- First time: latest confirmed closed minute; pool changes happen only then.
+- Second time (blinking): intraday preview time, recomputed every 10 s with the open minute; previews change and don't enter the track record.
+- Labels: `临时名单` (provisional list), `快速建池` (quick pool build), `回填中` (backfilling), `启动中` (starting); dot green = push connected, yellow = starting/backfilling, red = disconnected, reconnecting.
+- On PC the top bar also shows BTC / ETH price and 24h change (click to open).
 
-## 扫描页 [扫描](/)
+## Scanner page [扫描](/)
 
-列表 = 活跃池 + 自选（自选但不在池里的标“非活跃”）。
+List = active pool + watchlist (watchlist items not in the pool are marked "inactive" (非活跃)).
 
-**列**（PC 表格；手机为卡片）：
+**Columns** (table on PC; cards on mobile):
 
-| 列 | 含义 |
+| Column | Meaning |
 |---|---|
-| ☆/★ | 加入/取消自选 |
-| 合约 | 状态圆点（绿 live、红 stale 缺口、黄其它）、类别标签（股票/商品）、`非活跃`、`门槛`（当前规则点差门槛未通过） |
-| 多 / 空 | 当前所选规则的多头分、空头分（0–100，50 中性；“—” = 未评分） |
-| 费/h | 已结算资金费折合每小时（`funding_hourly`），按 8h 等效水平着色：常态 ≤0.01%/8h、偏高 ≤0.05%、高 ≤0.1%、极端 >0.1% |
-| 价格 | 实时最新价 |
-| 4h / 相对BTC / OIΔ4h | `ret_4h`、`excess_btc_4h`、`oi_chg_4h`，界面显示为百分比 |
-| 放量 | `vol_surprise_4h`，显示为倍数 ×N（近 4h 成交额 ÷ 7 天 4h 中位数） |
-| 总市值 | CoinGecko 市值（仅展示） |
-| 12h额 | 12h USDT 成交额；带 `*` 为临时值 |
+| ☆/★ | Add/remove watchlist |
+| Contract (合约) | Status dot (green live, red stale gap, yellow other), category tag (stocks/commodities), `非活跃` (inactive), `门槛` (gate: current rule's spread gate failed) |
+| Long / Short (多 / 空) | Current rule's long and short scores (0–100, 50 neutral; "—" = unscored) |
+| Fund/h (费/h) | Settled funding per hour (`funding_hourly`), colored by 8h-equivalent level: normal ≤ 0.01%/8h, elevated ≤ 0.05%, high ≤ 0.1%, extreme > 0.1% |
+| Price (价格) | Live last price |
+| 4h / vs BTC / OIΔ4h (4h / 相对BTC / OIΔ4h) | `ret_4h`, `excess_btc_4h`, `oi_chg_4h`, shown as percentages |
+| Vol surprise (放量) | `vol_surprise_4h`, shown as multiple ×N (last-4h turnover ÷ 7-day 4h median) |
+| Market cap (总市值) | CoinGecko market cap (display only) |
+| 12h turnover (12h额) | 12h USDT turnover; `*` = provisional value |
 
-每行底色长条 = 持仓量（USDT）：占比 = r/(1+r)，r = √(持仓量 ÷ 半满点)，半满点默认 500 万（设置 → 显示，仅本浏览器）。
+Each row's background bar = open interest (USDT): fill = r/(1+r), r = √(OI ÷ half-full point); half-full point defaults to 5 million (Settings → Display (显示), this browser only).
 
-**控件**：
-- 搜索合约；方向切换 全部 / 做多 / 做空（决定“按方向分”排序用哪一侧，全部 = 取多空较高者）。
-- 评分规则下拉（临时切换，默认规则在设置里定）；旁边 ⓘ 是打分说明，图表图标打开该规则战绩。
-- 类别筛选（加密/股票/商品）、`自选`、`门槛通过`（只看当前规则点差门槛通过的）。
-- 排序：按方向分、多头分、空头分、总市值、持仓量、12h 成交额，或任一事实面板字段（资金费按绝对值）；可切升降序。未知值总排最后。
-- `最近移出`：最近 30 分钟移出监控池的合约与原因。
-- 搜索时下方列出“OKX 其他合约”：不在列表里的 OKX USDT 永续（全部类别，含盘前），标 `未录制`（类别未选或盘前）或 `池外`（全池录制中但未入池）。点开后才按需下载历史并在查看期间实时录制；加自选后长期保留。
+**Controls**:
+- Contract search; direction toggle All / Long / Short (全部 / 做多 / 做空) (decides which side "sort by direction score" uses; All = the higher of long and short).
+- Scoring rule dropdown (temporary switch; default rule set in Settings); the ⓘ next to it explains scoring; the chart icon opens that rule's track record.
+- Category filter (crypto/stocks/commodities), `自选` (watchlist), `门槛通过` (gate passed: only contracts passing the current rule's spread gate).
+- Sort: by direction score, long score, short score, market cap, open interest, 12h turnover, or any facts-panel field (funding by absolute value); ascending/descending. Unknown values always sort last.
+- `最近移出` (recently removed): contracts removed from the pool in the last 30 minutes, with reasons.
+- When searching, "Other OKX contracts" (OKX 其他合约) lists OKX USDT perpetuals not in the list (all categories, including pre-market), marked `未录制` (not recorded: category not selected or pre-market) or `池外` (outside pool: recorded pool-wide but not in the pool). Opening one downloads history on demand and records live while viewing; adding to the watchlist keeps it long-term.
 
-列表每 10 秒随预览重排；手指/鼠标按住时暂停重排。
+The list re-sorts every 10 s with the preview; re-sorting pauses while a finger/mouse is held down.
 
-## 自选
+## Watchlist (自选)
 
-- 在扫描页行首星标、详情页“自选”按钮加入。自选合约始终显示在列表里、始终计算分数，享有最高数据保留层级（见 data-sources-and-freshness.md），并持续订阅实时行情与逐笔成交。
-- 监控规则可以把范围设为“自选”。
+- Add via the row star on the Scanner or the "自选" button on the instrument page. Watchlist contracts always show in the list, are always scored, get the highest data retention tier (see data-sources-and-freshness.md), and stay subscribed to live quotes and trades.
+- Alert rules can use "Watchlist" (自选) as their scope.

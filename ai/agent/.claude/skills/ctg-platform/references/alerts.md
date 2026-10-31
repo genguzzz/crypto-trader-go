@@ -1,36 +1,36 @@
-# 监控告警 [监控告警](/alerts)
+# Alerts [监控告警](/alerts)
 
-页面左侧是监控规则列表（启用开关、冷却、推送渠道、最近触发时间、编辑/删除），右侧是推送渠道配置和“最近触发”。MCP `get_alert_events` 可读最近触发的事件（不含投递细节）。
+Left side: the alert rule list (enable toggle, cooldown, push channels, last trigger time, edit/delete). Right side: push channel settings and "Recent triggers" (最近触发). MCP `get_alert_events` reads recent trigger events (without delivery details).
 
-## 规则类型
+## Rule types
 
-| 类型 | 参数 | 条件 |
+| Type | Parameters | Condition |
 |---|---|---|
-| 价格异动 | 窗口 15m / 1h / 4h / 24h；方向 双向 / 涨 / 跌；涨跌幅阈值 % | 窗口内收盘价**简单**涨跌幅 ≥ 阈值（取自事实面板 ret_*） |
-| 规则分数 | 评分规则；多头分 / 空头分；分数 ≥ N（默认 80） | 所选规则该侧分数 ≥ N（分数未验证） |
-| 资金费 | 来源 已结算 / 预测；方向 正 / 负 / ±；每小时资金费阈值 % | 资金费折合每小时（4h/8h 已换算）达到阈值；预测值仅实时 |
+| Price move (价格异动) | Window 15m / 1h / 4h / 24h; direction both / up / down (双向 / 涨 / 跌); change threshold % | **Simple** close-to-close change over the window ≥ threshold (from facts-panel ret_*) |
+| Rule score (规则分数) | Scoring rule; long score / short score (多头分 / 空头分); score ≥ N (default 80) | That side's score for the chosen rule ≥ N (scores are unvalidated) |
+| Funding (资金费) | Source settled / predicted (已结算 / 预测); sign positive / negative / ± (正 / 负 / ±); hourly funding threshold % | Funding converted to per hour (4h/8h already normalized) reaches the threshold; predicted is live-only |
 
-通用设置：名称、**范围**（活跃池 / 自选 / 单个合约，单个合约填完整 instId）、**冷却**（分钟）、推送到 Telegram 和/或 Webhook、启用开关。所选渠道未配置时只记入历史（标“仅记录”）。
+Common settings: name, **scope** (active pool / watchlist / single contract — 活跃池 / 自选 / 单个合约; single contract takes the full instId), **cooldown** (minutes), push to Telegram and/or Webhook, enable toggle. If the chosen channel isn't configured, triggers only go to history (marked "log only", 仅记录).
 
-## 何时、如何触发
+## When and how it triggers
 
-- **检查时机**：每个已收盘分钟确认后，用当时的事实面板与规则分数检查一次。盘中 10 秒预览不触发。
-- **边沿触发**：条件从“不满足”变为“满足”的那一分钟触发一次；持续满足不重复；回落后再次满足会再触发。
-- **冷却**：同一规则、同一合约两次提醒的最短间隔，冷却期内新触发被忽略。
-- **数据缺失**：缺少所需字段（新币、数据缺口）时跳过，不算“不满足”。规则分数只对活跃池与自选计算，所以分数类规则对池外合约无效。
-- **第一分钟**：新建/修改规则或服务重启后的第一分钟只记录状态不发提醒；已经满足条件的合约要等回落后再次满足才触发（避免一次性提醒整个池子）。所以“刚建的规则没响”通常是正常的；要确认通道是否通，用“发送测试”。
+- **Check timing**: once per confirmed closed minute, using that minute's facts panel and rule scores. The 10-second intraday preview never triggers.
+- **Edge-triggered**: fires once in the minute the condition goes from false to true; staying true doesn't repeat; falling back and becoming true again re-fires.
+- **Cooldown**: minimum interval between two alerts for the same rule and contract; new triggers inside it are ignored.
+- **Missing data**: if a required field is missing (new coin, data gap), the check is skipped, not counted as false. Rule scores are computed only for the active pool and watchlist, so score rules don't work for contracts outside the pool.
+- **First minute**: after a rule is created/edited or the service restarts, the first minute only records state and sends nothing; contracts already meeting the condition fire only after falling back and meeting it again (avoids alerting the whole pool at once). So "my new rule didn't fire" is usually normal; to verify the channel works, use "Send test" (发送测试).
 
-## 推送渠道
+## Push channels
 
-- **Telegram**：在 @BotFather 创建机器人得到 Bot Token；先给机器人发一条消息（群组需拉机器人进群），再查 Chat ID（群组为负数）。同一分钟的多条提醒合并成一条消息。
-- **Webhook**：每条提醒 POST 一次 JSON `{ruleId, rule, instId, type, value, message, ts}`（测试消息带 `test: true`）；填了密钥会放在请求头 `X-CTG-Secret` 供接收端校验。
-- Token、密钥、Webhook 地址只保存在服务器，页面只显示末 4 位；留空保存 = 不修改。发送失败（网络错误 / 429 / 5xx）重试 3 次。
+- **Telegram**: create a bot with @BotFather to get the Bot Token; send the bot a message first (for groups, add the bot to the group), then look up the Chat ID (negative for groups). Alerts in the same minute are merged into one message.
+- **Webhook**: one POST per alert with JSON `{ruleId, rule, instId, type, value, message, ts}` (test messages include `test: true`); if a secret is set it goes in header `X-CTG-Secret` for the receiver to verify.
+- Tokens, secrets and Webhook URLs are stored only on the server; the page shows the last 4 characters; saving blank = unchanged. Failed sends (network error / 429 / 5xx) retry 3 times.
 
-## 最近触发
+## Recent triggers
 
-显示最近 100 条（服务器保留 30 天、最多 5000 条），每个已收盘分钟自动刷新。投递状态：已送达 / 发送中 / 失败（悬停或点按看原因）。
+Shows the latest 100 (server keeps 30 days, max 5000), auto-refreshing every closed minute. Delivery status: delivered / sending / failed (已送达 / 发送中 / 失败; hover or tap for the reason).
 
-## 与其它通知的区别
+## Difference from other notifications
 
-- 模拟交易的人工确认、熔断等事件走“交互通道”（[设置](/settings) → 交互通道，Telegram 机器人 + 待确认页），不是这里的监控规则。
-- 策略代码里的 `ctx.notify` 也走交互通道/Webhook，见 [发通知](/help/strategy/notify)。
+- Paper-trading manual confirmations, circuit-breaker events etc. go through the interaction channel ([设置](/settings) → Interaction channel (交互通道): Telegram bot + Pending page), not these alert rules.
+- `ctx.notify` in strategy code also goes through the interaction channel/Webhook; see [发通知](/help/strategy/notify).

@@ -1,62 +1,62 @@
-# 合约详情页与价格图
+# Instrument page and price chart
 
-链接：`[SOL](/instrument/SOL-USDT-SWAP)`。手机上是独立详情页；PC 上转到扫描页的分栏工作台（左列表、中间图表、可开关的侧边面板），内容相同。
+Link: `[SOL](/instrument/SOL-USDT-SWAP)`. On mobile it's a standalone page; on PC it redirects to the Scanner split workspace (list on the left, chart in the middle, toggleable side panel), same content.
 
-## 页面结构（手机自上而下）
+## Page layout (mobile, top to bottom)
 
-1. **头部**：币名/USDT、类别、行情更新时间；状态标签（实时 / 数据缺口，补洞中 / 预热中 / 上市不足 12h）、`活跃 #排名` 或 `非活跃`（未达阈值或数据不全）或 `未录制`（类别外/盘前：查看期间实时录制，加自选后长期保留）、`同步中`（正在下载历史）；自选按钮。
-2. **价格**：现价，24h 与 4h 涨跌。PC 工作台还显示标记价相对指数价的偏离。
-3. **关键数**（点开有详情弹窗）：
-   - `资金费 Nh`：当前资金费（单次，%）、结算间隔、下次结算倒计时。详情含折合每小时、简单年化（仅按本期换算，不代表未来）。
-   - `持仓量`：USD 持仓量 + 4h 币本位 OI 变化。
-   - `12h 额`：12h USDT 成交额 + 放量倍数；详情按小时汇总看成交是否集中。
-4. **卡片**：
-   - `评分`：当前规则的多/空分；副标题为规则名，门槛未通过时显示“门槛：…”，未出分显示“预热中”。详情可切换规则：每侧列出各加权字段的值、池内分位和对分数的加减分（相对 50）；缺字段时写明“缺少：… → 未评分（不是 0）”；下方“全部字段”表列出所有事实面板字段的值、分位、定义，“不可回放”字段标出。
-   - `总市值`：CoinGecko 市值与已流通比例（约每 2 小时刷新；按符号匹配取市值最大的同名币，极少数小币可能对错；仅展示，不参与入池和评分；没有解锁日程）。
-   - `买一 / 卖一`：点差 bps；详情是盘口与深度图。
-   - `OKX 现货`：同名 USDT 现货价与基差（永续 ÷ 现货 − 1）；没有现货显示“无同名 USDT 现货”。
-5. **价格图**（下节）。
-6. **实时盘口**：OKX books-full，每侧最多 5000 档（BTC 约覆盖 ±1%，小币可达几十 %），每秒刷新，金额为 USDT（价格 × 张数 × 面值）。深度图横轴为距中间价 %，纵轴为累计挂单 USDT（默认 ±5% 与覆盖范围取小）；悬浮/拖动显示把价格推到该偏离需吃掉多少 USDT、成交均价与滑点。速查表里“+”表示超出公开盘口，实际更多。不含隐藏单/冰山单，撤单会迅速改变。
-7. **相对 BTC/ETH**：三者永续收盘价以共同起点 = 100 的指数，105 = 自起点 +5%。BTC/ETH 只是大盘代理。
-8. **OI 与资金费历史**：OI 用 oiCcy（币数），数据 = OKX 1H 历史 + 近 8h 5m + 本机每分钟录制；资金费柱为每次已结算费率（单次 %）。
-9. **强平**：OKX 公共逐笔强平单（liquidation-orders），金额 = 破产价 × 张数 × 面值（USDT）。多 = 多单被强平（红柱向下），空 = 空单被强平（绿柱向上）。OKX 只给约 24h；活跃池/自选/最近查看的合约每分钟同步，本机保留 30 天；统计窗口早于记录起点标“不完整”。“最新强平”列最近 20 笔，前 10% 金额加粗。
-10. **新闻 / 解锁 / 链上持有人**：未接入（计划中）。“未接入”不代表没有事件或风险。
+1. **Header**: coin/USDT, category, quote update time; status tags (live / data gap, backfilling / warming up / listed < 12h — 实时 / 数据缺口，补洞中 / 预热中 / 上市不足 12h), `活跃 #rank` (active) or `非活跃` (inactive: below threshold or incomplete data) or `未录制` (not recorded: outside categories/pre-market; recorded live while viewing, kept long-term once on the watchlist), `同步中` (syncing: downloading history); watchlist button.
+2. **Price**: last price, 24h and 4h change. The PC workspace also shows mark price deviation from index price.
+3. **Key numbers** (tap for a detail popup):
+   - `资金费 Nh` (funding): current funding (single period, %), settlement interval, countdown to next settlement. Details include per-hour equivalent and simple annualized (extrapolated from this period only, not a forecast).
+   - `持仓量` (open interest): USD OI + 4h coin-denominated OI change.
+   - `12h 额` (12h turnover): 12h USDT turnover + volume-surprise multiple; details aggregate by hour to show whether volume is concentrated.
+4. **Cards**:
+   - `评分` (score): long/short score for the current rule; subtitle is the rule name, shows "门槛：…" (gate) if the gate fails, "预热中" (warming up) if no score yet. Details can switch rules: each side lists every weighted field's value, pool percentile and contribution to the score (relative to 50); missing fields read "缺少：… → 未评分（不是 0）" (missing → unscored, not 0); the "All fields" (全部字段) table below lists every facts-panel field's value, percentile and definition, with non-replayable fields marked.
+   - `总市值` (market cap): CoinGecko market cap and circulating ratio (refreshed ~every 2 hours; matched by symbol taking the largest-cap coin of that name, so a few small coins may be mismatched; display only, not used for pool entry or scoring; no unlock schedule).
+   - `买一 / 卖一` (best bid / ask): spread in bps; details show the order book and depth chart.
+   - `OKX 现货` (OKX spot): same-name USDT spot price and basis (perp ÷ spot − 1); without spot shows "无同名 USDT 现货" (no same-name USDT spot).
+5. **Price chart** (next section).
+6. **Live order book**: OKX books-full, up to 5000 levels per side (BTC covers about ±1%, small coins up to tens of %), refreshed every second, amounts in USDT (price × contracts × contract value). The depth chart's x-axis is % from mid, y-axis cumulative resting USDT (default the smaller of ±5% and coverage); hover/drag shows how much USDT must be eaten to push price to that offset, average fill price and slippage. A "+" in the quick table means beyond the public book, actually more. Excludes hidden/iceberg orders; cancellations change it quickly.
+7. **Relative to BTC/ETH**: index of the three perps' closes from a common start = 100; 105 = +5% since start. BTC/ETH are just market proxies.
+8. **OI and funding history**: OI in oiCcy (coins); data = OKX 1H history + last 8h of 5m + local per-minute recording. Funding bars are each settled rate (single period %).
+9. **Liquidations**: OKX public liquidation orders (liquidation-orders), amount = bankruptcy price × contracts × contract value (USDT). Long = longs liquidated (red bar down), short = shorts liquidated (green bar up). OKX keeps only ~24h; contracts in active pool/watchlist/recently viewed sync every minute and are kept 30 days locally; windows starting before the recording start are marked "incomplete" (不完整). "Latest liquidations" (最新强平) lists the last 20, top 10% by amount in bold.
+10. **News / unlocks / on-chain holders**: not integrated (planned). "Not integrated" (未接入) doesn't mean there are no events or risks.
 
-## 价格图
+## Price chart
 
-工具栏：图层 `K 线` / `Delta` / `足迹`；周期 `1m` `5m` `15m`（默认）`1H` `4H`；叠加开关 `现货` `OI Δ`（默认开）`强平`（默认开）`清算图`（默认关）`OI`（默认关）；全屏。设置记在本浏览器。
+Toolbar: layers `K 线` (candles) / `Delta` / `足迹` (footprint); timeframes `1m` `5m` `15m` (default) `1H` `4H`; overlay toggles `现货` (spot) `OI Δ` (default on) `强平` (liquidations, default on) `清算图` (liquidation map, default off) `OI` (default off); fullscreen. Settings are remembered in this browser.
 
-- **数据**：永续 1m K 线本机录制；5m/15m/4H 由服务端按 UTC 对齐聚合（4H 在 UTC+8 下为 0/4/8/12/16/20 点）。图上回看深度约：1m 1 天、5m/15m 7 天、1H/4H 30 天。缺失分钟显示为空档；最后一根是未收盘 K 线。
-- **十字光标**：左上角显示开高低收、涨跌幅（对上一根收盘）、振幅、成交额；右侧价格标签显示距现价 %。手机长按后拖动。右下 ◎ 或双击回到最新。
-- **成交额柱**：底部 USDT 成交额，绿涨红跌。
-- **现货**：OKX 同名 USDT 现货收盘价（黄线），与 K 线共用价格轴，间距即基差。
-- **OI Δ**：每根 K 线相对上一根的持仓量增减（蓝增橙减）。**OI**：持仓量走势面积图。近期逐分钟采样，更早只有 1 小时采样，小周期在那段没有变化柱。
-- **强平柱**：按 K 线汇总的强平 USDT（绿上 = 空单被强平，红下 = 多单被强平）；没有记录的时段不画。
+- **Data**: perp 1m candles recorded locally; 5m/15m/4H aggregated server-side aligned to UTC (4H at 0/4/8/12/16/20 in UTC+8). Lookback on the chart roughly: 1m 1 day, 5m/15m 7 days, 1H/4H 30 days. Missing minutes show as gaps; the last candle is still open.
+- **Crosshair**: top-left shows OHLC, change (vs previous close), range, turnover; the right price label shows % from last price. On mobile, long-press then drag. Bottom-right ◎ or double-click returns to latest.
+- **Turnover bars**: USDT turnover at the bottom, green up, red down.
+- **Spot**: OKX same-name USDT spot close (yellow line) on the same price axis; the gap is the basis.
+- **OI Δ**: per-candle change in OI vs previous candle (blue up, orange down). **OI**: OI area chart. Recent data is per-minute samples, older only hourly, so small timeframes show no change bars for that period.
+- **Liquidation bars**: liquidation USDT summed per candle (green up = shorts liquidated, red down = longs liquidated); periods without records are not drawn.
 
-### 订单流（Delta 图层）
+### Order flow (Delta layer)
 
-主动买（taker buy）/ 主动卖 USDT 成交额。**Delta** = 买 − 卖（柱），**CVD** = 区间内 Delta 累计（黄线，独立缩放）。本机逐笔录制的 K 线颜色深；更早的用 OKX 统计的 5m/1H 主动买卖量补（颜色浅，1m 周期没有）。逐笔只录活跃池、自选和最近查看的合约。
+Taker buy / taker sell USDT turnover. **Delta** = buy − sell (bars), **CVD** = cumulative Delta over the range (yellow line, independent scale). Candles from local trade recording are dark; older ones are filled from OKX's 5m/1H taker buy/sell stats (light, unavailable on 1m). Trades are recorded only for active pool, watchlist and recently viewed contracts.
 
-### 足迹（足迹图层）
+### Footprint (footprint layer)
 
-每根 K 线内每个价位的主动卖（左红）/ 主动买（右绿），颜色深浅按当前可见范围内最大单价位成交额换算。价位档随纵向缩放自动合并，左上角显示每档大小；拖动右侧价格轴放大看细档，横向够宽时显示数字。只有整根 K 线每分钟都齐全才画足迹；打开详情页时自动回补保留期内缺失分钟（整天用 OKX 每日逐笔文件，按北京时间分天、次日发布；当天用历史成交接口补）。
+Per price level within each candle: taker sell (left, red) / taker buy (right, green); shade scales to the largest single-level turnover in the visible range. Levels merge automatically with vertical zoom; tick size shown top-left; drag the right price axis to zoom into finer levels; numbers appear when wide enough. Footprint is drawn only if every minute of the candle is complete; opening the page auto-backfills missing minutes within retention (whole days from OKX daily trade files, split by Beijing time and published next day; today from the historical trades endpoint).
 
-- **POC**：该 K 线成交最多的价位（黄框）。**价值区**：从 POC 向两侧扩到覆盖 70% 成交额的区间（K 线左侧细金线）。
-- **未回补 POC**：已收盘 K 线的 POC 之后没被任何 K 线高低区间穿过，用金色虚线画到最右（最多 5 条），被穿过后消失。
-- **失衡**（对角比较）：某价位主动买 ≥ 低一档主动卖的 3 倍（右侧绿竖条），或主动卖 ≥ 高一档主动买的 3 倍（左侧红竖条）；量低于该 K 线单边中位数的不算。连续 ≥3 档同向 = **堆叠失衡**（加描边）。
-- **怎么读**：收阳且 POC 在上部 = 高位有人接、偏强；收阳但 POC 在下部、上影成交稀薄 = 上涨没人跟。区间高点大量主动买却涨不动（吸收）或新高成交骤减（衰竭）是常见反转线索；堆叠失衡价位常成支撑/阻力。这些是“发生了什么”的描述，不是预测。
+- **POC**: the candle's highest-volume price level (yellow box). **Value area**: range expanded from POC both ways to cover 70% of turnover (thin gold line left of the candle).
+- **Naked POC** (未回补 POC): a closed candle's POC not crossed by any later candle's high–low range, drawn as a gold dashed line to the right edge (max 5); disappears once crossed.
+- **Imbalance** (diagonal comparison): taker buy at a level ≥ 3× taker sell one level lower (green bar on the right), or taker sell ≥ 3× taker buy one level higher (red bar on the left); levels below the candle's one-side median volume don't count. ≥ 3 consecutive same-direction levels = **stacked imbalance** (outlined).
+- **How to read**: green candle with POC near the top = buyers absorbing high, strong; green candle with POC low and thin volume in the upper wick = rally without follow-through. Heavy taker buying at the range high that fails to lift price (absorption) or volume drying up at new highs (exhaustion) are common reversal clues; stacked-imbalance levels often act as support/resistance. These describe what happened, not predictions.
 
-### 清算图（估算）
+### Liquidation map (estimated)
 
-非交易所数据，与 CoinGlass 清算地图同类模型：
-1. 用持仓量**增加**推算新开仓：近期按 5m K 线 + 逐分钟 OI（数据连续段，`fine`），更早按小时。
-2. 新仓在该段 K 线典型价开仓，按杠杆 5/10/25/50/100x 分配（假设占比 10/25/30/20/15%，超过该合约最大杠杆的档去掉），放在各自大致强平价（维持保证金率按 0.5%）。
-3. 持仓减少时按比例缩小；之后被 K 线价格穿过的价位视为已清算并移除。
+Not exchange data; same model family as CoinGlass's liquidation map:
+1. Infer new positions from OI **increases**: recent data uses 5m candles + per-minute OI (contiguous data, `fine`), older uses hourly.
+2. New positions open at the segment's typical price, split across leverage 5/10/25/50/100x (assumed shares 10/25/30/20/15%; tiers above the contract's max leverage dropped), placed at their approximate liquidation price (maintenance margin rate 0.5%).
+3. OI decreases shrink positions proportionally; levels later crossed by candle prices are treated as liquidated and removed.
 
-显示：价格区右侧横条 = 每个价位剩余估算强平金额，红 = 多单（现价下方），绿 = 空单（现价上方），颜色越亮杠杆越高；细线 = 从现价向外的累计金额。可切回看 1 / 7 天（默认 7 天）、只看部分杠杆档（CoinGlass 模型 1 只算 10/25/50/100x）。横条长度相对现价附近最大的一行。光标移到某价位显示价格走到那里预计触发的累计强平额和各杠杆金额。
+Display: horizontal bars right of the price area = remaining estimated liquidation amount per level; red = longs (below price), green = shorts (above price), brighter = higher leverage; thin line = cumulative amount outward from price. Lookback switchable 1 / 7 days (default 7), can show only some leverage tiers (CoinGlass model 1 uses only 10/25/50/100x). Bar length is relative to the largest row near the current price. Hovering a level shows the cumulative liquidations expected if price reaches it, and the amount per leverage tier.
 
-**与 CoinGlass 数值不同是正常的**：CoinGlass 默认汇总多家交易所，杠杆占比与输入（含成交量）是它自己的假设，柱高是相对强度不是 USDT；本图只用 OKX 这一个合约的持仓量，金额是 USDT 估算。应比较“扎堆的位置”，不比绝对数。只代表“仓位可能扎堆的位置”，不是真实仓位。MCP 对应 `get_liquidation_map`（days=1|7）。
+**Numbers differing from CoinGlass is normal**: CoinGlass aggregates multiple exchanges by default, its leverage shares and inputs (including volume) are its own assumptions, and bar height is relative strength, not USDT; this map uses only this one OKX contract's OI and amounts are USDT estimates. Compare where positions cluster, not absolute numbers. It shows only where positions may cluster, not real positions. MCP equivalent: `get_liquidation_map` (days=1|7).
 
-### 刷新
+### Refresh
 
-打开详情页时最新几根 K 线每秒刷新（OKX WebSocket 推送的未收盘 K 线）；整段数据、订单流、强平柱（每次向 OKX 拉新强平单）和清算图（含最新 OI 与未收盘 K 线）每 10 秒刷新；页面在后台时暂停。时间按设置里的时区显示（默认 UTC+8）。
+With the instrument page open, the latest candles refresh every second (open candle pushed via OKX WebSocket); full data, order flow, liquidation bars (fetching new liquidation orders from OKX each time) and the liquidation map (with latest OI and open candle) refresh every 10 s; paused while the page is in the background. Times use the time zone from Settings (default UTC+8).

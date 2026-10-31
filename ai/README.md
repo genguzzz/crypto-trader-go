@@ -28,11 +28,11 @@ When the worker is offline, not ready or has no credential, `Available()` is fal
 
 ## Chat agent
 
-The app's AI orb (tap: chat panel; hold: talk) drives a multi-turn agent (`agent.py`, prompt `prompts/chat_v1.md`).
+The app's AI orb (tap: chat panel; hold: talk) drives a multi-turn agent (`agent.py`, prompt `prompts/chat_v2.md`: routes by intent first, so greetings and concepts get no tool calls).
 
 - **Go side** (`internal/aigate/chat.go`): `POST /api/v1/ai/chat` stores the message and starts a run detached from the request, then streams it as SSE. Closing the page does not stop the run; `GET /api/v1/ai/chats/{id}/stream` re-attaches and replays it. Turns are stored in `ai_chats` / `ai_chat_msgs` and audited as kind `chat`. `POST /api/v1/ai/transcribe` sends a recording to Groq Whisper directly (`CTG_GROQ_KEY` in `ctg.env`; only Anthropic traffic must use the proxy). Chat, stop, delete and transcribe need the owner key.
 - **Worker**: one `query` per turn with `resume=<session id>`; transcripts live in `$HOME/.claude` (volume `data/ai-home`). Progress goes to Go as `event` messages (`text`, `text_start`, `tool`, `tool_input`, `tool_done`); the final `result` carries text, session id, cost and the ordered steps. Chat turns have their own 2 slots, so reviews never queue behind them.
-- **Tools**: the ctg MCP endpoint on loopback with an in-memory key that Go mints at start (`devapi.InternalKey`, never stored); WebSearch/WebFetch; `mcp__sandbox__shell`; skill `perp-analysis` (`agent/.claude/skills/`, analyst → bull/bear subagents → risk manager, adapted from TradingAgents, Apache-2.0); subagents `bull` and `bear`.
+- **Tools**: the ctg MCP endpoint on loopback with an in-memory key that Go mints at start (`devapi.InternalKey`, never stored); WebSearch/WebFetch; `mcp__sandbox__shell`; skills `perp-analysis` (analysts → both sides argued → a decisive call, adapted from TradingAgents, Apache-2.0; one agent, no subagents) and `ctg-platform` (how the app works), in `agent/.claude/skills/`.
 - **Sandbox** (`sandbox/`, container `ctg-sandbox`): bash + Python (numpy, pandas) + the owner's crypto-analyzer CLI as `ca`. Own bridge network (internet, not the host's loopback services), read-only root, tmpfs `/work/<chat>` per conversation, 512 MB / 1 CPU / 128 pids, uid 65532. It holds no credentials: the worker sends a rate-limited, read-only, in-memory ctg data key with each command. Protocol: one JSON line per connection on `data/sbx/sbx.sock`.
 
 ## Credentials

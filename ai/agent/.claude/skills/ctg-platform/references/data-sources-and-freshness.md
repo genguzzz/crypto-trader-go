@@ -1,69 +1,69 @@
-# 数据来源、新鲜度与保留
+# Data sources, freshness and retention
 
-只用 OKX v5 **公共**接口（无凭据、无下单），外加 CoinGecko 免费接口（市值，仅展示）。时间戳按交易所时间记录；缺失的分钟/数据 = 未知，不当 0。判断数据是否新鲜：MCP `get_system_status`，或 [系统状态](/status)。
+Only OKX v5 **public** endpoints (no credentials, no orders), plus the CoinGecko free API (market cap, display only). Timestamps follow exchange time; missing minutes/data = unknown, never 0. To check freshness: MCP `get_system_status`, or [系统状态](/status).
 
-## 本机录制 vs 临时拉取
+## Recorded locally vs fetched on demand
 
-| 数据 | 方式 | 范围 / 频率 |
+| Data | Method | Range / frequency |
 |---|---|---|
-| 1m K 线 | **录制**：WS business 频道订阅全部可入池合约，REST 补洞 | 实时；每分钟确认 |
-| 持仓量（OI，币本位） | **录制**：WS public 全池，约每分钟采样；更早用 OKX rubik 历史（1H ≈ 60 天、5m ≈ 5 天） | 细粒度 OI 历史下不回来，只能靠录制 |
-| 资金费 | **录制**：当前/预测费率 + 每次结算值；结算历史回补约 3 个月（OKX 能给的范围） | 结算间隔 4h 或 8h |
-| 盘口报价（ticker） | WS 只订阅活跃池和自选；全市场 REST 30 秒兜底 | — |
-| 逐笔成交 → 订单流/足迹 | **录制**：活跃池 ∪ 自选 ∪ 最近 30 分钟查看过的合约，按分钟聚合 | 打开详情页时回补保留期内缺失分钟（OKX 每日逐笔文件 + 历史成交接口） |
-| 主动买卖量（无足迹） | 临时拉取 OKX rubik：5m ≈ 5 天、1H ≈ 30 天 | 用于没有逐笔录制的旧 K 线 |
-| 强平单 | 订单流同一批合约每分钟同步（OKX 只保留约 24h），本机存 30 天 | 详情页打开时每 10 秒同步 |
-| 清算图 | 由 K 线 + OI **估算**，不是交易所数据；每合约缓存 5 秒 | 见 instrument-page.md |
-| 1H K 线 | 录制 + 每日回补到 400 天或上市日（含已下线合约，供回测） | — |
-| 现货价 / 现货 K 线 | 现货 ticker 每 15 秒；现货 K 线（图上“现货”叠加）向 OKX 临时拉取 | 约 88% 的活跃加密池有同名 USDT 现货 |
-| 盘口深度 | 实时快照，每秒刷新，不存历史 | 每侧最多 5000 档 |
-| 市值 / 流通量 | CoinGecko 前 1500，约每 2 小时 | 仅展示 |
-| 评分快照 | 每个整点每条规则一份，不可改写，**永不删除**（战绩用） | — |
-| 监控池快照 | 每分钟，保留 30 天 | — |
+| 1m candles | **Recorded**: WS business channel subscribed for all pool-eligible contracts, REST fills gaps | Real time; confirmed every minute |
+| Open interest (OI, coin-denominated) | **Recorded**: WS public, whole pool, sampled ~every minute; older data from OKX rubik history (1H ≈ 60 days, 5m ≈ 5 days) | Fine-grained OI history can't be downloaded, only recorded |
+| Funding | **Recorded**: current/predicted rate + every settlement; settlement history backfilled ~3 months (OKX's limit) | Settles every 4h or 8h |
+| Ticker | WS only for active pool and watchlist; whole-market REST fallback every 30 s | — |
+| Trades → order flow/footprint | **Recorded**: active pool ∪ watchlist ∪ contracts viewed in the last 30 minutes, aggregated per minute | Opening the instrument page backfills missing minutes within retention (OKX daily trade files + historical trades endpoint) |
+| Taker buy/sell volume (no footprint) | Fetched on demand from OKX rubik: 5m ≈ 5 days, 1H ≈ 30 days | For older candles without recorded trades |
+| Liquidation orders | Same contract set as order flow, synced every minute (OKX keeps only ~24h); stored locally 30 days | Synced every 10 s while the instrument page is open |
+| Liquidation map | **Estimated** from candles + OI, not exchange data; cached 5 s per contract | See instrument-page.md |
+| 1H candles | Recorded + daily backfill to 400 days or listing date (including delisted contracts, for backtests) | — |
+| Spot price / spot candles | Spot ticker every 15 s; spot candles (the chart's "Spot" (现货) overlay) fetched from OKX on demand | ~88% of the active crypto pool has a same-name USDT spot pair |
+| Order book depth | Live snapshot, refreshed every second, no history kept | Up to 5000 levels per side |
+| Market cap / circulating supply | CoinGecko top 1500, ~every 2 hours | Display only |
+| Score snapshots | One per rule every hour on the hour, immutable, **never deleted** (for track record) | — |
+| Pool snapshots | Every minute, kept 30 days | — |
 
-**列表外的合约**：全部 OKX USDT 永续（含股票、商品、盘前）只在内存里有目录和 30 秒行情。点开后按需下载（近 24h 与近 7 天 1m、30 天 1H、OI、资金费），查看后实时录制 30 分钟；加自选后长期订阅。详情页此时显示“同步中”。
+**Contracts outside the list**: all OKX USDT perpetuals (including stocks, commodities, pre-market) have only a catalog and 30 s quotes in memory. Opening one downloads on demand (last 24h and last 7 days of 1m, 30 days of 1H, OI, funding), then records live for 30 minutes after viewing; adding to the watchlist subscribes long-term. Meanwhile the instrument page shows "Syncing" (同步中).
 
-## 保留期与分层
+## Retention and tiers
 
-每个合约取最高一层：**自选** > **活跃池**（在池内或离池不满 7 天）> **最近查看**（3 天内打开过详情）> **全池录制**（类别内、未进池）> **未跟踪**（已下线/类别外且未查看）。
+Each contract gets its highest tier: **Watchlist** (自选) > **Active pool** (活跃池: in the pool or left less than 7 days ago) > **Recently viewed** (最近查看: instrument page opened within 3 days) > **Pool-wide recording** (全池录制: in a selected category, not in the pool) > **Untracked** (未跟踪: delisted/outside categories and not viewed).
 
-| 数据 | 自选 | 活跃池 | 最近查看 | 全池录制 | 未跟踪 |
+| Data | Watchlist | Active pool | Recently viewed | Pool-wide | Untracked |
 |---|---|---|---|---|---|
-| 1m K 线 / OI 采样 | 30 天 | 7 天 | 7 天 | 2 天 | 删除 |
-| 1H K 线 | 400 天 | 400 天 | 400 天 | 400 天 | 400 天 |
-| 资金费结算 / 盘中观测 | 400 / 7 天 | 400 / 3 天 | 400 / 3 天 | 400 / 3 天 | 400 / 1 天 |
-| 订单流（逐笔 + 足迹） | 14 天 | 3 天 | 3 天 | 不录 | 不录 |
-| 主动买卖量（rubik） | 90 天 | 30 天 | 30 天 | 7 天 | 3 天 |
+| 1m candles / OI samples | 30 days | 7 days | 7 days | 2 days | deleted |
+| 1H candles | 400 days | 400 days | 400 days | 400 days | 400 days |
+| Funding settlements / intraday observations | 400 / 7 days | 400 / 3 days | 400 / 3 days | 400 / 3 days | 400 / 1 day |
+| Order flow (trades + footprint) | 14 days | 3 days | 3 days | not recorded | not recorded |
+| Taker buy/sell volume (rubik) | 90 days | 30 days | 30 days | 7 days | 3 days |
 
-- 存储上限默认 2 GB（[设置](/settings) → 数据存储），各类数据有各自配额。每 30 分钟按上表删除；某类超配额时从最低层开始把保留期 ×2/3，直到回到配额 90%，但不低于保底（如 1m/OI 26 小时、自选 3 天）。被收紧的格子在系统状态页标出，以页面上的“实际保留期”为准。
-- 删除后的空间在库内复用，文件不缩小。全池 1m 约 60 MB/天。
-- 评分快照、规则、设置永不删除。
+- Storage cap defaults to 2 GB ([设置](/settings) → Data storage (数据存储)), with per-type quotas. Every 30 minutes data is deleted per the table above; if a type exceeds its quota, retention is cut ×2/3 starting from the lowest tier until back at 90% of quota, but never below a floor (e.g. 1m/OI 26 hours, watchlist 3 days). Tightened cells are flagged on the System status page; its "actual retention" (实际保留期) is authoritative.
+- Freed space is reused inside the database; files don't shrink. Pool-wide 1m is ~60 MB/day.
+- Score snapshots, rules and settings are never deleted.
 
-## 启动阶段（顶栏标签）
+## Startup phases (top-bar label)
 
-`启动中` → `快速建池`（5m 近似，“临时名单”，约 30 秒）→ `回填中`（补齐全部合约最近 12h 的 1m，约 4 分钟）→ `实时`。之后后台跑：14 天规则历史回放、活跃池与自选 7 天 1m 回补、1H 历史回补（进度在系统状态页）。重启后约 1 分钟追平。
+`启动中` (starting) → `快速建池` (quick pool build: 5m approximation, "provisional list" 临时名单, ~30 s) → `回填中` (backfilling the last 12h of 1m for all contracts, ~4 minutes) → `实时` (live). Then in the background: 14-day rule history replay, 7-day 1m backfill for active pool and watchlist, 1H history backfill (progress on System status). After a restart it catches up in ~1 minute.
 
-## 时钟
+## Clocks
 
-| 频率 | 内容 |
+| Frequency | What |
 |---|---|
-| WS 推送（约 0.1–7 秒） | 未收盘 K 线、最新价、OI、资金费 |
-| 每 2 秒 | 页面最新价推送 |
-| 每 10 秒 | 盘中预览：用未收盘分钟重算事实面板与分数（会变，不进战绩） |
-| 每个已收盘分钟 | 12h 窗口 → 池增删 → 事实面板 → 规则分 → 监控规则检查 |
-| 每小时 | 保存不可改写的评分快照 |
+| WS push (~0.1–7 s) | Open candle, last price, OI, funding |
+| Every 2 s | Last-price push to pages |
+| Every 10 s | Intraday preview: facts panel and scores recomputed with the open minute (changes, not in track record) |
+| Every closed minute | 12h window → pool add/remove → facts panel → rule scores → alert checks |
+| Hourly | Save immutable score snapshots |
 
-## 时区
+## Time zones
 
-- 界面时间默认 **UTC+8**；[设置](/settings) → 显示可改为 UTC 或本机时区（仅本浏览器，数据不变）。
-- K 线按 UTC 对齐（4H 在 UTC+8 下为 0/4/8/12/16/20 点，1D = UTC 00:00）。
-- 日亏损熔断、报告的每日收益、OKX 每日逐笔文件都按 UTC+8 分天。
-- API / MCP 时间是毫秒时间戳。
+- UI times default to **UTC+8**; [设置](/settings) → Display (显示) can switch to UTC or local time (this browser only; data unchanged).
+- Candles align to UTC (4H at 0/4/8/12/16/20 in UTC+8; 1D = UTC 00:00).
+- Daily-loss circuit breaker, daily returns in reports and OKX daily trade files all split days in UTC+8.
+- API / MCP times are millisecond timestamps.
 
-## 系统状态页 [系统状态](/status)
+## System status page [系统状态](/status)
 
-- **健康检查**（每 3 秒刷新）：阶段不是“实时”或最新确认分钟超过 3 分钟没更新 → 需关注/异常；WS 断开 → 异常，已连但 30 秒无消息 → 需关注；有合约数据缺口 → 需关注，超过 5% → 异常；REST 错误率 > 1%、存储 ≥ 90% 或保留期被收紧 → 需关注。点问题标签跳到对应分区。
-- **数据新鲜度**：运行时长、最新确认分钟、后台任务（1m 回填、历史回放、1m 历史回补、1H 历史回补）进度。
-- **活跃池覆盖**：12h 窗口完整 / 预热中 / 数据缺口 / 上市不足 12h 的合约数。
-- **OKX 连接**：business / public WS 的订阅、消息、重连；REST 请求、错误、限频。
-- **数据存储**：分层保留表（含当前实际保留期）、各类占用。**进程**：内存、协程等排障信息。
+- **Health checks** (refresh every 3 s): phase not live, or latest confirmed minute stale > 3 minutes → warning/error; WS disconnected → error, connected but no message for 30 s → warning; any contract data gap → warning, > 5% → error; REST error rate > 1%, storage ≥ 90% or retention tightened → warning. Clicking an issue tag jumps to its section.
+- **Data freshness**: uptime, latest confirmed minute, background job progress (1m backfill, history replay, 1m history backfill, 1H history backfill).
+- **Active pool coverage**: count of contracts with complete 12h window / warming up / data gap / listed < 12h.
+- **OKX connection**: business / public WS subscriptions, messages, reconnects; REST requests, errors, rate limits.
+- **Data storage**: tiered retention table (with current actual retention), usage per type. **Process**: memory, goroutines and other debugging info.

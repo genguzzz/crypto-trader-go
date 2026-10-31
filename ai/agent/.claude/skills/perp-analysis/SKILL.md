@@ -1,43 +1,44 @@
 ---
 name: perp-analysis
-description: Full analysis of one OKX USDT perpetual for the owner — market structure, derivatives positioning (funding, OI, long/short, liquidations), order flow, news and catalysts, then a bull vs bear debate and a risk-managed plan. Use for 一键分析, 分析一下 X, 能不能多/空, 给个交易计划, 逼空/插针风险, 庄/控盘 questions about one instrument. Not for quick single-number questions.
+description: Full analysis of one OKX USDT perpetual and a trade plan — market context, structure, derivatives positioning (funding, OI, long/short ratio, liquidation clusters), order flow, news, both sides argued, then a decisive call with entry, stop, two take-profits and leverage. Use for 一键分析, 分析一下 X, X 能不能多/空, 给个计划, 逼空/插针风险, 庄/控盘 about one coin. Not for a single number (just fetch it), not for how the app works (ctg-platform), not for greetings or concepts.
 ---
 
-# Perpetual analysis workflow
+# Perpetual analysis
 
-Adapted from TradingAgents (TauricResearch, Apache-2.0): analyst team → bull/bear debate → a decisive research/risk manager. No order step: ctg places no orders, the owner executes.
+The research flow follows TradingAgents (TauricResearch, Apache-2.0) — analysts → bull/bear debate → a decisive manager — done by you in one pass: you argue both sides yourself, then decide. ctg places no orders; the owner executes.
 
-## 0. Market first
+## 1. Collect (one round of parallel calls; summaries, not raw data)
 
-Run `ca market -f json` (reuse it if this chat already has one from the last hour): BTC/ETH trend and funding, breadth, fear & greed, market-wide news. Note the regime in one line; it frames every later judgement.
-
-## 1. Collect (in parallel where possible; summaries first, raw data only inside Python)
-
-| Analyst | Sources |
+| What | Call |
 |---|---|
-| Risk scores & structure | `ca analyze <SYM>` (text): long/short danger, control, max leverage, supports/resistances, events — this covers most of the picture in one call |
-| Derivatives | `ca funding <SYM>`, `ca oi <SYM>`, `ca liq <SYM>` (estimated liquidation clusters), data tool `get_orderbook` (depth ≤ 50) |
-| Flow & trend | `ca flow <SYM> -b 1H`, `ca indicators <SYM> -b 4H`; relative strength vs BTC only through Python on `ca ctg /compare … -f json > f.json` |
-| News & catalysts | `ca events <SYM>`; WebSearch / WebFetch to verify or read the source (unlocks, hacks, listings). Judge each item: direction, size, already priced in? |
+| Market context | `ca market` (skip if this conversation already has it from the last hour) |
+| The coin, overall | `ca analyze <SYM>` — long/short danger, control score, max leverage, supports/resistances, events. Covers most of the picture. |
+| Positioning | `ca funding <SYM>`, `ca oi <SYM>`, `ca liq <SYM>` (estimated liquidation clusters) |
+| Flow and trend | `ca flow <SYM> -b 1H`, `ca indicators <SYM> -b 4H` |
+| News | `ca events <SYM>`; WebSearch only to verify something material (hack, unlock, listing, ETF flows) |
 
-Need something more specific (ATR, swing levels, realized vol, funding percentile)? Fetch the raw series to a file and print only the computed numbers. Interpret risk scores with [references/risk-scores.md](references/risk-scores.md).
+Add a computation only when a level or ratio the plan needs is missing (ATR, swing high/low, relative strength vs BTC): fetch the raw series to a file and print just the result. Typical total: 6–10 calls. Interpret danger/control scores with [references/risk-scores.md](references/risk-scores.md).
 
-## 2. Debate
+## 2. Argue both sides
 
-For a full (一键) analysis, launch the `bull` and `bear` subagents in parallel with the same evidence summary (key numbers with time windows). Each argues its side as hard as the data allows and names what would prove it wrong. For a quick follow-up question, argue both sides yourself in two lines each.
+Write the strongest bull case and the strongest bear case, 2–4 points each. Every point carries a number and a time window and says what it usually means on perps. Score each side 0–10 for how well the evidence supports it.
 
-## 3. Decision (you: head of research and risk)
+## 3. Decide
 
-Critically weigh the debate against the data and make a definitive call: long, short or stand aside. Do not default to 观望 just because both sides have valid points — commit to the side with the stronger, better-evidenced arguments. 观望 needs a concrete reason (event within 24 h, no structural edge, reward/risk < 1.5) plus the trigger that would turn it into a trade. Sizing rules:
-- Stop beyond the nearest swing point or liquidation cluster, ~1.5 × 4H ATR; take-profits at the next resistance/support or liquidation band, reward/risk ≥ 1.5 for TP1. The plan always uses the owner's preferred leverage from the notes. If liquidation would sit closer than 2 × the stop distance, or danger ≥ 50 / control ≥ 60, add one line after the plan saying so (smaller size, or ≤ 3x, wick risk) — the plan itself stays at the preference.
+Take the side with the stronger evidence. Do not stand aside just because both sides have points; stand aside only for a concrete reason (event within 24 h, no structural edge, reward/risk < 1.5), and give the plan that applies once the trigger hits.
+
+Plan rules:
+- Stop beyond the nearest swing point or liquidation cluster, roughly 1.5 × 4H ATR; state its distance.
+- TP1 at the next support/resistance or liquidation band with reward/risk ≥ 1.5; TP2 at the next one.
+- Leverage = the owner's preference from his notes. If liquidation would sit closer than 2 × the stop distance, or danger ≥ 50 / control ≥ 60, add one sentence after the plan (smaller size, wick risk); the plan itself keeps his leverage.
 - Risk per trade ≤ 1% of equity. A red event (hack, delisting, large unlock, FOMC/CPI within 24 h) goes first and usually means stand aside.
-- Danger scores are heuristics, not validated; rule scores count only with a significant out-of-sample Rank IC.
+- Danger scores are heuristics; rule scores count only with a significant out-of-sample Rank IC.
 
-## 4. Answer (components, see the chat prompt for their JSON)
+## 4. Answer (components defined in the system prompt)
 
-1. `verdict` — direction, confidence, instId, one-line title, the reason in one sentence. If the market regime matters, say it in `reason`.
-2. `kpi` — 4–6 numbers that carry the call: price/24h, funding (with pool percentile), OI change, long/short ratio, danger score, nearest estimated liquidation cluster.
-3. 2–4 short bullets: why — market context, structure, positioning, news (direction, size, priced in?).
-4. `bullbear` — the debate's strongest points with scores.
-5. `plan` — entry, stop (beyond the swing point / cluster), TP1 and TP2, the owner's leverage, risk %, hold, invalidation. Standing aside: the plan that applies once the trigger hits.
-6. One line on the main risk as a price or event. No disclaimers ("仅供参考", "不构成投资建议" and the like).
+1. `verdict` — direction, confidence, instId, one-line title, the reason in one sentence (include the market context if it matters).
+2. `kpi` — 4–6 numbers that carry the call: price and 24h, funding with pool percentile, OI change, long/short ratio, danger score, nearest estimated liquidation cluster.
+3. 2–4 short bullets on why: market, structure, positioning, news (direction, size, already priced in?).
+4. `bullbear` — section 2.
+5. `plan` — entry, stop, TP1/TP2, his leverage, risk %, hold, invalidation.
+6. One line on the main risk as a price or an event.

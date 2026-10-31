@@ -1,52 +1,52 @@
 ---
 name: ctg-platform
-description: How the OKX Helper (ctg) app itself works — pages, features, fields, units, scores, charts, data freshness — and how to link the owner to the right page. Use when the owner asks how to use the app or what something on screen means, where to find something, or how a number is computed, e.g. "怎么用", "这个页面", "这个数是什么意思", "在哪看", "规则分", "多头分/空头分", "战绩/IC", "因子", "事实面板", "监控池", "扫描", "清算图怎么算", "足迹/POC", "告警", "监控", "模拟交易", "回测", "策略", "AI 审核", "数据多久更新". Also read it before recommending coins, rules or pages, for the in-app link format. Not for market analysis of a coin (use perp-analysis).
+description: How the OKX Helper (ctg) app itself works — pages, features, fields, units, scores, charts, data freshness — and how to link the owner to the right in-app page. Use when the owner asks how to use the app, what a page, number, score or chart means, where to find something, or how a value is computed, e.g. "怎么用", "这个页面", "这个数是什么意思", "在哪看", "规则分", "多头分/空头分", "战绩/IC", "因子", "事实面板", "监控池", "扫描", "清算图怎么算", "足迹/POC", "告警", "监控", "模拟交易", "回测", "策略", "AI 审核", "数据多久更新". Not for market analysis or trading calls (use perp-analysis).
 ---
 
-# OKX Helper（ctg）平台说明
+# OKX Helper (ctg) platform guide
 
-OKX Helper 是主人自用的 **OKX USDT 本位永续合约研究台**：实时找出流动性够的合约（监控池），客观展示每个币的状态（事实面板），用主人自定义的规则打分，并自动用之后的真实行情检验每条规则（战绩）。只用 OKX **公共**行情：不读账户、不下真实订单；交易页全部是模拟盘。分数是规则排序，不是胜率。界面时间默认 UTC+8。
+OKX Helper is the owner's personal **OKX USDT-margined perpetual research desk**: it finds liquid contracts in real time (the monitored pool), shows each coin's state objectively (the facts panel), scores them with the owner's own rules, and automatically tests each rule against subsequent real prices (track record). It uses only OKX **public** market data: it never reads the account or places real orders; everything on the trading pages is paper trading. A score is a rule's ranking, not a win rate. UI times default to UTC+8.
 
-## 页面
+## Pages
 
-| 页面 | 应用内路径 | 一句话 |
+| Page | In-app path | Summary |
 |---|---|---|
-| 扫描 | `/` | 监控池列表：多/空分、资金费、涨跌、OI 变化、放量、市值、12h 成交额；搜索、筛选、自选；PC 上右侧是合约工作台 |
-| 合约详情 | `/instrument/<instId>` | 价格与关键数、评分卡、K 线图（Delta/足迹/现货/OI/强平/清算图）、盘口、相对 BTC/ETH、OI 与资金费历史、强平 |
-| 规则与战绩 | `/rules`、`/rules/<ruleId>` | 编辑多空权重与点差门槛（每次保存 = 新版本）；Rank IC、t 值、前 20% 超额/净收益 |
-| 监控告警 | `/alerts` | 价格异动 / 规则分数 / 资金费 三类监控规则，Telegram / Webhook 推送，最近触发 |
-| 模拟交易 | `/trading` | 模拟账户（实时模拟、历史回测）、风控、策略实例、成交与报告 |
-| 策略库 | `/trading/strategies` | 内置与自建 Python 策略，编辑、发布、回测 |
-| 待确认 / AI 决策 | `/trading/prompts`、`/trading/ai` | 人工确认的信号；AI 审核的每次决策、参数建议、经验文档 |
-| 系统状态 | `/status` | 阶段、数据新鲜度、覆盖与缺口、OKX 连接、存储与保留期、后台任务进度 |
-| 设置 | `/settings` | 监控池阈值/上限/类别、默认规则、存储上限、时区、持仓量条、开发者、交互通道、AI 授权 |
-| 帮助 | `/help/strategy/<slug>` | 策略编写帮助文章（见 paper-trading-and-strategies.md） |
+| Scanner (扫描) | `/` | Pool list: long/short scores, funding, price change, OI change, volume surprise, market cap, 12h turnover; search, filters, watchlist; on PC the contract workspace is on the right |
+| Instrument (合约详情) | `/instrument/<instId>` | Price and key numbers, score card, candle chart (Delta/footprint/spot/OI/liquidations/liquidation map), order book, relative to BTC/ETH, OI and funding history, liquidations |
+| Rules & track record (规则与战绩) | `/rules`, `/rules/<ruleId>` | Edit long/short weights and spread gate (each save = new version); Rank IC, t-stat, top-20% excess/net return |
+| Alerts (监控告警) | `/alerts` | Three alert rule types — price move / rule score / funding — pushed via Telegram / Webhook; recent triggers |
+| Paper trading (模拟交易) | `/trading` | Paper accounts (live paper, historical backtest), risk controls, strategy instances, fills and reports |
+| Strategy library (策略库) | `/trading/strategies` | Built-in and custom Python strategies; edit, publish, backtest |
+| Pending / AI decisions (待确认 / AI 决策) | `/trading/prompts`, `/trading/ai` | Signals awaiting manual confirmation; every AI-review decision, parameter suggestions, lessons documents |
+| System status (系统状态) | `/status` | Phase, data freshness, coverage and gaps, OKX connection, storage and retention, background job progress |
+| Settings (设置) | `/settings` | Pool threshold/cap/categories, default rule, storage cap, time zone, open-interest bar, developer, interaction channel, AI authorization |
+| Help (帮助) | `/help/strategy/<slug>` | Strategy-writing help articles (see paper-trading-and-strategies.md) |
 
-手机底栏：扫描、规则、交易、设置 + “更多”（监控、帮助、系统等）。PC 上打开 `/instrument/<instId>` 会转到扫描页的分栏工作台（`/?sel=<instId>`），链接照样可用。
+Mobile bottom bar: Scanner (扫描), Rules (规则), Trading (交易), Settings (设置) + "More" (更多: alerts, help, system, etc.). On PC, opening `/instrument/<instId>` redirects to the Scanner split workspace (`/?sel=<instId>`); the link still works.
 
-## 应用内链接（必须遵守）
+## In-app links (mandatory)
 
-聊天会把**目标是应用内路径**的 Markdown 链接渲染成可点按钮，点一下就在应用里跳转。提到主人能打开的东西时一律写成这种链接：
+The chat renders Markdown links **whose target is an in-app path** as tappable buttons that navigate inside the app. Whenever you mention something the owner can open, write it as such a link:
 
-- 合约（一定用完整 instId）：`[SOL](/instrument/SOL-USDT-SWAP)`
-- 规则及其战绩：`[残差反转](/rules/resid-reversal)`，即 `[规则名](/rules/<ruleId>)`（ruleId 用 MCP `list_rules` 查）
-- 页面：`[扫描](/)`、`[规则与战绩](/rules)`、`[监控告警](/alerts)`、`[模拟交易](/trading)`、`[策略](/trading/strategies)`、`[系统状态](/status)`、`[设置](/settings)`、`[帮助](/help/strategy/<slug>)`
+- Contract (always the full instId): `[SOL](/instrument/SOL-USDT-SWAP)`
+- Rule and its track record: `[残差反转](/rules/resid-reversal)`, i.e. `[规则名](/rules/<ruleId>)` (look up ruleId with MCP `list_rules`)
+- Pages: `[扫描](/)`, `[规则与战绩](/rules)`, `[监控告警](/alerts)`, `[模拟交易](/trading)`, `[策略](/trading/strategies)`, `[系统状态](/status)`, `[设置](/settings)`, `[帮助](/help/strategy/<slug>)`
 
-只用上面这些应用路径；外部来源仍写普通 https 链接。例：推荐 3 个币时，每个币名都写成 `/instrument/...` 链接；说“去看战绩”时直接给规则链接。
+Use only these app paths; external sources stay plain https links. Example: when recommending 3 coins, write each coin name as an `/instrument/...` link; when saying "check the track record", give the rule link directly.
 
-## 回答原则
+## Answering rules
 
-- 先查实时定义再下结论：字段用 MCP `list_fields`，规则用 `list_rules`，战绩用 `get_rule_track_record`，数据是否新鲜用 `get_system_status`。下面的参考文件讲“怎么算、怎么读”，具体数值以工具返回为准。
-- 缺失 = 未知（显示“—”/未评分），不要当 0 解读。引用规则分时说明它有没有显著的样本外战绩（Rank IC、t 值）支撑，不要写免责套话。
-- 不确定的功能不要编；说明“应用里没有这个功能”比猜测好。
+- Check live definitions before concluding: fields via MCP `list_fields`, rules via `list_rules`, track record via `get_rule_track_record`, data freshness via `get_system_status`. The reference files explain how things are computed and read; actual values come from the tools.
+- Missing = unknown (shown as "—" / unscored); never read it as 0. When citing a rule score, state whether it is backed by a significant out-of-sample track record (Rank IC, t-stat).
+- Don't invent features you're unsure of; saying "the app doesn't have that" beats guessing.
 
-## 参考文件（按需读）
+## Reference files (read as needed)
 
-| 文件 | 什么时候读 |
+| File | When to read |
 |---|---|
-| [references/pool-and-scanner.md](references/pool-and-scanner.md) | 监控池怎么定义、为什么某币不在池里/被移出、扫描页各列/筛选/排序、自选、顶栏状态 |
-| [references/facts-and-scores.md](references/facts-and-scores.md) | 事实面板字段与单位（对数收益、资金费/小时等）、分位、规则分公式、门槛、未评分、战绩（Rank IC、t 值、净收益）怎么读、内置对照规则 |
-| [references/instrument-page.md](references/instrument-page.md) | 详情页各区块；K 线图图层、周期、现货/OI Δ/OI/强平、足迹、POC/价值区/失衡、清算图模型及与 CoinGlass 的差别、刷新频率；盘口与深度图 |
-| [references/alerts.md](references/alerts.md) | 监控规则类型与参数、触发与冷却、推送渠道、触发历史 |
-| [references/paper-trading-and-strategies.md](references/paper-trading-and-strategies.md) | 模拟账户、风控与仓位公式、策略实例与执行方式（自动/AI 审核/只记录）、人工确认、回测报告指标、策略库、帮助文章 slug |
-| [references/data-sources-and-freshness.md](references/data-sources-and-freshness.md) | 哪些数据本机录制、哪些临时拉取、保留期与分层、启动阶段、时区、系统状态页健康检查 |
+| [references/pool-and-scanner.md](references/pool-and-scanner.md) | How the pool is defined, why a coin isn't in / was removed from the pool, Scanner columns/filters/sorting, watchlist, top-bar status |
+| [references/facts-and-scores.md](references/facts-and-scores.md) | Facts-panel fields and units (log returns, funding per hour, etc.), percentiles, rule-score formula, gate, unscored, how to read the track record (Rank IC, t-stat, net return), built-in baseline rules |
+| [references/instrument-page.md](references/instrument-page.md) | Instrument page sections; chart layers, timeframes, spot/OI Δ/OI/liquidations, footprint, POC/value area/imbalance, liquidation-map model and how it differs from CoinGlass, refresh rates; order book and depth chart |
+| [references/alerts.md](references/alerts.md) | Alert rule types and parameters, triggering and cooldown, push channels, trigger history |
+| [references/paper-trading-and-strategies.md](references/paper-trading-and-strategies.md) | Paper accounts, risk controls and sizing formula, strategy instances and execution modes (auto / AI review / log only), manual confirmation, backtest report metrics, strategy library, help-article slugs |
+| [references/data-sources-and-freshness.md](references/data-sources-and-freshness.md) | What is recorded locally vs fetched on demand, retention and tiers, startup phases, time zones, System status health checks |
