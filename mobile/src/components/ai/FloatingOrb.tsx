@@ -12,7 +12,7 @@ import { send, setContext, useAiSelect } from "@/lib/ai";
 import { colors, fs } from "@/lib/theme";
 import { useHoldToTalk } from "@/lib/voice";
 
-const SIZE = 56;
+const SIZE = 54; // web .orb
 const TAB_ROUTES = new Set(["/", "/trade"]);
 const HIDDEN = [/^\/ai/, /^\/chart\//, /^\/settings/, /^\/diagnostics/];
 
@@ -37,38 +37,46 @@ export function FloatingOrb() {
   });
   const rec = talk.phase === "rec";
   const busy = talk.phase === "busy";
+  const hidden = HIDDEN.some((r) => r.test(pathname));
 
-  // breathing glow (idle) and expanding ripples (recording)
-  const [breath] = useState(() => new Animated.Value(0));
-  const [ripple] = useState(() => new Animated.Value(0));
+  // The orb keeps one absolute anchor and moves by translateY, springing between "above the tab bar"
+  // and "near the bottom" as the bar comes and goes (web: transition on the wrapper).
+  const base = insets.bottom + 18;
+  const lift = TAB_ROUTES.has(pathname) ? 49 - 4 : 0; // tab bar ≈ 49 pt
+  const [y] = useState(() => new Animated.Value(-lift));
+  const [show] = useState(() => new Animated.Value(hidden ? 0 : 1));
   useEffect(() => {
-    const l = Animated.loop(Animated.sequence([
-      Animated.timing(breath, { toValue: 1, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      Animated.timing(breath, { toValue: 0, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-    ]));
-    l.start();
-    return () => l.stop();
-  }, [breath]);
+    Animated.spring(y, { toValue: -lift, useNativeDriver: true, damping: 18, stiffness: 180, mass: 0.9 }).start();
+  }, [lift, y]);
+  useEffect(() => {
+    Animated.timing(show, { toValue: hidden ? 0 : 1, duration: hidden ? 160 : 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, [hidden, show]);
+
+  // press feedback (web: transform .28s cubic-bezier(.3,1.6,.5,1)); follows the voice level while recording
+  const target = rec ? 1.22 + talk.level * 0.18 : talk.phase === "arming" ? 0.92 : 1;
+  const [scale] = useState(() => new Animated.Value(1));
+  useEffect(() => {
+    if (rec) Animated.timing(scale, { toValue: target, duration: 80, useNativeDriver: true }).start();
+    else Animated.spring(scale, { toValue: target, useNativeDriver: true, damping: 9, stiffness: 260 }).start();
+  }, [rec, target, scale]);
+
+  const [ripple] = useState(() => new Animated.Value(0));
   useEffect(() => {
     if (!rec) return;
     ripple.setValue(0);
-    const l = Animated.loop(Animated.timing(ripple, { toValue: 1, duration: 1400, easing: Easing.out(Easing.quad), useNativeDriver: true }));
+    const l = Animated.loop(Animated.timing(ripple, { toValue: 1, duration: 1600, easing: Easing.out(Easing.quad), useNativeDriver: true }));
     l.start();
     return () => l.stop();
   }, [rec, ripple]);
 
-  if (HIDDEN.some((r) => r.test(pathname))) return null;
-  // above the tab bar on tab screens (bar ≈ 49 pt + home indicator), near the bottom elsewhere
-  const bottom = TAB_ROUTES.has(pathname) ? insets.bottom + 49 + 14 : insets.bottom + 18;
-  const scale = rec ? 1.2 + talk.level * 0.25 : talk.phase === "arming" ? 0.92 : 1;
-  const glowScale = breath.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.12] });
-  const glowOpacity = breath.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.55] });
+  const capsuleBottom = base + lift + SIZE + 40;
+  const showScale = show.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] });
 
   return (
     <>
       {rec || busy ? (
-        <View pointerEvents="none" style={{ position: "absolute", left: 0, right: 0, bottom: bottom + SIZE + 46, alignItems: "center", zIndex: 40 }}>
-          <View style={{ minWidth: 210, paddingHorizontal: 20, paddingTop: 14, paddingBottom: 12, borderRadius: 22, alignItems: "center", gap: 8, backgroundColor: "rgba(16,18,14,0.94)", borderWidth: 1, borderColor: talk.cancelZone ? "rgba(202,63,100,0.6)" : "rgba(188,255,47,0.28)" }}>
+        <View pointerEvents="none" style={{ position: "absolute", left: 0, right: 0, bottom: capsuleBottom, alignItems: "center", zIndex: 40 }}>
+          <View style={{ minWidth: 210, paddingHorizontal: 20, paddingTop: 14, paddingBottom: 12, borderRadius: 22, alignItems: "center", gap: 8, backgroundColor: "rgba(16,18,14,0.94)", borderWidth: 1, borderColor: talk.cancelZone ? "rgba(202,63,100,0.55)" : "rgba(188,255,47,0.25)", shadowColor: talk.cancelZone ? "#ca3f64" : "#bcff2f", shadowOpacity: 0.18, shadowRadius: 24, shadowOffset: { width: 0, height: 6 } }}>
             {rec ? (
               <>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 3, height: 36 }}>
@@ -85,24 +93,25 @@ export function FloatingOrb() {
         </View>
       ) : null}
 
-      <View style={{ position: "absolute", left: 0, right: 0, bottom, alignItems: "center", zIndex: 41 }} pointerEvents="box-none">
+      <Animated.View pointerEvents={hidden ? "none" : "box-none"} style={{ position: "absolute", left: 0, right: 0, bottom: base, alignItems: "center", zIndex: 41, opacity: show, transform: [{ translateY: y }, { scale: showScale }] }}>
         <View {...talk.handlers} accessibilityRole="button" accessibilityLabel="AI 助手：点按打开，长按说话" style={{ width: SIZE, height: SIZE, alignItems: "center", justifyContent: "center" }}>
-          {!rec ? (
-            <Animated.View pointerEvents="none" style={{ position: "absolute", width: SIZE + 14, height: SIZE + 14, borderRadius: SIZE, backgroundColor: "rgba(188,255,47,0.22)", opacity: glowOpacity, transform: [{ scale: glowScale }] }} />
-          ) : (
-            [0, 0.5].map((d) => (
-              <Animated.View key={d} pointerEvents="none" style={{ position: "absolute", width: SIZE, height: SIZE, borderRadius: SIZE, borderWidth: 2, borderColor: talk.cancelZone ? "rgba(202,63,100,0.6)" : "rgba(188,255,47,0.55)",
-                opacity: ripple.interpolate({ inputRange: [0, 1], outputRange: [d ? 0.5 : 0.9, 0] }),
-                transform: [{ scale: ripple.interpolate({ inputRange: [0, 1], outputRange: [1 + d * 0.5, 2.1 + d * 0.3] }) }] }} />
-            ))
-          )}
-          <Orb size={SIZE} ring={3} period={rec ? 1400 : running || busy ? 1800 : 6000} scale={scale} glow={rec ? 0.7 : 0.4} danger={talk.cancelZone}>
-            <Ionicons name={rec ? "mic" : "sparkles"} size={23} color="#f4ffe0" />
-          </Orb>
+          {rec
+            ? [Animated.modulo(ripple, 1), Animated.modulo(Animated.add(ripple, 0.5), 1)].map((p, i) => (
+                // web .ripple r1/r2: scale 1→2.1, fade .9→0, the second half a cycle behind
+                <Animated.View key={i} pointerEvents="none" style={{ position: "absolute", width: SIZE, height: SIZE, borderRadius: SIZE, borderWidth: 2, borderColor: talk.cancelZone ? "rgba(202,63,100,0.6)" : "rgba(188,255,47,0.55)",
+                  opacity: p.interpolate({ inputRange: [0, 1], outputRange: [0.9, 0] }),
+                  transform: [{ scale: p.interpolate({ inputRange: [0, 1], outputRange: [1, 2.1] }) }] }} />
+              ))
+            : null}
+          <Animated.View style={{ transform: [{ scale }] }}>
+            <Orb size={SIZE} ring={3} aura period={rec ? 1400 : running || busy ? 1800 : 6000} glow={rec ? 0.55 + talk.level * 0.45 : 0.4} danger={talk.cancelZone}>
+              <Ionicons name={rec ? "mic" : "sparkles"} size={22} color="#f4ffe0" style={{ textShadowColor: "rgba(188,255,47,0.55)", textShadowRadius: 6, textShadowOffset: { width: 0, height: 0 } }} />
+            </Orb>
+          </Animated.View>
           {running ? <Satellite /> : null}
-          {unread && !running ? <View pointerEvents="none" style={{ position: "absolute", top: 2, right: 2, width: 12, height: 12, borderRadius: 6, backgroundColor: colors.warn, borderWidth: 2, borderColor: "#000" }} /> : null}
+          {unread && !running ? <View pointerEvents="none" style={{ position: "absolute", top: 2, right: 2, width: 11, height: 11, borderRadius: 6, backgroundColor: colors.warn, borderWidth: 2, borderColor: "#000" }} /> : null}
         </View>
-      </View>
+      </Animated.View>
     </>
   );
 }
