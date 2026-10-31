@@ -210,6 +210,9 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
         env=env,
         cwd=str(AGENT_DIR),
         include_partial_messages=True,
+        # newer models omit thinking text by default (signature only): ask for the summary so the owner
+        # sees the reasoning stream instead of a long silent wait before the first tool call or answer
+        thinking={"type": "adaptive", "display": "summarized"},
     )
     if session:
         kw["resume"] = session
@@ -231,8 +234,10 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
         config = {**config, "model": msg["model"]}
     options = build_chat_options(config, proxy, chat_id, str(msg.get("sessionId") or ""), msg.get("notes"), emit)
 
-    parts: list[dict] = []  # ordered: {"t":"text","v"} | {"t":"tool","id","name","label","input","ok","sub"}
+    # ordered: {"t":"text","v"} | {"t":"think","v","ms"} | {"t":"tool","id","name","label","input","ok","sub"}
+    parts: list[dict] = []
     tools: dict[str, dict] = {}
+    thinking: dict[int, tuple[dict, float]] = {}  # open thinking blocks by stream index
     started = time.monotonic()
     result = None
 
@@ -247,7 +252,23 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
                 if m.parent_tool_use_id:
                     continue  # subagent tokens: only their tool calls are shown
                 ev = m.event or {}
-                if ev.get("type") == "content_block_delta" and (ev.get("delta") or {}).get("type") == "text_delta":
+                cb = ev.get("content_block") or {}
+                if ev.get("type") == "content_block_start" and cb.get("type") == "thinking":
+                    p = {"t": "think", "v": "", "ms": 0}
+                    parts.append(p)
+                    thinking[ev.get("index", -1)] = (p, time.monotonic())
+                    await emit({"type": "think_start"})
+                elif ev.get("type") == "content_block_delta" and (ev.get("delta") or {}).get("type") == "thinking_delta":
+                    d = ev["delta"].get("thinking", "")
+                    open_ = thinking.get(ev.get("index", -1))
+                    if d and open_:
+                        open_[0]["v"] += d
+                        await emit({"type": "think", "delta": d})
+                elif ev.get("type") == "content_block_stop" and ev.get("index", -1) in thinking:
+                    p, t0 = thinking.pop(ev.get("index", -1))
+                    p["ms"] = int((time.monotonic() - t0) * 1000)
+                    await emit({"type": "think_end", "ms": p["ms"]})
+                elif ev.get("type") == "content_block_delta" and (ev.get("delta") or {}).get("type") == "text_delta":
                     d = ev["delta"].get("text", "")
                     if d:
                         text_part()["v"] += d
@@ -296,6 +317,7 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
     for p in parts:
         if p["t"] == "tool" and p["ok"] is None:
             p["ok"] = True
+    parts = [p for p in parts if p["t"] != "think" or p["v"].strip()]  # empty (omitted) thinking blocks
     final = "\n\n".join(p["v"].strip() for p in parts if p["t"] == "text" and p["v"].strip()) or (result.result or "")
     return {
         "text": final, "sessionId": result.session_id, "cost": float(result.total_cost_usd or 0),
