@@ -45,8 +45,9 @@ type Exhaustion struct {
 	// targets at EMA20 and the 38.2% retrace of the move
 	Plan *FadePlan `json:"plan,omitempty"`
 	// Squeeze: shorting is vetoed — funding ≤ −0.05% per settlement, or negative funding while price is
-	// over 15% above its 1H EMA24. In 6 months of OKX alt pumps (claude pump-study) that state ran another
-	// +20% within 24h 43% of the time vs 29% for all pumps; no fade-short plan is given then.
+	// over 15% above its 1H EMA24. Kept for cost and tail risk, not direction: the 2-year rev-study found
+	// it does not predict continuation, but fade shorts in big pumps paid the funding (−0.72% vs 0.00% per
+	// trade). No fade-short plan is given then.
 	Squeeze    bool   `json:"squeeze,omitempty"`
 	SqueezeWhy string `json:"squeezeWhy,omitempty"`
 	// Risk: the validated part (moverisk.go) — continuation-tail and move-size probabilities on 1H.
@@ -351,9 +352,9 @@ func (e *Engine) Exhaustion(ctx context.Context, id, bar string) (Exhaustion, er
 		}
 		switch {
 		case fundRate <= -0.0005:
-			out.Squeeze, out.SqueezeWhy = true, fmt.Sprintf("资金费 %.3f%%/期，空头拥挤（轧空燃料）", fundRate*100)
+			out.Squeeze, out.SqueezeWhy = true, fmt.Sprintf("资金费 %.3f%%/期，做空每期要付这笔费用", fundRate*100)
 		case fundRate < 0 && ext24 > 0.15:
-			out.Squeeze, out.SqueezeWhy = true, fmt.Sprintf("资金费为负且高于 1H EMA24 %.0f%%", ext24*100)
+			out.Squeeze, out.SqueezeWhy = true, fmt.Sprintf("资金费为负（做空要付费）且高于 1H EMA24 %.0f%%", ext24*100)
 		}
 	}
 
