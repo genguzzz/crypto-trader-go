@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { price, sym, time, usd } from "@/lib/fmt";
 import { useQuery } from "@/lib/query";
 import { colors, fs, tnum } from "@/lib/theme";
-import { BarChart, LineChart } from "./Charts";
+import { BarChart, DualBarChart, LineChart } from "./Charts";
 import { Card, Loading, PanelTitle, Segmented } from "./ui";
 
 const LINE_COLORS = [colors.primary, colors.warn, colors.info]; // this coin, BTC, ETH (web CompareChart)
@@ -78,11 +78,10 @@ export function LiqPanel({ id }: { id: string }) {
     const s = step[period], m = new Map(d.bars.map((b) => [b.t, b]));
     const now = Math.floor(main.at / s) * s;
     const start = Math.max(d.since ? Math.floor(d.since / s) * s : now, now - (depth[period] - 1) * s);
-    const out: { t: number; v: number; color?: string }[] = [];
+    const out: { t: number; up: number; down: number }[] = [];
     for (let t = start; t <= now; t += s) {
       const b = m.get(t);
-      const net = (b?.short ?? 0) - (b?.long ?? 0);
-      out.push({ t, v: net });
+      out.push({ t, up: b?.short ?? 0, down: b?.long ?? 0 });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -110,8 +109,8 @@ export function LiqPanel({ id }: { id: string }) {
           </View>
         ))}
       </View>
-      {bars.length ? <BarChart bars={bars} height={120} fmtY={(v) => (v >= 0 ? "空 " : "多 ") + usd(Math.abs(v))} fmtT={(t) => time(t, true)} /> : main.error ? <Text style={note}>{main.error}</Text> : <Loading />}
-      <Text style={[note, { marginTop: 4 }]}>柱为每个周期的净强平：绿向上 = 空单被强平多，红向下 = 多单被强平多。OKX 只提供最近约 24 小时，本机保留 30 天。</Text>
+      {bars.length ? <DualBarChart bars={bars} height={160} upLabel="空单" downLabel="多单" fmtV={usd} fmtT={(t) => time(t, true)} /> : main.error ? <Text style={note}>{main.error}</Text> : <Loading />}
+      <Text style={[note, { marginTop: 4 }]}>每个周期两根柱：绿向上 = 空单被强平（强制买入），红向下 = 多单被强平（强制卖出）。按住图表查看该周期金额。OKX 只提供最近约 24 小时，本机保留 30 天。</Text>
       {main.data?.err ? <Text style={[note, { color: colors.warn }]}>同步失败：{main.data.err}</Text> : null}
       {recent.length ? (
         <View style={{ marginTop: 10 }}>
