@@ -14,9 +14,11 @@ const build = process.env.BUILD_NUMBER ?? "0";
 //    recognition + audio recording (AI voice), clipboard, sharing, linking, web-browser, network,
 //    keep-awake, quick actions, Face ID, screen orientation.
 export const RUNTIME_VERSION = "1";
+// Shown on the home screen and in the 全能签 source; "β" while the Capacitor "OKX Helper" is still installed.
+const DISPLAY_NAME = "OKX Helper β";
 
 const config: ExpoConfig = {
-  name: "OKX Helper β", // side by side with the Capacitor "OKX Helper" until it is retired
+  name: DISPLAY_NAME,
   slug: "okx-helper",
   scheme: "okxhelper",
   version: pkg.version,
@@ -37,7 +39,7 @@ const config: ExpoConfig = {
     supportsTablet: false,
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
-      CFBundleDisplayName: "OKX Helper",
+      CFBundleDisplayName: DISPLAY_NAME,
     },
   },
   android: { package: "top.gugenzzz.okxhelper", versionCode: Number(build) || 1 },
