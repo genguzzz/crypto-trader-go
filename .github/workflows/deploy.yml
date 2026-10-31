@@ -9,7 +9,8 @@ name: deploy
 on:
   push:
     branches: [main]
-    paths-ignore: ['**.md', 'docs/**', 'research/**', '.claude/**', '.github/ISSUE_TEMPLATE/**', '.github/pull_request_template.md']
+    # ai/**.md are prompts and skills (they ship), so only root docs and READMEs are ignored.
+    paths-ignore: ['*.md', '**/README.md', 'docs/**', 'research/**', '.claude/**', '.github/ISSUE_TEMPLATE/**', '.github/pull_request_template.md']
   workflow_dispatch:
 
 concurrency:
