@@ -88,3 +88,45 @@ export function useHoldToTalk(opts: { onTap?: () => void; onText: (text: string)
   const handlers = { pointerdown: down, pointermove: move, pointerup: up, pointercancel: cancel, contextmenu: (e: Event) => e.preventDefault() }
   return { phase, cancelZone, levels: rec.levels, level: rec.level, handlers }
 }
+
+/**
+ * Tap to start, tap again to stop and send (the chat composer's mic). cancel() drops the recording.
+ */
+export function useTapToTalk(opts: { onText: (text: string) => void; onError?: (msg: string) => void }) {
+  const rec = useRecorder()
+  const phase = ref<'idle' | 'rec' | 'busy'>('idle')
+
+  async function toggle() {
+    if (phase.value === 'busy') return
+    if (phase.value === 'idle') {
+      phase.value = 'rec'
+      navigator.vibrate?.(12)
+      try {
+        await rec.start()
+      } catch (err: any) {
+        phase.value = 'idle'
+        opts.onError?.(err?.name === 'NotAllowedError' ? '没有麦克风权限' : err?.message || String(err))
+      }
+      return
+    }
+    phase.value = 'busy'
+    try {
+      const blob = await rec.stop()
+      if (!blob) { opts.onError?.('说话时间太短'); return }
+      const text = await transcribe(blob)
+      if (text.trim()) opts.onText(text.trim())
+      else opts.onError?.('没有识别到语音')
+    } catch (err: any) {
+      opts.onError?.(err?.message || String(err))
+    } finally {
+      phase.value = 'idle'
+    }
+  }
+
+  function cancel() {
+    if (phase.value === 'rec') rec.cancel()
+    if (phase.value !== 'busy') phase.value = 'idle'
+  }
+
+  return { phase, levels: rec.levels, toggle, cancel }
+}

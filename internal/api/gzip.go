@@ -23,9 +23,15 @@ func (w *gzWriter) WriteHeader(code int) {
 
 // withGzip compresses JSON/HTML/JS/CSS responses (not SSE, not images). Snapshots shrink ~8–10×,
 // which matters over slow/proxied links where every KB costs.
+// isStream: Server-Sent Events responses. gzWriter can't flush per event, so a compressed stream would
+// arrive only when it ends (the AI chat looked frozen for minutes).
+func isStream(path string) bool {
+	return path == "/api/v1/stream" || path == "/api/v1/ai/chat" || (strings.HasPrefix(path, "/api/v1/ai/chats/") && strings.HasSuffix(path, "/stream"))
+}
+
 func withGzip(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") || r.URL.Path == "/api/v1/stream" || strings.HasPrefix(r.URL.Path, "/api/v1/icons/") {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") || isStream(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/api/v1/icons/") {
 			h.ServeHTTP(w, r)
 			return
 		}

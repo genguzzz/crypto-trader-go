@@ -3,7 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { X, History, SquarePen, ArrowUp, Square, Mic, Check, CircleAlert, Copy, Trash2, Sparkles, ChartCandlestick, ChevronRight } from 'lucide-vue-next'
 import { ai, send, stop, newChat, openChat, loadChats, deleteChat, textOf, type Msg, type Part } from '../../composables/ai'
-import { useHoldToTalk } from '../../composables/holdToTalk'
+import { useTapToTalk } from '../../composables/holdToTalk'
 import { useDesktop } from '../../composables/device'
 
 /** AI chat: bottom sheet on phones (drag the header down to close), side panel on desktop. */
@@ -45,7 +45,8 @@ function autosize() {
   el.style.height = 'auto'
   el.style.height = Math.min(140, el.scrollHeight) + 'px'
 }
-const talk = useHoldToTalk({ onText: t => submit(t), onError: flash, onTap: () => flash('按住说话') })
+const talk = useTapToTalk({ onText: t => submit(t), onError: flash })
+watch(() => ai.open, o => { if (!o) talk.cancel() })
 
 // ---- follow the stream when the reader is near the bottom ----
 let stick = true
@@ -193,9 +194,10 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
         <footer v-if="!showHistory" class="ft" @touchmove="e => (e.target as HTMLElement).tagName !== 'TEXTAREA' && e.preventDefault()">
           <button v-if="ai.instId && ai.msgs.length" type="button" class="ctx" :disabled="ai.running" @click="submit(ONE_CLICK)"><ChartCandlestick :size="13" /> 一键分析 {{ sym }}</button>
           <div class="composer">
-            <textarea ref="ta" v-model="input" rows="1" :placeholder="talk.phase.value === 'rec' ? (talk.cancelZone.value ? '松开取消' : '正在听…松开发送') : '问点什么…'" @input="autosize" @keydown="onKey"></textarea>
-            <button type="button" class="mic" :class="{ rec: talk.phase.value === 'rec', busy: talk.phase.value === 'busy', cancel: talk.cancelZone.value }" aria-label="按住说话" v-on="talk.handlers">
-              <span v-if="talk.phase.value === 'busy'" class="spin"></span><Mic v-else :size="18" />
+            <textarea ref="ta" v-model="input" rows="1" :placeholder="talk.phase.value === 'rec' ? '正在听…点 ↑ 发送' : talk.phase.value === 'busy' ? '识别中…' : '问点什么…'" @input="autosize" @keydown="onKey"></textarea>
+            <button v-if="talk.phase.value === 'rec'" type="button" class="mic x" aria-label="取消录音" @click="talk.cancel"><X :size="16" /></button>
+            <button type="button" class="mic" :class="{ rec: talk.phase.value === 'rec', busy: talk.phase.value === 'busy' }" :aria-label="talk.phase.value === 'rec' ? '结束并发送' : '语音输入'" @click="talk.toggle">
+              <span v-if="talk.phase.value === 'busy'" class="spin"></span><ArrowUp v-else-if="talk.phase.value === 'rec'" :size="18" /><Mic v-else :size="18" />
             </button>
             <button v-if="ai.running" type="button" class="go stop" aria-label="停止" @click="stop"><Square :size="14" /></button>
             <button v-else type="button" class="go" :disabled="!input.trim()" aria-label="发送" @click="submit()"><ArrowUp :size="18" /></button>
@@ -300,7 +302,7 @@ textarea { flex: 1; min-height: 24px; max-height: 140px; padding: 6px 0; resize:
 .mic, .go { all: unset; box-sizing: border-box; flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; cursor: pointer; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .mic { color: var(--text-2); background: var(--bg-3); transition: transform .2s, background .2s; }
 .mic.rec { transform: scale(1.18); color: #000; background: conic-gradient(#bcff2f, #2fe0ff, #9b7df0, #bcff2f); box-shadow: 0 0 18px rgba(188, 255, 47, .5); }
-.mic.cancel { background: #ca3f64; color: #fff; }
+.mic.x { color: var(--text-2); background: var(--bg-3); }
 .go { color: #000; background: var(--accent); }
 .go:disabled { background: var(--bg-3); color: var(--text-4); }
 .go.stop { background: var(--text-1); }
