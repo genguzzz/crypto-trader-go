@@ -69,3 +69,24 @@ func TestChatStreamPersistResume(t *testing.T) {
 }
 
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
+
+func TestNotesRememberReplaceDelete(t *testing.T) {
+	e := newEnv(t, Options{})
+	e.g.onAgentEvent(chatEvent(`{"type":"memory","text":"杠杆偏好：多空都用 8 倍"}`))
+	n, err := e.g.AddNote("不做 meme 币", "owner", 0)
+	if err != nil || n.ID != 2 {
+		t.Fatalf("add %+v %v", n, err)
+	}
+	e.g.onAgentEvent(chatEvent(`{"type":"memory","text":"杠杆偏好：多空都用 10 倍","replaces":1}`))
+	ns := e.g.Notes()
+	if len(ns) != 2 || ns[0].Text != "杠杆偏好：多空都用 10 倍" || ns[0].By != "ai" || ns[1].By != "owner" {
+		t.Fatalf("notes %+v", ns)
+	}
+	e.g.DeleteNote(2)
+	if ns := e.g.Notes(); len(ns) != 1 {
+		t.Fatalf("after delete %+v", ns)
+	}
+	if _, err := e.g.AddNote("  ", "owner", 0); err == nil {
+		t.Fatal("empty note accepted")
+	}
+}

@@ -237,3 +237,20 @@ export async function transcribe(blob: Blob): Promise<string> {
 
 /** Plain-text of a message (copy button). */
 export const textOf = (m: Msg) => m.parts.filter(p => p.t === 'text').map(p => (p as { v: string }).v).join('\n\n')
+
+export interface Note { id: number; ts: number; text: string; by: 'ai' | 'owner' }
+export const notes = reactive({ list: [] as Note[] })
+export async function loadNotes() {
+  const r = await fetch('/api/v1/ai/notes')
+  if (r.ok) notes.list = await r.json()
+}
+export async function addNote(text: string) {
+  const r = await kfetch('/api/v1/ai/notes', { method: 'POST', body: JSON.stringify({ text }), headers: { 'Content-Type': 'application/json' } })
+  if (!r.ok) throw await errorOf(r)
+  await loadNotes()
+}
+export async function deleteNote(id: number) {
+  const r = await kfetch(`/api/v1/ai/notes/${id}`, { method: 'DELETE' })
+  if (!r.ok) throw await errorOf(r)
+  notes.list = notes.list.filter(n => n.id !== id)
+}

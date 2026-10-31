@@ -92,9 +92,10 @@ type Gate struct {
 	onProposal func(Proposal)
 	apply      func(instanceID int64, params map[string]float64) error
 
-	agent Agent
-	runMu sync.Mutex
-	runs  map[int64]*chatRun
+	agent   Agent
+	notesMu sync.Mutex
+	runMu   sync.Mutex
+	runs    map[int64]*chatRun
 
 	reflectMu sync.Mutex
 	propMu    sync.Mutex // serializes proposal decisions

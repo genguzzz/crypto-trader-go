@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { X, History, SquarePen, ArrowUp, Square, Mic, CircleAlert, Copy, Trash2, Sparkles, ChartCandlestick, ChevronRight } from 'lucide-vue-next'
-import { ai, send, stop, newChat, openChat, loadChats, deleteChat, textOf, setModel, AI_MODELS, type Msg, type Part } from '../../composables/ai'
+import { X, History, Brain, Plus, SquarePen, ArrowUp, Square, Mic, CircleAlert, Copy, Trash2, Sparkles, ChartCandlestick, ChevronRight } from 'lucide-vue-next'
+import { ai, send, stop, newChat, openChat, loadChats, deleteChat, textOf, setModel, AI_MODELS, notes, loadNotes, addNote, deleteNote, type Msg, type Part } from '../../composables/ai'
 import { useTapToTalk } from '../../composables/holdToTalk'
 import AiSteps from './AiSteps.vue'
 import { useDesktop } from '../../composables/device'
@@ -64,7 +64,23 @@ watch(() => ai.open, o => {
 })
 
 // ---- history ----
+const showNotes = ref(false)
+const noteInput = ref('')
+async function toggleNotes() {
+  showNotes.value = !showNotes.value
+  showHistory.value = false
+  if (showNotes.value) await loadNotes().catch(e => flash(e.message))
+}
+async function saveNote() {
+  const t = noteInput.value.trim()
+  if (!t) return
+  try { await addNote(t); noteInput.value = '' } catch (e: any) { flash(e.message) }
+}
+async function removeNote(id: number) { await deleteNote(id).catch(e => flash(e.message)) }
+const noteAgo = (t: number) => new Date(t).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+
 async function toggleHistory() {
+  showNotes.value = false
   showHistory.value = !showHistory.value
   if (showHistory.value) await loadChats().catch(e => flash(e.message))
 }
@@ -73,7 +89,7 @@ async function pick(id: number) {
   await openChat(id).catch(e => flash(e.message))
 }
 async function remove(id: number) { await deleteChat(id).catch(e => flash(e.message)) }
-function fresh() { newChat(); showHistory.value = false; nextTick(() => ta.value?.focus()) }
+function fresh() { newChat(); showHistory.value = false; showNotes.value = false; nextTick(() => ta.value?.focus()) }
 const ago = (t: number) => {
   const s = (Date.now() - t) / 1000
   return s < 60 ? '刚刚' : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : s < 86400 ? `${Math.floor(s / 3600)} 小时前` : `${Math.floor(s / 86400)} 天前`
@@ -134,18 +150,32 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
       <section v-if="ai.open" class="ai-panel" :class="{ desk: desktop }" :style="dragY ? { transform: `translateY(${dragY}px)`, transition: 'none' } : undefined" aria-label="AI 研究助手">
         <header class="hd" @pointerdown="dragStart" @pointermove="dragMove" @pointerup="dragEnd" @pointercancel="dragEnd">
           <i v-if="!desktop" class="grab"></i>
-          <span class="ttl"><span class="mini-orb"></span>{{ showHistory ? '历史对话' : ai.title || 'AI 研究助手' }}</span>
-          <span v-if="!showHistory" class="models" role="radiogroup" aria-label="模型" @pointerdown.stop>
+          <span class="ttl"><span class="mini-orb"></span>{{ showNotes ? '偏好与记忆' : showHistory ? '历史对话' : ai.title || 'AI 研究助手' }}</span>
+          <span v-if="!showHistory && !showNotes" class="models" role="radiogroup" aria-label="模型" @pointerdown.stop>
             <button v-for="o in AI_MODELS" :key="o.value" type="button" role="radio" :aria-checked="ai.model === o.value" :class="{ on: ai.model === o.value }" @click="setModel(o.value)">{{ o.label }}</button>
           </span>
           <span class="acts" @pointerdown.stop>
+            <button type="button" class="ib" :class="{ on: showNotes }" title="偏好与记忆" aria-label="偏好与记忆" @click="toggleNotes"><Brain :size="17" /></button>
             <button type="button" class="ib" :class="{ on: showHistory }" title="历史对话" aria-label="历史对话" @click="toggleHistory"><History :size="17" /></button>
             <button type="button" class="ib" title="新对话" aria-label="新对话" @click="fresh"><SquarePen :size="17" /></button>
             <button type="button" class="ib" title="关闭" aria-label="关闭" @click="ai.open = false"><X :size="18" /></button>
           </span>
         </header>
 
-        <div v-if="showHistory" class="body hist">
+        <div v-if="showNotes" class="body hist">
+          <p class="muted note-tip">AI 每次回答都会参考这些偏好；在对话里说"记住…/我喜欢…"也会自动加到这里。</p>
+          <div class="note-add">
+            <input v-model="noteInput" placeholder="例如：杠杆偏好，多空都用 8 倍" maxlength="300" @keydown.enter="saveNote" />
+            <button type="button" class="ib on" aria-label="添加" @click="saveNote"><Plus :size="17" /></button>
+          </div>
+          <p v-if="!notes.list.length" class="muted empty-h">还没有记忆</p>
+          <div v-for="n in notes.list" :key="n.id" class="hrow nrow">
+            <div class="hmain"><span class="ntext">{{ n.text }}</span><span class="hmeta">{{ n.by === 'ai' ? 'AI 记录' : '手动添加' }} · {{ noteAgo(n.ts) }}</span></div>
+            <button type="button" class="ib del" aria-label="删除" @click="removeNote(n.id)"><Trash2 :size="15" /></button>
+          </div>
+        </div>
+
+        <div v-else-if="showHistory" class="body hist">
           <p v-if="!ai.chats.length" class="muted empty-h">还没有对话</p>
           <div v-for="c in ai.chats" :key="c.id" class="hrow" :class="{ cur: c.id === ai.chatId }" @click="pick(c.id)">
             <div class="hmain"><span class="htitle">{{ c.title }}</span>
@@ -184,7 +214,7 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
           <p v-if="ai.error && !ai.running" class="err net">{{ ai.error }}（回答会在后台继续，重新打开对话可看到）</p>
         </div>
 
-        <footer v-if="!showHistory" class="ft" @touchmove="e => (e.target as HTMLElement).tagName !== 'TEXTAREA' && e.preventDefault()">
+        <footer v-if="!showHistory && !showNotes" class="ft" @touchmove="e => (e.target as HTMLElement).tagName !== 'TEXTAREA' && e.preventDefault()">
           <button v-if="ai.instId && ai.msgs.length" type="button" class="ctx" :disabled="ai.running" @click="submit(ONE_CLICK)"><ChartCandlestick :size="13" /> 一键分析 {{ sym }}</button>
           <div class="composer">
             <textarea ref="ta" v-model="input" rows="1" :placeholder="talk.phase.value === 'rec' ? '正在听…点 ↑ 发送' : talk.phase.value === 'busy' ? '识别中…' : '问点什么…'" @input="autosize" @keydown="onKey"></textarea>
@@ -275,6 +305,11 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
 .hmeta { font-size: var(--fs-xs); color: var(--text-3); }
 .live-tag { margin-left: 6px; color: var(--accent); }
 .del { color: var(--text-4); }
+.note-tip { font-size: var(--fs-xs); margin: 4px 4px 10px; line-height: 1.6; }
+.note-add { display: flex; gap: 6px; margin-bottom: 8px; }
+.note-add input { flex: 1; min-width: 0; height: 38px; border-radius: 10px; font-size: 16px; }
+.nrow { cursor: default; align-items: flex-start; }
+.ntext { white-space: normal; line-height: 1.5; }
 
 .ft { padding: 8px 12px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgba(10, 10, 10, .9); }
 .ctx { all: unset; display: inline-flex; align-items: center; gap: 5px; margin: 0 0 8px 2px; padding: 4px 10px; border-radius: 14px; font-size: var(--fs-xs); color: var(--accent); background: var(--accent-bg); border: 1px solid rgba(188, 255, 47, .3); cursor: pointer; }

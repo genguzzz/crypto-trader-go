@@ -210,8 +210,8 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		defer cancel()
 		defer g.endRun(in.ChatID)
 		start := g.now()
-		msg := map[string]any{"type": "chat", "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model}
-		resp, err := g.callStream(ctx, msg, run.publish)
+		msg := map[string]any{"type": "chat", "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "notes": g.Notes()}
+		resp, err := g.callStream(ctx, msg, func(ev chatEvent) { g.onAgentEvent(ev); run.publish(ev) })
 		lat := g.now().Sub(start).Milliseconds()
 		var out struct {
 			Text      string          `json:"text"`

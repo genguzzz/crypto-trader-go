@@ -28,7 +28,11 @@ import (
 //	POST   /api/v1/ai/chats/{id}/stop
 //	DELETE /api/v1/ai/chats/{id}
 //	POST   /api/v1/ai/transcribe            multipart "audio" → {text} (Groq Whisper)
+//	GET    /api/v1/ai/notes                 the owner's preferences / long-term notes for the chat agent
+//	POST   /api/v1/ai/notes                 {text, replaces?}
+//	DELETE /api/v1/ai/notes/{id}
 func (g *Gate) Register(mux *http.ServeMux) {
+	g.registerNotes(mux)
 	mux.HandleFunc("POST /api/v1/ai/chat", func(w http.ResponseWriter, r *http.Request) {
 		var in ChatInput
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {

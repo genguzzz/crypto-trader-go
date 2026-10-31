@@ -31,7 +31,7 @@ TOOL_LABELS = {
     "get_orderbook": "盘口", "get_liquidations": "强平记录", "get_liquidation_map": "清算地图",
     "compare_with_majors": "对比 BTC/ETH", "get_universe": "监控池", "search_instruments": "搜索合约",
     "list_rules": "规则", "get_rule_track_record": "规则战绩", "get_alert_events": "告警", "get_system_status": "数据状态",
-    "list_fields": "字段定义", "get_usage": "接口额度", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
+    "list_fields": "字段定义", "get_usage": "接口额度", "remember": "记住偏好", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
     "Task": "子分析", "Agent": "子分析",
 }
 # the analysis CLI's commands, as the owner would call them
@@ -89,6 +89,8 @@ def brief_input(name: str, inp: Any) -> str:
         return str(inp.get("url", "")).split("//")[-1][:80]
     if short == "Skill":
         return ""
+    if short == "remember":
+        return str(inp.get("text", ""))[:80]
     if short in ("Task", "Agent"):
         return ""
     keep = [str(v) for k, v in inp.items() if k in ("instId", "q")]
@@ -150,14 +152,41 @@ def sandbox_server(chat: str, key: str):
     return create_sdk_mcp_server(name="sandbox", version="1.0.0", tools=[shell])
 
 
-def build_chat_options(config: dict, proxy: str, chat: str, session: str):
+def memory_server(emit: Emit):
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    @tool("remember", "Save one lasting preference or fact about the owner (e.g. 杠杆偏好：多空都用 8 倍). Use when the owner "
+          "states a standing preference or asks you to remember something. Pass replaces=<id> to update an existing note "
+          "from the list in your instructions instead of adding a duplicate.", {"text": str, "replaces": int})
+    async def remember(args: dict) -> dict:
+        text = str(args.get("text", "")).strip()[:300]
+        if not text:
+            return {"content": [{"type": "text", "text": "empty note"}], "is_error": True}
+        await emit({"type": "memory", "text": text, "replaces": int(args.get("replaces") or 0)})
+        return {"content": [{"type": "text", "text": f"已记住：{text}"}]}
+
+    return create_sdk_mcp_server(name="memory", version="1.0.0", tools=[remember])
+
+
+def notes_block(notes: Any) -> str:
+    if not isinstance(notes, list) or not notes:
+        return "\n\n## 主人的偏好与记忆\n（暂无。主人说出长期偏好时用 remember 记下。）\n"
+    lines = [f"[{n.get('id')}] {n.get('text')}" for n in notes if isinstance(n, dict) and n.get("text")]
+    return ("\n\n## 主人的偏好与记忆（必须遵守；要更新某条时用 remember 并传 replaces=编号）\n" + "\n".join(lines) + "\n")
+
+
+def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes: Any = None, emit: Emit | None = None):
     from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions
 
     agent = config.get("agent") or {}
     env = llm.build_env(config.get("credential"), proxy)
     prompt, _ = llm.load_prompt(CHAT_PROMPT)
+    prompt += notes_block(notes)
     mcp: dict[str, Any] = {"sandbox": sandbox_server(chat, agent.get("sandboxToken", ""))}
     allowed = ["mcp__sandbox__shell", "WebSearch", "WebFetch", "Skill", "Task", "Agent"]
+    if emit is not None:
+        mcp["memory"] = memory_server(emit)
+        allowed.append("mcp__memory__remember")
     if agent.get("mcpUrl") and agent.get("mcpToken"):
         mcp["ctg"] = {"type": "http", "url": agent["mcpUrl"], "headers": {"Authorization": "Bearer " + agent["mcpToken"]}}
         allowed.append("mcp__ctg")
@@ -199,7 +228,7 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
     prompt = f"[当前页面: {inst}]\n{text}" if inst else text
     if msg.get("model") in CHAT_MODELS:
         config = {**config, "model": msg["model"]}
-    options = build_chat_options(config, proxy, chat_id, str(msg.get("sessionId") or ""))
+    options = build_chat_options(config, proxy, chat_id, str(msg.get("sessionId") or ""), msg.get("notes"), emit)
 
     parts: list[dict] = []  # ordered: {"t":"text","v"} | {"t":"tool","id","name","label","input","ok","sub"}
     tools: dict[str, dict] = {}
