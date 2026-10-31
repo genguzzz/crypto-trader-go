@@ -137,11 +137,11 @@ export function ScannerList({ header }: { header?: React.ReactNode }) {
   const controls = (
     <View style={{ paddingTop: 4, paddingBottom: 8, gap: 8, borderBottomWidth: 1, borderColor: colors.border }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 }}>
-        <View style={{ flex: 1, flexDirection: "row", alignItems: "center", height: 34, borderRadius: 8, backgroundColor: colors.cardMuted, borderWidth: 1, borderColor: colors.borderStrong, paddingHorizontal: 10, gap: 6 }}>
+        <View style={{ flex: 1, minWidth: 120, flexDirection: "row", alignItems: "center", height: 34, borderRadius: 8, backgroundColor: colors.cardMuted, borderWidth: 1, borderColor: colors.borderStrong, paddingHorizontal: 10, gap: 6 }}>
           <Ionicons name="search" size={15} color={colors.textFaint} />
           <TextInput value={q} onChangeText={setQ} placeholder={watchOnly ? "搜索自选或添加合约" : "搜索合约"} placeholderTextColor={colors.textDim} autoCapitalize="characters" autoCorrect={false} clearButtonMode="while-editing" style={{ flex: 1, color: colors.text, fontSize: fs.lg, paddingVertical: 0 }} />
         </View>
-        <Segmented<Dir> small value={dir} onChange={(v) => { track("scanner.dir", { v }); setSettings({ dir: v }); }} options={[{ value: "all", label: "全部" }, { value: "long", label: "做多", tone: "up" }, { value: "short", label: "做空", tone: "down" }]} style={{ flexGrow: 0 }} />
+        <Segmented<Dir> small value={dir} onChange={(v) => { track("scanner.dir", { v }); setSettings({ dir: v }); }} options={[{ value: "all", label: "全部" }, { value: "long", label: "做多", tone: "up" }, { value: "short", label: "做空", tone: "down" }]} style={{ width: 150 }} />
       </View>
       <Pressable onPress={() => { tap(); setSheet("rule"); }} style={({ pressed }) => ({ marginHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8, height: 34, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: pressed ? colors.raised : colors.card })}>
         <Text style={{ color: colors.textFaint, fontSize: fs.md, fontWeight: "700" }}>Σ</Text>

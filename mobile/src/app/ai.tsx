@@ -5,6 +5,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View, type ScrollViewInstance, type TextInputInstance } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AI_MODELS, ai, clearContext, newChat, retry, send, setModel, setOpen, stop, textOf, useAi, type Msg, type ToolPart } from "@/lib/ai";
@@ -104,11 +105,22 @@ export default function AiScreen() {
   const lastMsg = s.msgs[s.msgs.length - 1];
   const bottomPad = kb || Platform.OS === "web" ? 8 : insets.bottom + 8; // a sheet: no tab bar under it
 
+  // Dragging the header down closes the sheet. The native sheet only dismisses when the chat is
+  // scrolled to its top, and a chat sits at its bottom, so swiping down there just scrolled it.
+  const close = () => { if (router.canGoBack()) router.back(); else router.replace("/"); };
+  const pull = Gesture.Pan()
+    .activeOffsetY(10)
+    .failOffsetX([-24, 24])
+    .runOnJS(true)
+    .onEnd((e) => { if (e.translationY > 50 || e.velocityY > 600) { tap(); close(); } });
+
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <Screen>
       {/* header: close the sheet, title, model switch, memory, history, new chat */}
+      <GestureDetector gesture={pull}>
       <View style={{ paddingTop: Platform.OS === "web" ? insets.top + 6 : 18, paddingLeft: 16, paddingRight: 8, paddingBottom: 8, flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: 1, borderColor: colors.border }}>
-        <Pressable hitSlop={10} accessibilityLabel="收起" onPress={() => { tap(); if (router.canGoBack()) router.back(); else router.replace("/"); }} style={({ pressed }) => ({ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderStrong, opacity: pressed ? 0.7 : 1 })}>
+        <Pressable hitSlop={10} accessibilityLabel="收起" onPress={() => { tap(); close(); }} style={({ pressed }) => ({ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderStrong, opacity: pressed ? 0.7 : 1 })}>
           <Ionicons name="chevron-down" size={18} color={colors.text} />
         </Pressable>
         <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 7, minWidth: 0 }}>
@@ -129,6 +141,7 @@ export default function AiScreen() {
         <HeadButton icon="time-outline" label="历史对话" onPress={() => router.push("/ai-history")} />
         <HeadButton icon="create-outline" label="新对话" onPress={fresh} />
       </View>
+      </GestureDetector>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView
@@ -249,6 +262,7 @@ export default function AiScreen() {
         </View>
       </KeyboardAvoidingView>
     </Screen>
+    </GestureHandlerRootView>
   );
 }
 

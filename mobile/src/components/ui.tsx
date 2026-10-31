@@ -157,7 +157,7 @@ export function Segmented<T extends string>({ value, options, onChange, style, s
       {options.map((o) => {
         const on = value === o.value;
         return (
-          <Pressable key={o.value} onPress={() => { if (!on) { void haptic("select"); onChange(o.value); } }} style={{ flex: 1, minWidth: small ? 36 : 48, height: small ? 26 : 30, paddingHorizontal: 8, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: on ? colors.cardMuted : "transparent" }}>
+          <Pressable key={o.value} onPress={() => { if (!on) { void haptic("select"); onChange(o.value); } }} style={{ flexGrow: 1, flexShrink: 1, flexBasis: "auto", minWidth: small ? 36 : 48, height: small ? 26 : 30, paddingHorizontal: 8, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: on ? colors.cardMuted : "transparent" }}>
             <Text style={{ fontSize: small ? fs.sm : fs.md, fontWeight: on ? "600" : "500", color: on ? toneColor(o.tone, colors.text) : colors.textFaint }}>{o.label}</Text>
           </Pressable>
         );
