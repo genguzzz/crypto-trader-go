@@ -11,12 +11,13 @@ import AppUpdateBar from './components/AppUpdateBar.vue'
 import AiOrb from './components/ai/AiOrb.vue'
 import AiPanel from './components/ai/AiPanel.vue'
 import { ai } from './composables/ai'
-import { isNative } from './native'
+import { isNative, isEmbed } from './native'
 import { useDesktop } from './composables/device'
 import { devTab } from './composables/devtab'
 import { time, clock, usd, price, logPct } from './fmt'
 
 const desktop = useDesktop()
+const embedded = isEmbed
 const s = computed(() => store.snap)
 const phase = computed(() => {
   const p = s.value?.phase
@@ -60,6 +61,9 @@ const pulse = computed(() =>
 </script>
 
 <template>
+  <!-- /embed/*: one bare view for the native app's web views, no app chrome -->
+  <RouterView v-if="embedded" />
+  <template v-else>
   <header class="topbar">
     <RouterLink to="/" class="brand" aria-label="OKX Helper 首页">
       <img class="mark" src="/icon.svg" alt="" />
@@ -128,6 +132,7 @@ const pulse = computed(() =>
   <AiOrb />
   <AiPanel />
   <AdminKeyModal />
+  </template>
 </template>
 
 <style>

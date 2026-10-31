@@ -9,7 +9,7 @@ import Alerts from './views/Alerts.vue'
 import SettingsView from './views/Settings.vue'
 import Dev from './views/Dev.vue'
 import { startStream } from './store'
-import { initNative, nativeReady } from './native'
+import { initNative, nativeReady, isEmbed } from './native'
 import './style.css'
 import InfoTip from './components/InfoTip.vue'
 import ScoringExplainer from './components/ScoringExplainer.vue'
@@ -43,6 +43,7 @@ const router = createRouter({
     { path: '/help/:section/:slug?', component: () => import('./views/Help.vue'), props: true },
     { path: '/settings', component: SettingsView },
     { path: '/dev', component: Dev },
+    { path: '/embed/chart/:id', component: () => import('./views/EmbedChart.vue'), props: true },
   ],
   scrollBehavior: (_to, _from, saved) => saved || { top: 0 },
 })
@@ -55,6 +56,6 @@ document.addEventListener('touchmove', e => { const s = (e as TouchEvent & { sca
 window.addEventListener('wheel', e => { if (e.ctrlKey && (e.target as Element | null)?.closest?.('.tv-lightweight-charts, canvas')) e.preventDefault() }, { passive: false })
 
 initNative()
-startStream()
+if (!isEmbed) startStream()
 createApp(App).use(router).component('InfoTip', InfoTip).component('ScoringExplainer', ScoringExplainer).component('Segmented', Segmented).component('USelect', Select).mount('#app')
 nativeReady(router)

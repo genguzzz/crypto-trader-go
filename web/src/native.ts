@@ -7,6 +7,9 @@ import type { Router } from 'vue-router'
 
 export const isNative = Capacitor.isNativePlatform()
 
+/** /embed/* pages run inside the native iOS app's web views (mobile/ on branch ios): no chrome, no SSE. */
+export const isEmbed = location.pathname.startsWith('/embed/')
+
 /** Origin of the API server: same origin in the browser, production in the app. */
 export const apiOrigin = isNative ? 'https://ctg.gugenzzz.top' : ''
 

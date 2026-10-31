@@ -14,9 +14,11 @@ import ChipGroup from './ui/ChipGroup.vue'
 import Loading from './ui/Loading.vue'
 import { useFullscreen } from '../composables/fullscreen'
 
-/** fill: take the parent's full height (workbench); otherwise fixed chart heights (stacked page). */
-const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean }>()
-const emit = defineEmits<{ live: [price: number] }>()
+/** fill: take the parent's full height (workbench); otherwise fixed chart heights (stacked page).
+ *  embed: inside the native app's web view (views/EmbedChart.vue): the full-screen button asks the
+ *  app (event `fullscreen`) instead of going full screen itself; 'full' = already the app's full-screen chart. */
+const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean; embed?: 'inline' | 'full' }>()
+const emit = defineEmits<{ live: [price: number]; fullscreen: [] }>()
 const bar = ref(localStorage.getItem('bar') || '15m')
 type Layer = 'k' | 'delta' | 'foot'
 const layer = ref<Layer>((localStorage.getItem('ctg.chartLayer') as Layer) || 'k')
@@ -526,7 +528,10 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <FilterChip v-model="withLiq" label="强平" title="在 K 线下方显示每根 K 线的强平金额（绿 = 空单被强平，向上；红 = 多单被强平，向下）" />
         <FilterChip v-model="withMap" label="清算图" :disabled="!hasOi" :title="hasOi ? '在价格区右侧叠加估算的清算地图（按近 7 天持仓变化与杠杆分布推算，非交易所数据）' : '没有持仓量数据，无法估算'" />
         <FilterChip v-model="withOIL" label="OI" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示持仓量走势（面积图）' : '没有持仓量数据'" />
-        <button type="button" class="fs-btn" :title="full ? '退出全屏（Esc）' : '全屏'" :aria-label="full ? '退出全屏' : '全屏'" @click="toggleFull">
+        <button v-if="embed" type="button" class="fs-btn" :title="embed === 'full' ? '退出全屏' : '全屏'" :aria-label="embed === 'full' ? '退出全屏' : '全屏'" @click="emit('fullscreen')">
+          <Minimize2 v-if="embed === 'full'" :size="15" /><Maximize2 v-else :size="15" />
+        </button>
+        <button v-else type="button" class="fs-btn" :title="full ? '退出全屏（Esc）' : '全屏'" :aria-label="full ? '退出全屏' : '全屏'" @click="toggleFull">
           <Minimize2 v-if="full" :size="15" /><Maximize2 v-else :size="15" />
         </button>
       </span>
