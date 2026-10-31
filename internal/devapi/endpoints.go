@@ -2,7 +2,9 @@ package devapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -195,13 +197,19 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			Name: "get_instrument", Path: "instruments/{instId}", Summary: "Instrument detail: prices, funding, open interest, scores, market cap",
 			Desc: "Last/bid/ask, mark and index price, spot last, funding rate (and interval), open interest (coins and USD), 24h turnover, the fact-panel row with scores for every rule, " +
 				"and CoinGecko market cap / supply for crypto. Opening an instrument outside the recording universe starts live streaming and a history download (syncing=true).",
-			Params: []Param{instParam("path")}, CostTxt: "2", cost: func(Args) int { return 2 },
+			Params: []Param{instParam("path"),
+				{Name: "detail", In: "query", Type: "string", Enum: []string{"compact", "full"}, Default: "compact",
+					Desc: "compact: per-rule long/short scores only and rounded numbers (about a quarter of the size); full: every rule's per-field contributions"}},
+			CostTxt: "2", cost: func(Args) int { return 2 },
 			run: func(ctx context.Context, a Args) (any, error) {
 				info, ok := e.Instrument(a.Str("instId"))
 				if !ok {
 					return nil, fmt.Errorf("unknown instrument %q", a.Str("instId"))
 				}
-				return info, nil
+				if a.Str("detail") == "full" {
+					return info, nil
+				}
+				return compactInstrument(info)
 			},
 		},
 		{
@@ -556,4 +564,52 @@ func rebase(pts []market.ComparePoint) []market.ComparePoint {
 		out[i] = market.ComparePoint{T: p.T, V: v}
 	}
 	return out
+}
+
+// compactInstrument drops the per-field score contributions (most of the payload) and rounds floats to
+// 6 significant digits, so a quick lookup ("ETH 资金费多少") doesn't cost an agent thousands of tokens.
+func compactInstrument(info any) (any, error) {
+	b, err := json.Marshal(info)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	if row, ok := m["row"].(map[string]any); ok {
+		if sc, ok := row["scores"].(map[string]any); ok {
+			for rule, v := range sc {
+				r, _ := v.(map[string]any)
+				out := map[string]any{"gate": r["gate"]}
+				for _, side := range []string{"long", "short"} {
+					if x, ok := r[side].(map[string]any); ok {
+						out[side] = map[string]any{"score": x["score"]} // same shape as full, minus "contrib"
+					}
+				}
+				sc[rule] = out
+			}
+		}
+	}
+	return roundFloats(m), nil
+}
+
+func roundFloats(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, y := range x {
+			x[k] = roundFloats(y)
+		}
+	case []any:
+		for i, y := range x {
+			x[i] = roundFloats(y)
+		}
+	case float64:
+		if x == math.Trunc(x) || math.IsInf(x, 0) || math.IsNaN(x) {
+			return x
+		}
+		f, _ := strconv.ParseFloat(strconv.FormatFloat(x, 'g', 6, 64), 64)
+		return f
+	}
+	return v
 }

@@ -9,6 +9,7 @@ by id on the next turn (transcripts live under $HOME/.claude, a persistent volum
 from __future__ import annotations
 
 import asyncio
+import re
 import json
 import os
 import time
@@ -43,7 +44,7 @@ TOOL_LABELS = {
 }
 # the analysis CLI's commands, as the owner would call them
 CA_LABELS = {
-    "analyze": "风险评分", "scan": "全市场扫描", "market": "大盘", "events": "新闻与事件", "news": "新闻", "flow": "主动买卖",
+    "brief": "数据包", "analyze": "风险评分", "scan": "全市场扫描", "market": "大盘", "events": "新闻与事件", "news": "新闻", "flow": "主动买卖",
     "liq": "清算分析", "funding": "资金费", "oi": "持仓量", "longshort": "多空比", "indicators": "技术指标", "kline": "K 线",
     "depth": "盘口深度", "quote": "报价", "rank": "涨跌榜", "rules": "规则战绩", "alerts": "告警", "ctg": "查询数据",
     "tokenomics": "代币经济", "holders": "持仓分布", "security": "合约安全", "dex": "DEX 数据", "status": "数据状态",
@@ -56,6 +57,8 @@ def label_for(name: str, inp: Any = None) -> str:
         cmd = str(inp.get("cmd", "")).strip()
         first = cmd.split()[:3]
         if first and first[0] == "ca" and len(first) > 1:
+            if first[1] == "news" and "--read" in cmd:
+                return "读新闻正文"
             return CA_LABELS.get(first[1], "数据分析")
         if first and first[0] == "rev":
             return "反转扫描" if len(first) > 1 and first[1] == "scan" else "反转评分"
@@ -156,15 +159,16 @@ def sandbox_server(chat: str, key: str):
 def memory_server(emit: Emit):
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
-    @tool("remember", "Save one lasting preference or fact about the owner (e.g. 杠杆偏好：多空都用 8 倍). Use when the owner "
-          "states a standing preference or asks you to remember something. Pass replaces=<id> to update an existing note "
+    @tool("remember", "Save one lasting preference or fact about the owner (e.g. 杠杆偏好：多空都用 8 倍). Only when the owner "
+          "himself states a standing preference or asks you to remember something in this message; never to note your own "
+          "assumptions, defaults or placeholders. Pass replaces=<id> to update an existing note "
           "from the list in your instructions instead of adding a duplicate.",
           {"type": "object", "properties": {"text": {"type": "string"},
                                             "replaces": {"type": "integer", "description": "id of the note this one updates"}},
            "required": ["text"]})
     async def remember(args: dict) -> dict:
         text = str(args.get("text", "")).strip()[:300]
-        if not text:
+        if not text or re.search(r"占位|placeholder|无需保存|测试|test", text, re.I):
             return {"content": [{"type": "text", "text": "empty note"}], "is_error": True}
         await emit({"type": "memory", "text": text, "replaces": int(args.get("replaces") or 0)})
         return {"content": [{"type": "text", "text": f"已记住：{text}"}]}
