@@ -5,7 +5,7 @@ import { ai, send } from '../../composables/ai'
 import { useHoldToTalk } from '../../composables/holdToTalk'
 
 /**
- * Floating AI orb above the phone tab bar, bottom-left (bottom-left on desktop too). Tap opens the chat panel;
+ * Floating AI orb centred above the phone tab bar (bottom centre on desktop). Tap opens the chat panel;
  * press and hold talks: a capsule with a live waveform shows above it, slide up to cancel, release
  * to transcribe and send.
  */
@@ -53,9 +53,9 @@ const style = computed(() => ({ '--lv': String(level.value) }))
 </template>
 
 <style scoped>
-.ai-orb-wrap { position: fixed; left: 22px; bottom: 26px; z-index: 30; transition: opacity .2s, transform .25s; }
+.ai-orb-wrap { position: fixed; left: 50%; margin-left: -27px; bottom: 26px; z-index: 30; transition: opacity .2s, transform .25s; }
 .ai-orb-wrap.hidden { opacity: 0; transform: scale(.6); pointer-events: none; }
-@media (max-width: 900px) { .ai-orb-wrap { left: 14px; bottom: calc(66px + env(safe-area-inset-bottom)); } }
+@media (max-width: 900px) { .ai-orb-wrap { bottom: calc(66px + env(safe-area-inset-bottom)); } }
 
 .orb { all: unset; position: relative; display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; cursor: pointer;
   touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
@@ -90,7 +90,7 @@ const style = computed(() => ({ '--lv': String(level.value) }))
 .ripple.r2 { animation-delay: .8s; }
 .orb.cancel .ripple { border-color: rgba(202, 63, 100, .6); }
 
-.capsule { position: fixed; left: 50%; bottom: calc(150px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 31;
+.capsule { position: fixed; left: 50%; bottom: calc(170px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 31;
   display: grid; justify-items: center; gap: 8px; min-width: 210px; padding: 14px 20px 12px; border-radius: 22px;
   background: rgba(16, 18, 14, .88); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(188, 255, 47, .25); box-shadow: 0 10px 40px rgba(0, 0, 0, .6), 0 0 30px rgba(188, 255, 47, .12); pointer-events: none; }
