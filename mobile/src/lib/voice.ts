@@ -65,15 +65,15 @@ export function useRecorder() {
     rec.current = r;
     startedAt.current = Date.now();
     timer.current = setInterval(() => {
-      // metering is dBFS (≈ -160 silence … 0 clipping): gate room noise below -50, speech ≈ -35…-10,
-      // curved so normal talking fills most of the range; fast attack, slower release
+      // metering is dBFS (-160..0); speech sits around -45..-10 (same mapping as Murmur and the web).
+      // Rise at once, fall a little smoothed, so the bars track the voice without flicker.
       const db = r.getStatus().metering;
-      const x = db == null ? 0 : Math.pow(Math.max(0, Math.min(1, (db + 50) / 42)), 1.3);
-      lv.current = x > lv.current ? lv.current * 0.35 + x * 0.65 : lv.current * 0.82 + x * 0.18;
+      const x = db == null ? 0 : Math.max(0, Math.min(1, (db + 55) / 45));
+      lv.current = x >= lv.current ? x : lv.current * 0.55 + x * 0.45;
       setLevel(lv.current);
       setLevels((a) => [...a.slice(1), lv.current]);
       setSecs(Math.floor((Date.now() - startedAt.current) / 1000));
-    }, 60);
+    }, 50);
   }, []);
 
   /** Stop and return the file (null when shorter than 0.5 s). */

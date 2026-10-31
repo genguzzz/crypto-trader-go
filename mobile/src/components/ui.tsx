@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ActivityIndicator, Alert, Animated, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, ScrollView, Text, View, type RefreshControlProps, type StyleProp, type TextProps, type TextStyle, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FullWindowOverlay } from "react-native-screens";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { copy, haptic } from "@/lib/device";
@@ -333,9 +334,11 @@ export function ToastHost() {
     Animated.spring(anim, { toValue: msg ? 1 : 0, useNativeDriver: true, friction: 8 }).start();
   }, [msg, anim]);
   if (!msg) return null;
-  return (
-    <Animated.View pointerEvents="box-none" style={{ position: "absolute", left: 12, right: 12, bottom: insets.bottom + 70, zIndex: 300, opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }] }}>
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12, backgroundColor: colors.raised, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: msg.error ? colors.down : colors.borderStrong }}>
+  // A banner from the top, in its own window above everything (native sheets included: inside the
+  // app's root view it was hidden behind the AI panel and every pop-up).
+  const banner = (
+    <Animated.View pointerEvents="box-none" style={{ position: "absolute", left: 12, right: 12, top: insets.top + 6, zIndex: 300, opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-40, 0] }) }] }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12, backgroundColor: colors.raised, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: msg.error ? colors.down : colors.borderStrong, shadowColor: "#000", shadowOpacity: 0.5, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } }}>
         <Ionicons name={msg.error ? "alert-circle" : "checkmark-circle"} size={22} color={msg.error ? colors.down : colors.up} />
         <View style={{ flex: 1 }}>
           <Text style={{ color: colors.text, fontWeight: "600", fontSize: fs.xl }} numberOfLines={2}>{msg.title}</Text>
@@ -356,6 +359,7 @@ export function ToastHost() {
       </View>
     </Animated.View>
   );
+  return Platform.OS === "ios" ? <FullWindowOverlay>{banner}</FullWindowOverlay> : banner;
 }
 
 export const styles = {
