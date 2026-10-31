@@ -120,23 +120,30 @@ export default function AiScreen() {
     <Screen>
       {/* header: close the sheet, title, model switch, memory, history, new chat */}
       <GestureDetector gesture={pull}>
-      <View style={{ paddingTop: Platform.OS === "web" ? insets.top + 6 : 18, paddingLeft: 16, paddingRight: 8, paddingBottom: 8, flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: 1, borderColor: colors.border }}>
+      <View style={{ paddingTop: Platform.OS === "web" ? insets.top + 6 : 18, paddingLeft: 16, paddingRight: 8, paddingBottom: 8, flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.bg, zIndex: 2 }}>
         <Pressable hitSlop={10} accessibilityLabel="收起" onPress={() => { tap(); close(); }} style={({ pressed }) => ({ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderStrong, opacity: pressed ? 0.7 : 1 })}>
           <Ionicons name="chevron-down" size={18} color={colors.text} />
         </Pressable>
-        <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 7, minWidth: 0 }}>
-          <Orb size={14} ring={7} period={4000} glow={0.6} />
-          <Text numberOfLines={1} style={{ flex: 1, fontSize: fs.xl, fontWeight: "600", color: colors.text }}>{s.title || "AI 研究助手"}</Text>
-        </View>
-        <View accessibilityRole="radiogroup" accessibilityLabel="模型" style={{ flexDirection: "row", padding: 2, borderRadius: 9, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.borderStrong }}>
-          {AI_MODELS.map((o) => {
-            const on = s.model === o.value;
-            return (
-              <Pressable key={o.value} accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={() => { void haptic("select"); setModel(o.value); }} style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 7, backgroundColor: on ? colors.cardMuted : undefined, borderWidth: on ? 1 : 0, borderColor: "rgba(188,255,47,0.35)" }}>
-                <Text style={{ fontSize: fs.xs, color: on ? colors.text : colors.textFaint }}>{o.label}</Text>
-              </Pressable>
-            );
-          })}
+        {/* title with the model as a small toggle under it (the row is too narrow for a segmented switch) */}
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+            <Orb size={14} ring={7} period={4000} glow={0.6} />
+            <Text numberOfLines={1} style={{ flex: 1, fontSize: fs.xl, fontWeight: "600", color: colors.text }}>{s.title || "AI 研究助手"}</Text>
+          </View>
+          <Pressable
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={`模型：${AI_MODELS.find((o) => o.value === s.model)?.label ?? s.model}，点按切换`}
+            onPress={() => {
+              void haptic("select");
+              const i = AI_MODELS.findIndex((o) => o.value === s.model);
+              setModel(AI_MODELS[(i + 1) % AI_MODELS.length].value);
+            }}
+            style={{ flexDirection: "row", alignItems: "center", gap: 3, alignSelf: "flex-start", marginLeft: 21 }}
+          >
+            <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{AI_MODELS.find((o) => o.value === s.model)?.label ?? s.model}</Text>
+            <Ionicons name="swap-horizontal" size={11} color={colors.textFaint} />
+          </Pressable>
         </View>
         <HeadButton icon="bulb-outline" label="偏好与记忆" onPress={() => router.push("/ai-notes")} />
         <HeadButton icon="time-outline" label="历史对话" onPress={() => router.push("/ai-history")} />
@@ -144,7 +151,7 @@ export default function AiScreen() {
       </View>
       </GestureDetector>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1, overflow: "hidden" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView
           ref={scroller}
           style={{ flex: 1 }}
