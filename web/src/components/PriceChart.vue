@@ -654,11 +654,11 @@ h3 { display: flex; justify-content: space-between; align-items: center; flex-wr
 .map-tip .mt-tier { display: flex; align-items: center; gap: 4px; color: var(--text-3); }
 .map-tip .mt-tier i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .map-tip .mt-tier b { color: var(--text-1); font-weight: 500; }
-.planbar { gap: 8px; padding: 4px 8px; border-radius: 6px; background: rgba(188, 255, 47, .05); border: 1px solid rgba(188, 255, 47, .18); }
+.planbar { position: relative; gap: 4px 8px; padding: 4px 26px 4px 8px; border-radius: 6px; background: rgba(188, 255, 47, .05); border: 1px solid rgba(188, 255, 47, .18); }
 .planbar .st { padding: 0 6px; border-radius: 4px; background: var(--bg-3); color: var(--text-1); }
 .planbar .st.pending { color: var(--accent); }
 .planbar .st.active, .planbar .st.tp1 { color: #000; background: var(--accent); }
-.planbar .pb-x { all: unset; cursor: pointer; margin-left: auto; padding: 0 4px; color: var(--text-3); font-size: 15px; line-height: 1; }
+.planbar .pb-x { all: unset; cursor: pointer; position: absolute; top: 4px; right: 6px; padding: 2px 4px; color: var(--text-3); font-size: 15px; line-height: 1; }
 .planbar .inv { flex-basis: 100%; }
 .planbar b.up { color: var(--up); } .planbar b.down { color: var(--down); }
 .mapbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; font-size: var(--fs-xs); }
