@@ -27,8 +27,15 @@ const COLS = 4;
 const HOLD_MS = 260;
 const PIN_PX = 70;
 
-export function StatBoard({ tiles, onHold }: { tiles: Tile[]; onHold?: (holding: boolean) => void }) {
+export function StatBoard({ tiles, onHold, open }: { tiles: Tile[]; onHold?: (holding: boolean) => void; open?: { key: string; n: number } }) {
   const [deck, setDeck] = useState<number | null>(null);
+  // the page can open a card from elsewhere (e.g. the score bar next to the price)
+  const [seenOpen, setSeenOpen] = useState(0);
+  if (open && open.n !== seenOpen) {
+    setSeenOpen(open.n);
+    const i = tiles.findIndex((t) => t.key === open.key);
+    if (i >= 0) setDeck(i);
+  }
   const [peek, setPeek] = useState<number | null>(null);
   const [pin, setPin] = useState(false);
   const box = useRef<HostInstance>(null);

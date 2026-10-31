@@ -36,6 +36,7 @@ export default function InstrumentScreen() {
   const streamPx = useLivePrice(id, info?.last);
   const live = chartPx ?? streamPx;
   const [scrollOn, setScrollOn] = useState(true);
+  const [openCard, setOpenCard] = useState({ key: "", n: 0 });
   const tall = useSettings((s) => s.chartTall);
   const now = useNow();
 
@@ -130,13 +131,16 @@ export default function InstrumentScreen() {
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <Text style={[{ flex: 1, fontSize: 28, fontWeight: "700", color: toneColor(sign(ret24)), letterSpacing: -0.3 }, tnum]} numberOfLines={1} adjustsFontSizeToFit>{price(live)}</Text>
-              <View style={{ gap: 4, alignItems: "flex-end" }}>
-                <Chg label="24h" v={ret24} />
-                <Chg label="4h" v={ret4} />
+              <View style={{ width: 168, gap: 6 }}>
+                <View style={{ flexDirection: "row", gap: 4, justifyContent: "flex-end" }}>
+                  <Chg label="24h" v={ret24} />
+                  <Chg label="4h" v={ret4} />
+                </View>
+                <ScoreBar long={score?.long.score} short={score?.short.score} gate={score?.gate} rule={ruleName} onPress={() => { tap(); setOpenCard((o) => ({ key: "score", n: o.n + 1 })); }} />
               </View>
             </View>
             <View style={{ marginTop: 8, marginHorizontal: -6, borderTopWidth: 1, borderColor: colors.border }}>
-              <StatBoard tiles={tiles} onHold={(h) => setScrollOn(!h)} />
+              <StatBoard tiles={tiles} onHold={(h) => setScrollOn(!h)} open={openCard} />
             </View>
           </Card>
 
@@ -187,6 +191,31 @@ function fmtCountdown(ms: number) {
 function fundingTone(rate: number, intervalH: number) {
   const l = fundingLevel(rate, intervalH);
   return l === 3 ? colors.warn : l ? (rate > 0 ? colors.up : colors.down) : colors.text;
+}
+
+/** Long vs short score of the current rule as one split bar: the stronger side lit, the weaker dimmed. */
+function ScoreBar({ long, short, gate, rule, onPress }: { long?: number | null; short?: number | null; gate?: string; rule: string; onPress: () => void }) {
+  const has = long != null && short != null;
+  const l = has ? long! : 50, sh = has ? short! : 50;
+  const lead = !has ? null : l > sh ? "long" : sh > l ? "short" : null;
+  const blocked = gate && gate !== "PASS";
+  return (
+    <Pressable onPress={onPress} hitSlop={6} style={({ pressed }) => ({ gap: 3, opacity: pressed ? 0.7 : 1 })}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <Text style={[{ fontSize: fs.sm, fontWeight: "700", color: lead === "long" ? colors.up : colors.textSoft }, tnum]}>多 {has ? l.toFixed(0) : "—"}</Text>
+        <View style={{ flex: 1, height: 6, borderRadius: 3, overflow: "hidden", flexDirection: "row", backgroundColor: colors.cardMuted }}>
+          <View style={{ flex: l, backgroundColor: colors.up, opacity: lead === "long" ? 1 : 0.35 }} />
+          <View style={{ width: 2, backgroundColor: colors.card }} />
+          <View style={{ flex: sh, backgroundColor: colors.down, opacity: lead === "short" ? 1 : 0.35 }} />
+        </View>
+        <Text style={[{ fontSize: fs.sm, fontWeight: "700", color: lead === "short" ? colors.down : colors.textSoft }, tnum]}>{has ? sh.toFixed(0) : "—"} 空</Text>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+        {blocked ? <Text style={{ fontSize: 10.5, color: colors.warn }} numberOfLines={1}>{gate!.replace("BLOCKED:", "门槛：")}</Text> : <Text style={{ fontSize: 10.5, color: colors.textFaint, flexShrink: 1 }} numberOfLines={1}>{has ? rule : "评分预热中"}</Text>}
+        <Ionicons name="chevron-forward" size={10} color={colors.textDim} />
+      </View>
+    </Pressable>
+  );
 }
 
 function Chg({ label, v }: { label: string; v?: number | null }) {
