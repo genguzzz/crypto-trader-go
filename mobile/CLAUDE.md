@@ -33,6 +33,17 @@ iPhone OKX Helper ──HTTPS──▶ ctg.gugenzzz.top (ctg-prod nginx → ctg 
 - Device features only through `lib/device.ts` (`has(capability)` first — OTA code can run on an older binary). Runtime 1 ships the capability pack: glass, haptics, blur, symbols, secure-store, sqlite, local notifications, speech recognition, audio recording (microphone permission for AI voice), clipboard, sharing, linking, web-browser, WebView, network, keep-awake, quick actions, Face ID, orientation. Settings → 能力自检 exercises them.
 - Logging: `logger("area")` (ids, counts, timings, errors; never keys). Settings → 上传日志 → `data/mobile/logs/<id>.log`. Usage events: `track(name, props)` → `data/mobile/events/YYYY-MM-DD.jsonl`.
 
+## AI tab (`src/app/(tabs)/ai.tsx`)
+
+- Port of the web assistant (`web/src/composables/ai.ts`, `components/ai/*`); backend `internal/aigate` (chat.go, http.go, notes.go). When the web changes, port it here.
+- `lib/ai.ts`: one global chat store (`useAi()` re-renders per event, text deltas batched to 60 ms; `useAiSelect(pick)` for one value, e.g. the tab badge). POST `/api/v1/ai/chat` → SSE read through `expo/fetch` (real streaming body on iOS; plain fetch on web). Same connection logic as the web: `stream` (40 s silence watchdog, server pings every 15 s) / `sync` / `reconnect` (backoff 1 s→15 s, only while active) / `resume` (AppState active, expo-network back, tab focus). `syncSeq` makes older loads give way. Device keys (SecureStore; localStorage on web): `okxh.aiChat`, `okxh.aiPending`, `okxh.aiModel`.
+- `initAi()` runs from the tabs layout (resumes a running chat at app start). An answer that finishes while the tab is hidden sets `unread` (tab badge 新 + toast 查看); in background it also calls `notify()`.
+- All AI calls go through `kfetch` (owner key header when set; 401 `admin_required` asks once via AdminKeySheet).
+- Rendering: `components/ai/Markdown.tsx` (markdown-it → RN; app paths become lime chips mapped by `appRoute()`: `/instrument/X`, `/rules/<id>` → `/rules?id=`, `/trading*` → `/trade`, `/alerts`, `/status`, `/settings`, `/help*`, `/`; other links → in-app browser), `blocks.ts` (fenced JSON blocks, same as web), `AiBlock.tsx`, `AiSteps.tsx`, `Orb.tsx` (SVG gradient, no expo-linear-gradient).
+- Voice (`lib/voice.ts`): expo-audio recorder (m4a, metering → waveform) loaded lazily behind `has("audio")`; upload as multipart `audio` to `/api/v1/ai/transcribe`. Composer mic = tap to start / tap to send / ✕ cancel; the hello orb = hold to talk (slide up to cancel). The system tab bar can't take a long-press, so there is no hold-to-talk on the AI tab button.
+- Instrument page → 问 AI: `askAbout(id)` (starts a fresh chat unless one is running) + `router.navigate("/ai")`; the context chip in the composer clears it. History and memory are pushed screens (`app/ai-history.tsx`, `app/ai-notes.tsx`).
+- Test streaming against production with tiny questions (你好); the owner key only from `ssh ctg-prod 'grep ^CTG_ADMIN_KEY= /opt/ctg/ctg.env'` into an env var, never printed.
+
 ## Traps
 
 - `react-native-webview` 14 types `WebView` as `never` under strict TS; `ChartView.tsx` casts it to `ComponentType<WebViewProps>`.

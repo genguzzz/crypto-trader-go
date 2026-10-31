@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { api, type InstrumentInfo, type Row } from "@/lib/api";
 import { ago, catLabel, fieldValue, fundingLevel, fundingLevelText, logPct, num, pct, price, sign, sym, usd, time } from "@/lib/fmt";
+import { askAbout } from "@/lib/ai";
 import { toggleWatch, useLivePrice, useMeta, useRuleId, setRule } from "@/lib/market";
 import { mutate, useQuery } from "@/lib/query";
 import { useSettings } from "@/lib/settings";
@@ -74,9 +75,15 @@ export default function InstrumentScreen() {
           </View>
         }
         right={
-          <Pressable hitSlop={10} accessibilityLabel={info?.watch ? "取消自选" : "加入自选"} onPress={() => { tap(); void star(); }}>
-            <Ionicons name={info?.watch ? "star" : "star-outline"} size={22} color={info?.watch ? colors.gold : colors.textSoft} />
-          </Pressable>
+          <>
+            <Pressable hitSlop={10} accessibilityLabel="问 AI" onPress={() => { tap(); askAbout(id); router.navigate("/ai"); }} style={{ flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: colors.primarySoft }}>
+              <Ionicons name="sparkles" size={14} color={colors.primary} />
+              <Text style={{ fontSize: fs.sm, fontWeight: "600", color: colors.primary }}>问 AI</Text>
+            </Pressable>
+            <Pressable hitSlop={10} accessibilityLabel={info?.watch ? "取消自选" : "加入自选"} onPress={() => { tap(); void star(); }}>
+              <Ionicons name={info?.watch ? "star" : "star-outline"} size={22} color={info?.watch ? colors.gold : colors.textSoft} />
+            </Pressable>
+          </>
         }
       />
       {!info ? (
