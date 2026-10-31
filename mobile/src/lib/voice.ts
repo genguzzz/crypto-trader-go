@@ -161,13 +161,19 @@ export function useTapToTalk(opts: { onText: (text: string) => void; onError: (m
 
 const HOLD_MS = 260;
 const CANCEL_PX = 70;
+const NEW_PX = 70;
 
 /** Tap vs press-and-hold on one view (responder props): a tap calls onTap; holding records until
- *  release, then transcribes and calls onText. Sliding up by CANCEL_PX arms "release to cancel". */
-export function useHoldToTalk(opts: { onTap?: () => void; onText: (text: string) => void; onError: (msg: string) => void }) {
+ *  release, then transcribes and calls onText. Sliding up by CANCEL_PX arms "release to cancel";
+ *  with `newChat`, sliding left by NEW_PX arms "release to send as a new conversation" (onText gets
+ *  fresh = true). */
+export function useHoldToTalk(opts: { onTap?: () => void; onText: (text: string, fresh?: boolean) => void; onError: (msg: string) => void; newChat?: boolean }) {
   const rec = useRecorder();
   const [phase, setPhase] = useState<"idle" | "arming" | "rec" | "busy">("idle");
   const [cancelZone, setCancelZone] = useState(false);
+  const [newZone, setNewZone] = useState(false);
+  const fresh = useRef(false);
+  const startX = useRef(0);
   const ph = useRef<"idle" | "arming" | "rec" | "busy">("idle");
   const o = useRef(opts);
   useEffect(() => {
@@ -185,10 +191,13 @@ export function useHoldToTalk(opts: { onTap?: () => void; onText: (text: string)
   const handlers = {
     onStartShouldSetResponder: () => ph.current !== "busy",
     onResponderTerminationRequest: () => ph.current === "idle",
-    onResponderGrant: (e: { nativeEvent: { pageY: number } }) => {
+    onResponderGrant: (e: { nativeEvent: { pageX: number; pageY: number } }) => {
       startY.current = e.nativeEvent.pageY;
+      startX.current = e.nativeEvent.pageX;
       zone.current = false;
+      fresh.current = false;
       setCancelZone(false);
+      setNewZone(false);
       set("arming");
       timer.current = setTimeout(async () => {
         timer.current = null;
@@ -204,12 +213,18 @@ export function useHoldToTalk(opts: { onTap?: () => void; onText: (text: string)
         }
       }, HOLD_MS);
     },
-    onResponderMove: (e: { nativeEvent: { pageY: number } }) => {
+    onResponderMove: (e: { nativeEvent: { pageX: number; pageY: number } }) => {
       if (ph.current !== "rec") return;
       const z = startY.current - e.nativeEvent.pageY > CANCEL_PX;
+      const n = !z && !!o.current.newChat && startX.current - e.nativeEvent.pageX > NEW_PX;
       if (z !== zone.current) {
         zone.current = z;
         setCancelZone(z);
+        void haptic("select");
+      }
+      if (n !== fresh.current) {
+        fresh.current = n;
+        setNewZone(n);
         void haptic("select");
       }
     },
@@ -230,8 +245,11 @@ export function useHoldToTalk(opts: { onTap?: () => void; onText: (text: string)
         return;
       }
       set("busy");
+      const asNew = fresh.current;
+      fresh.current = false;
+      setNewZone(false);
       try {
-        await toText(await rec.stop(), o.current.onText, o.current.onError);
+        await toText(await rec.stop(), (t) => o.current.onText(t, asNew), o.current.onError);
       } catch (err) {
         o.current.onError(errText(err));
       } finally {
@@ -245,8 +263,10 @@ export function useHoldToTalk(opts: { onTap?: () => void; onText: (text: string)
       if (ph.current !== "busy") set("idle");
       zone.current = false;
       setCancelZone(false);
+      fresh.current = false;
+      setNewZone(false);
     },
   };
 
-  return { phase, cancelZone, levels: rec.levels, level: rec.level, secs: rec.secs, handlers };
+  return { phase, cancelZone, newZone, levels: rec.levels, level: rec.level, secs: rec.secs, handlers };
 }

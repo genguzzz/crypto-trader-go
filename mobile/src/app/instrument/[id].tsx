@@ -2,13 +2,12 @@
 // stat cards that open their detail, the web K-line chart in a WebView, live order book, relative
 // performance, OI and funding history, liquidations. Info polls every 5 s while shown.
 import { useEffect, useMemo, useState } from "react";
-import { Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { api, type InstrumentInfo, type Row } from "@/lib/api";
 import { ago, catLabel, fieldValue, fundingLevel, logPct, num, pct, price, sign, sym, usd } from "@/lib/fmt";
 import { askAbout } from "@/lib/ai";
-import { copy } from "@/lib/device";
 import { toggleWatch, useLivePrice, useMeta, useRuleId, setRule } from "@/lib/market";
 import { mutate, useQuery } from "@/lib/query";
 import { useSettings } from "@/lib/settings";
@@ -22,7 +21,7 @@ import { OrderBook } from "@/components/OrderBook";
 import { FundingDetail, OIDetail, SpotDetail, TurnoverDetail } from "@/components/StatDetails";
 import { StatBoard, type Tile } from "@/components/StatBoard";
 import { ExhaustionDetail, ExhaustionMeter, exhVerdict, useExhaustion } from "@/components/Exhaustion";
-import { Card, Dot, ErrorBox, Loading, PanelTitle, PickerSheet, Pull, Row as KvRow, Screen, Tag, TopBar, tap, toast, toastError, toneColor, styles } from "@/components/ui";
+import { Card, Dot, ErrorBox, Loading, PanelTitle, PickerSheet, Pull, Row as KvRow, Screen, Tag, TopBar, tap, toastError, toneColor, styles } from "@/components/ui";
 
 const statusText: Record<string, string> = { live: "实时", stale: "数据缺口，补洞中", warming: "预热中", new: "上市不足 12h" };
 
@@ -111,10 +110,6 @@ export default function InstrumentScreen() {
         }
         right={
           <>
-            <Pressable hitSlop={8} accessibilityLabel="在 OKX 打开" onPress={() => { tap(); void openInOkx(id); }} style={{ flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 12, backgroundColor: colors.cardMuted }}>
-              <Text style={{ fontSize: fs.sm, fontWeight: "700", color: colors.text }}>OKX</Text>
-              <Ionicons name="open-outline" size={12} color={colors.textSoft} />
-            </Pressable>
             <Pressable hitSlop={10} accessibilityLabel="问 AI" onPress={() => { tap(); askAbout(id); router.navigate("/ai"); }} style={{ flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: colors.primarySoft }}>
               <Ionicons name="sparkles" size={14} color={colors.primary} />
               <Text style={{ fontSize: fs.sm, fontWeight: "600", color: colors.primary }}>问 AI</Text>
@@ -185,15 +180,6 @@ export default function InstrumentScreen() {
   );
 }
 
-
-/** OKX has no documented deep link to one contract (its universal links cover only campaign / wallet
- *  paths), so this opens the contract's web trading page in Safari — trade there, or OKX's page offers
- *  to switch to the app — and puts the symbol on the clipboard for the app's search. */
-async function openInOkx(id: string) {
-  const ok = await copy(sym(id));
-  await Linking.openURL(`https://www.okx.com/trade-swap/${id.toLowerCase()}`);
-  if (ok) toast(`已复制 ${sym(id)}`, "在 OKX App 搜索框粘贴即可找到该合约");
-}
 
 function useNow() {
   const [now, setNow] = useState(() => Date.now());

@@ -8,7 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Orb } from "@/components/ai/Orb";
 import { toast } from "@/components/ui";
-import { send, setContext, useAiSelect } from "@/lib/ai";
+import { newChat, send, setContext, useAiSelect } from "@/lib/ai";
 import { colors, fs, tnum } from "@/lib/theme";
 import { VoiceWave } from "@/components/ai/VoiceWave";
 import { useHoldToTalk } from "@/lib/voice";
@@ -29,8 +29,10 @@ export function FloatingOrb() {
   const running = useAiSelect((a) => a.running);
   const unread = useAiSelect((a) => a.unread);
   const talk = useHoldToTalk({
+    newChat: true,
     onTap: () => open(pathname),
-    onText: (t) => {
+    onText: (t, fresh) => {
+      if (fresh) newChat(); // released in the 新对话 zone: start a fresh conversation (the coin page still sets context)
       open(pathname);
       void send(t);
     },
@@ -77,7 +79,7 @@ export function FloatingOrb() {
     <>
       {rec || busy ? (
         <View pointerEvents="none" style={{ position: "absolute", left: 0, right: 0, bottom: capsuleBottom, alignItems: "center", zIndex: 40 }}>
-          <View style={{ minWidth: 240, paddingHorizontal: 22, paddingTop: 12, paddingBottom: 12, borderRadius: 22, alignItems: "center", gap: 8, backgroundColor: "rgba(16,18,14,0.94)", borderWidth: 1, borderColor: talk.cancelZone ? "rgba(202,63,100,0.55)" : "rgba(188,255,47,0.25)", shadowColor: talk.cancelZone ? "#ca3f64" : "#bcff2f", shadowOpacity: 0.18, shadowRadius: 24, shadowOffset: { width: 0, height: 6 } }}>
+          <View style={{ minWidth: 240, paddingHorizontal: 22, paddingTop: 12, paddingBottom: 12, borderRadius: 22, alignItems: "center", gap: 8, backgroundColor: "rgba(16,18,14,0.94)", borderWidth: 1, borderColor: talk.cancelZone ? "rgba(202,63,100,0.55)" : talk.newZone ? "rgba(188,255,47,0.6)" : "rgba(188,255,47,0.25)", shadowColor: talk.cancelZone ? "#ca3f64" : "#bcff2f", shadowOpacity: 0.18, shadowRadius: 24, shadowOffset: { width: 0, height: 6 } }}>
             {rec ? (
               <>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -85,7 +87,13 @@ export function FloatingOrb() {
                   <Text style={[{ fontSize: fs.sm, color: colors.textSoft, minWidth: 30 }, tnum]}>{`${Math.floor(talk.secs / 60)}:${String(talk.secs % 60).padStart(2, "0")}`}</Text>
                 </View>
                 <VoiceWave level={talk.level} danger={talk.cancelZone} height={40} />
-                <Text style={{ fontSize: fs.sm, color: talk.cancelZone ? "#ff8aa5" : colors.textSoft }}>{talk.cancelZone ? "松开取消" : "松开发送 · 上滑取消"}</Text>
+                <Text style={{ fontSize: fs.sm, color: talk.cancelZone ? "#ff8aa5" : talk.newZone ? colors.primary : colors.textSoft }}>
+                  {talk.cancelZone ? "松开取消" : talk.newZone ? "松开发送到新对话" : "松开发送到当前对话"}
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <Target icon="add-circle-outline" label="← 新对话" on={talk.newZone} color={colors.primary} />
+                  <Target icon="close-circle-outline" label="↑ 取消" on={talk.cancelZone} color={colors.down} />
+                </View>
               </>
             ) : (
               <Text style={{ fontSize: fs.sm, color: colors.textSoft }}>识别中…</Text>
@@ -114,6 +122,17 @@ export function FloatingOrb() {
         </View>
       </Animated.View>
     </>
+  );
+}
+
+/** One of the release targets shown while recording: lit when the finger is in its zone. */
+function Target({ icon, label, on, color }: { icon: keyof typeof Ionicons.glyphMap; label: string; on: boolean; color: string }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, height: 28, borderRadius: 14, borderWidth: 1,
+      borderColor: on ? color : "rgba(255,255,255,0.12)", backgroundColor: on ? color : "rgba(255,255,255,0.04)", transform: [{ scale: on ? 1.06 : 1 }] }}>
+      <Ionicons name={icon} size={14} color={on ? "#000" : colors.textSoft} />
+      <Text style={{ fontSize: fs.sm, fontWeight: on ? "700" : "400", color: on ? "#000" : colors.textSoft }}>{label}</Text>
+    </View>
   );
 }
 
