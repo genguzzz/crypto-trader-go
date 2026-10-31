@@ -14,6 +14,7 @@ import { VoiceWave } from "@/components/ai/VoiceWave";
 import { useHoldToTalk } from "@/lib/voice";
 
 const SIZE = 54; // web .orb
+const NEW_DX = 96; // centre of the 新对话 bubble, left of the orb centre (the zone starts at 70 px, lib/voice.ts)
 const TAB_ROUTES = new Set(["/", "/trade"]);
 const HIDDEN = [/^\/ai/, /^\/chart\//, /^\/settings/, /^\/diagnostics/];
 
@@ -88,12 +89,8 @@ export function FloatingOrb() {
                 </View>
                 <VoiceWave level={talk.level} danger={talk.cancelZone} height={40} />
                 <Text style={{ fontSize: fs.sm, color: talk.cancelZone ? "#ff8aa5" : talk.newZone ? colors.primary : colors.textSoft }}>
-                  {talk.cancelZone ? "松开取消" : talk.newZone ? "松开发送到新对话" : "松开发送到当前对话"}
+                  {talk.cancelZone ? "松开取消" : talk.newZone ? "松开发送到新对话" : "松开发送 · 上滑取消 · 左滑新对话"}
                 </Text>
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  <Target icon="add-circle-outline" label="← 新对话" on={talk.newZone} color={colors.primary} />
-                  <Target icon="close-circle-outline" label="↑ 取消" on={talk.cancelZone} color={colors.down} />
-                </View>
               </>
             ) : (
               <Text style={{ fontSize: fs.sm, color: colors.textSoft }}>识别中…</Text>
@@ -117,6 +114,7 @@ export function FloatingOrb() {
               <Ionicons name={rec ? "mic" : "sparkles"} size={22} color="#f4ffe0" style={{ textShadowColor: "rgba(188,255,47,0.55)", textShadowRadius: 6, textShadowOffset: { width: 0, height: 0 } }} />
             </Orb>
           </Animated.View>
+          {rec ? <NewChatBubble on={talk.newZone} /> : null}
           {running ? <Satellite /> : null}
           {unread && !running ? <View pointerEvents="none" style={{ position: "absolute", top: 2, right: 2, width: 11, height: 11, borderRadius: 6, backgroundColor: colors.warn, borderWidth: 2, borderColor: "#000" }} /> : null}
         </View>
@@ -125,13 +123,16 @@ export function FloatingOrb() {
   );
 }
 
-/** One of the release targets shown while recording: lit when the finger is in its zone. */
-function Target({ icon, label, on, color }: { icon: keyof typeof Ionicons.glyphMap; label: string; on: boolean; color: string }) {
+/** The 新对话 target left of the orb while recording (slide the finger onto it and let go): lit and
+ *  grown when the finger is in its zone. */
+function NewChatBubble({ on }: { on: boolean }) {
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, height: 28, borderRadius: 14, borderWidth: 1,
-      borderColor: on ? color : "rgba(255,255,255,0.12)", backgroundColor: on ? color : "rgba(255,255,255,0.04)", transform: [{ scale: on ? 1.06 : 1 }] }}>
-      <Ionicons name={icon} size={14} color={on ? "#000" : colors.textSoft} />
-      <Text style={{ fontSize: fs.sm, fontWeight: on ? "700" : "400", color: on ? "#000" : colors.textSoft }}>{label}</Text>
+    <View pointerEvents="none" style={{ position: "absolute", left: SIZE / 2 - NEW_DX - 30, top: SIZE / 2 - 30, width: 60, alignItems: "center", gap: 4 }}>
+      <View style={{ width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", borderWidth: 1.5,
+        borderColor: on ? colors.primary : "rgba(255,255,255,0.18)", backgroundColor: on ? colors.primary : "rgba(16,18,14,0.92)", transform: [{ scale: on ? 1.15 : 1 }] }}>
+        <Ionicons name="add" size={24} color={on ? "#000" : colors.textSoft} />
+      </View>
+      <Text style={{ fontSize: fs.xs, fontWeight: on ? "700" : "400", color: on ? colors.primary : colors.textSoft }}>新对话</Text>
     </View>
   );
 }
