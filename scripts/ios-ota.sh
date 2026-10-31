@@ -40,9 +40,13 @@ console.log(JSON.stringify({ version, runtime, message, commit, createdAt: new D
 ' "$VERSION" "$RUNTIME" "$MESSAGE" "$COMMIT" > "$MANIFEST"
 
 echo "uploading bundle $VERSION (runtime $RUNTIME, $COMMIT)…"
+# An existing version dir is reused only when complete: a dist rebuilt mid-upload (e.g. by a parallel
+# deploy) once left a partial bundle that later runs skipped.
+NFILES=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).files.length)' "$MANIFEST")
 tar -C dist --exclude='./.*' -czf - . | ssh "$HOST" "set -e
   mkdir -p $ROOT && cd $ROOT
-  if [ ! -d $VERSION ]; then rm -rf .$VERSION.part && mkdir .$VERSION.part && tar -xzf - -C .$VERSION.part --no-same-owner && chmod -R a+rX .$VERSION.part && mv .$VERSION.part $VERSION; else cat >/dev/null; fi"
+  if [ ! -d $VERSION ] || [ \$(find $VERSION -type f | wc -l) -lt $NFILES ]; then rm -rf .$VERSION.part && mkdir .$VERSION.part && tar -xzf - -C .$VERSION.part --no-same-owner && chmod -R a+rX .$VERSION.part && rm -rf $VERSION && mv .$VERSION.part $VERSION; else cat >/dev/null; fi
+  [ \$(find $VERSION -type f | wc -l) -ge $NFILES ] || { echo 'upload incomplete: dist changed during the upload' >&2; exit 1; }"
 ssh "$HOST" "set -e; cd $ROOT; cat > .manifest.tmp && chmod 644 .manifest.tmp && mv .manifest.tmp manifest.json
   ls -1t | grep -v '^manifest.json\$' | grep -vx '$VERSION' | tail -n +$KEEP | xargs -r rm -rf" < "$MANIFEST"
 rm -f "$MANIFEST"
