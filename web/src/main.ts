@@ -44,6 +44,7 @@ const router = createRouter({
     { path: '/settings', component: SettingsView },
     { path: '/dev', component: Dev },
     { path: '/embed/chart/:id', component: () => import('./views/EmbedChart.vue'), props: true },
+    { path: '/embed/trades/:accountId', component: () => import('./views/EmbedTrades.vue'), props: true },
   ],
   scrollBehavior: (_to, _from, saved) => saved || { top: 0 },
 })

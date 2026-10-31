@@ -6,6 +6,7 @@ import { DrawerEdge, DrawerHost } from "@/components/Drawer";
 import { toast } from "@/components/ui";
 import { initAi, useAiSelect } from "@/lib/ai";
 import { colors } from "@/lib/theme";
+import { useOpenPrompts } from "@/lib/tradeLive";
 
 // Four daily screens on the system tab bar (Liquid Glass on iOS 26+); rules, monitoring, status,
 // help, settings and Dev live in the left drawer.
@@ -16,6 +17,7 @@ export default function TabsLayout() {
   useEffect(() => {
     if (unread) toast("AI 回答好了", undefined, { label: "查看", onPress: () => router.navigate("/ai") });
   }, [unread]);
+  const prompts = useOpenPrompts(); // open confirmations: badge on 交易 (web nav badge)
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <NativeTabs tintColor={colors.primary} minimizeBehavior="onScrollDown">
@@ -35,6 +37,7 @@ export default function TabsLayout() {
         <NativeTabs.Trigger name="trade">
           <NativeTabs.Trigger.Icon sf={{ default: "chart.line.uptrend.xyaxis", selected: "chart.line.uptrend.xyaxis" }} md="candlestick_chart" />
           <NativeTabs.Trigger.Label>交易</NativeTabs.Trigger.Label>
+          <NativeTabs.Trigger.Badge hidden={!prompts}>{prompts ? String(prompts) : undefined}</NativeTabs.Trigger.Badge>
         </NativeTabs.Trigger>
       </NativeTabs>
       <DrawerEdge />

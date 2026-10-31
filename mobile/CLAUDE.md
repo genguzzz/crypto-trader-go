@@ -46,6 +46,15 @@ iPhone OKX Helper ──HTTPS──▶ ctg.gugenzzz.top (ctg-prod nginx → ctg 
 - Instrument page → 问 AI: `askAbout(id)` (starts a fresh chat unless one is running) + `router.navigate("/ai")`; the context chip in the composer clears it. History and memory are pushed screens (`app/ai-history.tsx`, `app/ai-notes.tsx`).
 - Test streaming against production with tiny questions (你好); the owner key only from `ssh ctg-prod 'grep ^CTG_ADMIN_KEY= /opt/ctg/ctg.env'` into an env var, never printed.
 
+## 交易 tab (paper trading, port of web views/trading/*)
+
+- `app/(tabs)/trade.tsx`: segmented sub-navigation 账户 · 策略库 · 待确认 · AI 决策 (`?pane=accounts|strategies|prompts|ai`), one pane each in `components/trade/*Pane.tsx`. Pushed screens: `trading/account/[id]` (KPIs, explorer, 持仓/委托/历史/成交/流水, instances, signals, 入金 / 风控 / 全部平仓 / 归档), `trading/backtest/[id]` (report), `trading/new` (4-step wizard; `?mode=backtest&strategy=` / `?from=<accountId>`), `trading/strategy?version=|source=` (read-only code with syntax colors, check / publish for drafts; editing and trial runs open the web editor in the in-app browser).
+- API + types: `lib/tradeApi.ts` (web/src/tradeApi.ts); labels, formatting, validation: `lib/tradeMeta.ts` (web components/trade/meta.ts + tradeMeta.ts — keep the Chinese copy identical); strategy templates `lib/strategyTemplates.ts` (copy of web editor/templates.ts). Owner-key writes (sources, check, trial, AI memory reflect) go through `req`'s AdminKeySheet retry like everything else.
+- Live refresh: `lib/tradeLive.ts` — `useTradeEvents` (stream `trade` / `interact` events via `market.onStreamEvent`, focused screens only) and `useOpenPrompts` (30 s poll + `interact` events) → badge on the 交易 tab (`NativeTabs.Trigger.Badge`) and on 待确认.
+- Charts: equity + drawdown are native (`TradeExplorer.EquityChart` on `Charts.LineChart`); 币对视角 is the web `TradeCandleChart` in a WebView: `/embed/trades/:accountId?inst=&trade=` (web `views/EmbedTrades.vue`, lives on `main`). The app selects a trade with `injectJavaScript("window.ctgSelect(id)")`; the page posts `{type:'pick', ids}`. Key the view by instrument (another instrument = fresh page).
+- InfoTip text from the web is an (i) button → sheet (`components/trade/common.tsx InfoTip`). Forms with inputs use `FormSheet` (keyboard-avoiding), not `Sheet`.
+- Testing: never write to production from previews (no accounts, instance actions, answers, publishes). The preview server should proxy GET only.
+
 ## Traps
 
 - Number inputs inside rows: RN-web gives `TextInput` an intrinsic width; `NumInput` sets `minWidth: 0` so values don't render outside the box.
