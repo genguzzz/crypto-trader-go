@@ -119,6 +119,8 @@ export interface FadePlan { side: "long" | "short"; entryLo: number; entryHi: nu
 export interface Exhaustion {
   instId: string; bar: string; t: number; last: number; top: number; bottom: number; atTop: number; atBottom: number;
   topItems: ExhaustionItem[]; bottomItems: ExhaustionItem[]; atr: number; ema20: number; high: number; low: number; plan?: FadePlan;
+  /** shorting vetoed: crowded shorts (funding ≤ −0.05%/settlement, or negative and >15% above 1H EMA24) */
+  squeeze?: boolean; squeezeWhy?: string;
 }
 export interface Liquidations { bars: LiqBar[]; since: number; recent?: LiqEvent[]; err?: string; syncing?: boolean }
 export interface Coin { id: string; symbol: string; name: string; rank: number; marketCap: number; fdv: number; circulating: number; total: number; max: number; updatedAt: string; fetchedAt: number }

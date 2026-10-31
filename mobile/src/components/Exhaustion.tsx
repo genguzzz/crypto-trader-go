@@ -41,6 +41,7 @@ export function ExhaustionMeter({ d, onPress }: { d?: Exhaustion; onPress: () =>
         <Text style={{ fontWeight: "700", color: c }}>{d ? v : "—"}</Text>
       </Text>
       {d ? <Segs v={v} color={c} /> : null}
+      {d?.squeeze ? <Text style={{ fontSize: fs.xs, fontWeight: "700", color: colors.warn }} numberOfLines={1}>轧空风险</Text> : null}
     </Pressable>
   );
 }
@@ -91,6 +92,15 @@ export function ExhaustionDetail({ id }: { id: string }) {
         <Segmented small value={bar} onChange={setBar} options={["15m", "1H", "4H"].map((v) => ({ value: v, label: v }))} />
       </View>
       {!d ? <Text style={styles.note}>{error || "计算中…"}</Text> : null}
+      {d?.squeeze ? (
+        <View style={{ flexDirection: "row", gap: 8, padding: 10, marginBottom: 12, borderRadius: 10, backgroundColor: colors.warnBg, borderWidth: 1, borderColor: colors.warn }}>
+          <Ionicons name="warning" size={16} color={colors.warn} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={{ fontSize: fs.sm, fontWeight: "700", color: colors.warn }}>轧空风险，不宜做空</Text>
+            <Text style={{ fontSize: fs.xs, lineHeight: 17, color: colors.textSoft }}>{d.squeezeWhy}。半年 OKX 山寨暴涨回测：这种状态 24 小时内再涨 20% 的概率 43%（全部暴涨状态 29%），做空还要持续付资金费。</Text>
+          </View>
+        </View>
+      ) : null}
       {sides.map((s) => <Side key={s.title} {...s} />)}
       {d && p && Math.max(d.top, d.bottom) >= 30 ? (
         <View style={{ padding: 12, borderRadius: 10, backgroundColor: colors.cardMuted, gap: 4 }}>
@@ -101,7 +111,7 @@ export function ExhaustionDetail({ id }: { id: string }) {
         </View>
       ) : null}
       <Text style={[styles.note, { marginTop: 10 }]}>
-        每项按区间映射成 0–1 再乘权重：偏离 EMA20（ATR）、本轮涨跌幅、量能爆量、影线或回落、RSI 与背离、被挤方向的爆仓、资金费分位、近 3 根主动流；总分再乘“是否处在近 30 根的高/低位”。与 AI 分析里的 rev 是同一套清单，属于经验规则，未经回测验证。
+        注意：这是经验清单，权重和阈值是人为设定的。半年 OKX 数据里，影线、RSI、主动流等单项预测涨跌方向的 AUC 都约 0.5（接近抛硬币），它们更多说明“会大幅波动”，而不是往哪边走；目前唯一有回测支持的是上面的轧空否决。正在用历史数据重新验证和优化。{"\n"}每项按区间映射成 0–1 再乘权重：偏离 EMA20（ATR）、本轮涨跌幅、量能爆量、影线或回落、RSI 与背离、被挤方向的爆仓、资金费分位、近 3 根主动流；总分再乘“是否处在近 30 根的高/低位”。与 AI 分析里的 rev 是同一套清单，属于经验规则，未经回测验证。
       </Text>
     </View>
   );
