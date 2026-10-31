@@ -481,6 +481,16 @@ func (s *Service) persist(c ChannelConfig) error { // chMu held
 }
 
 // Test sends a test message through one channel using the saved configuration.
+// Notify sends a free-form message to the Telegram channel when one is configured (used by the AI
+// chat to say an answer is ready); without a channel it does nothing.
+func (s *Service) Notify(ctx context.Context, text string) error {
+	cfg := s.channels()
+	if !cfg.Telegram.Configured() {
+		return nil
+	}
+	return s.send.telegram(ctx, cfg.Telegram, text)
+}
+
 func (s *Service) Test(ctx context.Context, name string) error {
 	cfg := s.channels()
 	now := time.Now()

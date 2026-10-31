@@ -21,8 +21,12 @@ export const ai = reactive({
   running: false,
   chats: [] as ChatSummary[],
   error: '',
-  /** set by the orb when an answer finished while the panel was closed */
+  /** set when an answer finished while the panel was closed (orb dot) */
   unread: false,
+  /** the stream dropped and we are polling the server back */
+  reconnecting: false,
+  /** the chat's last question has no answer and nothing runs (server restarted): offer retry */
+  interrupted: false,
   /** instrument the owner is looking at (route /instrument/:id) */
   instId: '',
   /** model for the next turn (remembered on this device) */
@@ -115,13 +119,14 @@ function apply(ev: any) {
 }
 
 /** Read an SSE response body and apply its events until it ends. */
-async function pump(r: Response) {
+async function pump(r: Response, onEvent: (ev: any) => void, onData: () => void) {
   const reader = r.body!.getReader()
   const dec = new TextDecoder()
   let buf = ''
   for (;;) {
     const { value, done } = await reader.read()
     if (done) break
+    onData()
     buf += dec.decode(value, { stream: true })
     let i
     while ((i = buf.indexOf('\n\n')) >= 0) {
@@ -129,46 +134,77 @@ async function pump(r: Response) {
       buf = buf.slice(i + 2)
       for (const line of block.split('\n')) {
         if (!line.startsWith('data: ')) continue
-        try { apply(JSON.parse(line.slice(6))) } catch { /* partial or keep-alive */ }
+        let ev: any
+        try { ev = JSON.parse(line.slice(6)) } catch { continue }
+        onEvent(ev)
+        apply(ev)
       }
     }
   }
 }
 
-async function stream(open: () => Promise<Response>) {
+// ---- connection: a turn runs on the server; the app only watches it and can always pick it up again ----
+const CHAT_KEY = 'ctg.aiChat' // the chat on screen, reopened after an app restart
+const PENDING_KEY = 'ctg.aiPending' // a chat whose answer we have not seen finish yet
+const STALE_MS = 40_000 // the server pings every 15 s: this much silence means the stream is dead
+const saved = (k: string) => Number(localStorage.getItem(k) || 0)
+function setChat(id: number) { ai.chatId = id; id ? localStorage.setItem(CHAT_KEY, String(id)) : localStorage.removeItem(CHAT_KEY) }
+function setPending(id: number) { id ? localStorage.setItem(PENDING_KEY, String(id)) : localStorage.removeItem(PENDING_KEY) }
+
+/** Stream one response; resolves true when the turn ended (done/error event), false when the stream dropped. */
+async function stream(open: (signal: AbortSignal) => Promise<Response>): Promise<boolean> {
   abort?.abort()
   const ac = new AbortController()
   abort = ac
   ai.running = true
   ai.error = ''
+  let last = Date.now(), ended = false
+  const dog = window.setInterval(() => { if (Date.now() - last > STALE_MS) ac.abort() }, 5000)
+  const onEvent = (ev: any) => {
+    last = Date.now()
+    if (ev.type === 'chat') setChat(ev.chatId)
+    if (ev.type === 'done' || ev.type === 'error') {
+      ended = true
+      if (!ai.open) ai.unread = true
+    }
+    if (ev.type === 'idle') ended = true // re-attached to a turn that had already finished
+  }
   try {
-    const r = await open()
+    const r = await open(ac.signal)
     if (!r.ok) throw await errorOf(r)
-    await pump(r)
+    await pump(r, onEvent, () => (last = Date.now()))
   } catch (e: any) {
-    if (ac.signal.aborted) return
-    // the stream dropped (app in background, network): the run goes on server-side, pick it up again
-    ai.error = e.message || String(e)
+    if (abort !== ac) return true // replaced by a newer stream (new chat, reopened chat)
+    if (!ac.signal.aborted || !ended) ai.error = ac.signal.aborted ? '连接超时' : e.message || String(e)
   } finally {
+    clearInterval(dog)
     if (abort === ac) {
       abort = null
       ai.running = false
-      const m = ai.msgs[ai.msgs.length - 1]
-      if (m?.live && !ai.error) m.live = false
-      if (!ai.open) ai.unread = true
     }
   }
+  return ended
 }
 
-export async function send(text: string) {
+export async function send(text: string, retry = false) {
   text = text.trim()
-  if (!text || ai.running) return
-  ai.msgs.push({ role: 'user', parts: [{ t: 'text', v: text }] })
-  if (!ai.chatId) ai.title = text.slice(0, 40)
-  const body = JSON.stringify({ chatId: ai.chatId || 0, message: text, instId: ai.instId, model: ai.model })
-  await stream(() => kfetch('/api/v1/ai/chat', { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, signal: abort!.signal }))
-  if (ai.error && ai.chatId) await reattach() // dropped mid-answer: reload what was saved / keep following
+  if ((!text && !retry) || ai.running) return
+  if (retry) {
+    const m = ai.msgs[ai.msgs.length - 1]
+    if (m?.role === 'assistant') ai.msgs.pop() // the failed answer is replaced
+  } else {
+    ai.msgs.push({ role: 'user', parts: [{ t: 'text', v: text }] })
+    if (!ai.chatId) ai.title = text.slice(0, 40)
+  }
+  ai.interrupted = false
+  const body = JSON.stringify({ chatId: ai.chatId || 0, message: text, instId: ai.instId, model: ai.model, retry })
+  const ended = await stream(signal => kfetch('/api/v1/ai/chat', { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, signal }))
+  if (ai.chatId) setPending(ended ? 0 : ai.chatId)
+  if (!ended && ai.chatId) await reconnect()
 }
+
+/** Re-run the last question after an error or an interrupted answer. */
+export const retry = () => send('', true)
 
 export async function stop() {
   if (!ai.chatId) return
@@ -181,37 +217,78 @@ function fromStored(m: StoredMsg): Msg {
   return { id: m.id, role: m.role, parts, error: m.error, costUsd: m.costUsd, latencyMs: m.latencyMs }
 }
 
-/** Load a chat; when it is still running, follow its live events. */
+/** Load a chat from the server; when it is still running, follow its live events. */
 export async function openChat(id: number) {
   abort?.abort()
+  abort = null
   const r = await fetch(`/api/v1/ai/chats/${id}`)
-  if (!r.ok) throw await errorOf(r)
+  if (!r.ok) {
+    if (r.status === 404 && id === ai.chatId) newChat()
+    throw await errorOf(r)
+  }
   const c = await r.json()
-  ai.chatId = c.id
+  setChat(c.id)
   ai.title = c.title
   ai.msgs = (c.messages as StoredMsg[]).map(fromStored)
+  ai.interrupted = !!c.interrupted
   ai.error = ''
-  if (c.running) await follow()
+  ai.reconnecting = false
+  if (c.running) {
+    setPending(c.id)
+    ai.msgs.push({ role: 'assistant', parts: [], live: true }) // the stream replays this turn from its start
+    const ended = await stream(signal => fetch(`/api/v1/ai/chats/${c.id}/stream`, { signal }))
+    if (!ended) return reconnect()
+    return openChat(c.id) // load the stored answer (complete, with every step's result)
+  }
+  if (saved(PENDING_KEY) === c.id) {
+    setPending(0)
+    if (!ai.open) ai.unread = true
+  }
 }
 
-async function follow() {
-  ai.msgs.push({ role: 'assistant', parts: [], live: true }) // the stream replays this turn's events from the start
-  await stream(() => fetch(`/api/v1/ai/chats/${ai.chatId}/stream`, { signal: abort!.signal }))
-}
-
-async function reattach() {
+let reconnecting: Promise<void> | null = null
+/** The stream dropped (background, network, server restart): poll back with backoff until the turn is over. */
+function reconnect(): Promise<void> {
+  if (reconnecting) return reconnecting
   const id = ai.chatId
-  await new Promise(r => setTimeout(r, 1500))
-  if (ai.chatId === id) await openChat(id).catch(() => {})
+  ai.reconnecting = true
+  reconnecting = (async () => {
+    for (let i = 0; i < 8 && ai.chatId === id; i++) {
+      await new Promise(r => setTimeout(r, Math.min(15_000, 1000 * 2 ** i)))
+      if (document.visibilityState === 'hidden' || ai.chatId !== id) break // resume() picks it up on return
+      try { reconnecting = null; await openChat(id); return } catch { /* offline: try again */ }
+    }
+  })().finally(() => { reconnecting = null; if (ai.chatId === id) ai.reconnecting = false })
+  return reconnecting
+}
+
+/** App back in front / network back / panel opened: catch up with the chat on screen or the one left running. */
+export async function resume() {
+  if (ai.running && abort) return // a live stream is still flowing
+  const id = ai.chatId || saved(CHAT_KEY)
+  if (!id) return
+  const pending = saved(PENDING_KEY) === id
+  if (!ai.chatId && !pending && !ai.open) return // nothing in flight: load lazily when the panel opens
+  await openChat(id).catch(() => {})
+}
+
+if (typeof window !== 'undefined') {
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resume() })
+  window.addEventListener('online', () => resume())
+  window.addEventListener('pageshow', () => resume())
 }
 
 export function newChat() {
   abort?.abort()
-  ai.chatId = 0
+  abort = null
+  setChat(0)
+  setPending(0)
   ai.title = ''
   ai.msgs = []
   ai.error = ''
   ai.running = false
+  ai.interrupted = false
+  ai.reconnecting = false
 }
 
 export async function loadChats() {

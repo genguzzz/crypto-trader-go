@@ -45,6 +45,13 @@ type Agent struct {
 	SandboxToken string `json:"sandboxToken"`
 }
 
+// SetNotify sets where "answer ready" messages go when nobody was watching a chat finish.
+func (g *Gate) SetNotify(f func(ctx context.Context, text string) error) {
+	g.mu.Lock()
+	g.notify = f
+	g.mu.Unlock()
+}
+
 // SetAgent configures the chat agent's tools and pushes them to a connected worker.
 func (g *Gate) SetAgent(a Agent) {
 	g.mu.Lock()
@@ -55,15 +62,17 @@ func (g *Gate) SetAgent(a Agent) {
 
 // Chat is one conversation.
 type Chat struct {
-	ID       int64       `json:"id"`
-	Created  int64       `json:"created"`
-	Updated  int64       `json:"updated"`
-	Title    string      `json:"title"`
-	InstID   string      `json:"instId,omitempty"`
-	CostUSD  float64     `json:"costUsd"`
-	Running  bool        `json:"running"`
-	Messages []ChatMsg   `json:"messages,omitempty"`
-	Events   []chatEvent `json:"events,omitempty"` // a running chat: events so far
+	ID      int64   `json:"id"`
+	Created int64   `json:"created"`
+	Updated int64   `json:"updated"`
+	Title   string  `json:"title"`
+	InstID  string  `json:"instId,omitempty"`
+	CostUSD float64 `json:"costUsd"`
+	Running bool    `json:"running"`
+	// Interrupted: the last turn has no answer and nothing is running (the server restarted mid-answer).
+	Interrupted bool        `json:"interrupted,omitempty"`
+	Messages    []ChatMsg   `json:"messages,omitempty"`
+	Events      []chatEvent `json:"events,omitempty"` // a running chat: events so far
 }
 
 // ChatMsg is one stored turn. Steps are the tool calls of an assistant turn.
@@ -101,14 +110,17 @@ func (r *chatRun) publish(ev chatEvent) {
 	}
 }
 
-func (r *chatRun) finish() {
+// finish ends the run; it reports whether a client was streaming it at that moment.
+func (r *chatRun) finish() (watched bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	watched = len(r.subs) > 0
 	r.done = true
 	for ch := range r.subs {
 		close(ch)
 	}
 	r.subs = nil
+	return watched
 }
 
 // subscribe returns the events so far and a channel for the rest (closed at the end).
@@ -142,6 +154,9 @@ type ChatInput struct {
 	Message string `json:"message"`
 	InstID  string `json:"instId"` // the instrument page the owner is on (context only)
 	Model   string `json:"model"`  // one of ChatModels; empty = the configured model
+	// Retry re-runs the chat's last question (after an error or an interrupted turn) instead of
+	// adding a new one; Message is ignored.
+	Retry bool `json:"retry"`
 }
 
 // ChatModels the app may pick per turn.
@@ -154,6 +169,16 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	in.Message = strings.TrimSpace(in.Message)
 	if in.Model != "" && !slices.Contains(ChatModels, in.Model) {
 		return 0, errors.New("unknown model")
+	}
+	if in.Retry {
+		if in.ChatID == 0 || g.run(in.ChatID) != nil {
+			return 0, errors.New("nothing to retry")
+		}
+		q, err := g.lastQuestion(in.ChatID)
+		if err != nil {
+			return 0, err
+		}
+		in.Message = q
 	}
 	if in.Message == "" {
 		return 0, errors.New("empty message")
@@ -198,7 +223,10 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	}
 	g.runs[in.ChatID] = run
 	g.runMu.Unlock()
-	if _, err := g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content) VALUES(?,?,?,?)`, in.ChatID, now, "user", in.Message); err != nil {
+	if in.Retry {
+		// drop the failed answer (if any) so the question is answered once
+		g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=? AND role='assistant' AND id > (SELECT MAX(id) FROM ai_chat_msgs WHERE chat_id=? AND role='user')`, in.ChatID, in.ChatID)
+	} else if _, err := g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content) VALUES(?,?,?,?)`, in.ChatID, now, "user", in.Message); err != nil {
 		g.endRun(in.ChatID)
 		return 0, err
 	}
@@ -250,9 +278,49 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		} else {
 			run.publish(evJSON(map[string]any{"type": "done", "text": out.Text, "cost": out.Cost, "latencyMs": lat}))
 		}
-		run.finish()
+		if !run.finish() && errText != "已停止" {
+			g.notifyDone(in.ChatID, out.Text, errText)
+		}
 	}()
 	return in.ChatID, nil
+}
+
+func (g *Gate) lastQuestion(chat int64) (string, error) {
+	var q string
+	err := g.st.DB.QueryRow(`SELECT content FROM ai_chat_msgs WHERE chat_id=? AND role='user' ORDER BY id DESC LIMIT 1`, chat).Scan(&q)
+	if err != nil {
+		return "", errors.New("chat has no question")
+	}
+	return q, nil
+}
+
+// notifyDone tells the owner (Telegram, when configured) that an answer nobody was watching is ready.
+func (g *Gate) notifyDone(chat int64, text, errText string) {
+	g.mu.Lock()
+	f := g.notify
+	g.mu.Unlock()
+	if f == nil {
+		return
+	}
+	var title string
+	g.st.DB.QueryRow(`SELECT title FROM ai_chats WHERE id=?`, chat).Scan(&title)
+	msg := "OKX Helper AI · " + title + "\n"
+	if errText != "" {
+		msg += "回答失败：" + errText
+	} else {
+		r := []rune(strings.TrimSpace(text))
+		if len(r) > 600 {
+			r = append(r[:600], '…')
+		}
+		msg += string(r)
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := f(ctx, msg); err != nil {
+			g.logf("aigate: notify: %v", err)
+		}
+	}()
 }
 
 func (g *Gate) endRun(id int64) {
@@ -325,6 +393,9 @@ func (g *Gate) ChatByID(id int64) (*Chat, error) {
 		c.Messages = append(c.Messages, m)
 	}
 	c.Running = g.run(id) != nil
+	if n := len(c.Messages); !c.Running && n > 0 && c.Messages[n-1].Role == "user" {
+		c.Interrupted = true
+	}
 	return &c, rows.Err()
 }
 

@@ -126,6 +126,7 @@ func main() {
 	}
 	gate.SetAgent(aigate.Agent{MCPURL: "http://" + mcpHost + devapi.MCPPath, MCPToken: dev.InternalKey("ai-agent", 600, 120),
 		SandboxToken: dev.InternalKey("ai-sandbox", 120, 30)})
+	gate.SetNotify(al.Notify) // "answer ready" for chats nobody was watching (Telegram channel, if set)
 	gate.SetApplyParams(func(instanceID int64, params map[string]float64) error {
 		_, err := tsvc.UpdateInstance(instanceID, trade.InstancePatch{Params: params})
 		return err

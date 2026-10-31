@@ -2,19 +2,36 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { X, History, Brain, Plus, SquarePen, ArrowUp, Square, Mic, CircleAlert, Copy, Trash2, Sparkles, ChartCandlestick, ChevronRight } from 'lucide-vue-next'
-import { ai, send, stop, newChat, openChat, loadChats, deleteChat, textOf, setModel, AI_MODELS, notes, loadNotes, addNote, deleteNote, type Msg, type Part } from '../../composables/ai'
+import { ai, send, retry, resume, stop, newChat, openChat, loadChats, deleteChat, textOf, setModel, AI_MODELS, notes, loadNotes, addNote, deleteNote, type Msg, type Part } from '../../composables/ai'
 import { useTapToTalk } from '../../composables/holdToTalk'
 import AiSteps from './AiSteps.vue'
 import { useDesktop } from '../../composables/device'
+import { useRouter } from 'vue-router'
 
 /** AI chat: bottom sheet on phones (drag the header down to close), side panel on desktop. */
 const desktop = useDesktop()
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+// Links to app paths ([SOL](/instrument/SOL-USDT-SWAP)) become in-app buttons; others open outside.
+const APP_PATH = /^\/(instrument\/[A-Z0-9-]+|rules(\/[\w-]+)?|alerts|trading(\/[\w/-]+)?|status|settings|help\/[\w/-]+)?$/
 const defaultLink = md.renderer.rules.link_open
 md.renderer.rules.link_open = (t, i, o, e, s) => {
-  t[i].attrSet('target', '_blank')
-  t[i].attrSet('rel', 'noopener')
+  const href = String(t[i].attrGet('href') || '')
+  if (APP_PATH.test(href)) {
+    t[i].attrSet('class', href.startsWith('/instrument/') ? 'app-link inst' : 'app-link')
+    t[i].attrSet('data-route', href)
+  } else {
+    t[i].attrSet('target', '_blank')
+    t[i].attrSet('rel', 'noopener')
+  }
   return defaultLink ? defaultLink(t, i, o, e, s) : s.renderToken(t, i, o)
+}
+const router = useRouter()
+function onMdClick(e: MouseEvent) {
+  const a = (e.target as HTMLElement).closest<HTMLAnchorElement>('a.app-link')
+  if (!a) return
+  e.preventDefault()
+  router.push(a.dataset.route!)
+  if (!desktop.value) ai.open = false // phone: show the page; the orb brings the chat back
 }
 
 const input = ref('')
@@ -60,7 +77,11 @@ watch(() => [ai.msgs.length, ai.msgs[ai.msgs.length - 1]?.parts.length, textOf(a
 })
 watch(() => ai.chatId, () => { stick = true })
 watch(() => ai.open, o => {
-  if (o) { ai.unread = false; stick = true; nextTick(() => scroller.value?.scrollTo({ top: scroller.value!.scrollHeight })) }
+  if (!o) return
+  ai.unread = false
+  stick = true
+  resume() // reopen the chat left on screen / catch up with an answer that finished meanwhile
+  nextTick(() => scroller.value?.scrollTo({ top: scroller.value!.scrollHeight }))
 })
 
 // ---- history ----
@@ -200,7 +221,7 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
             <div v-else class="a">
               <template v-for="(g, gi) in groups(m)" :key="gi">
                 <AiSteps v-if="g.k === 'tools'" :items="g.items" :live="!!m.live" />
-                <div v-else class="md" v-html="md.render(g.v)"></div>
+                <div v-else class="md" @click="onMdClick" v-html="md.render(g.v)"></div>
               </template>
               <div v-if="m.live && !m.parts.length" class="thinking"><span></span><span></span><span></span></div>
               <div v-if="m.error" class="err"><CircleAlert :size="14" /> {{ m.error }}</div>
@@ -211,7 +232,11 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
               </div>
             </div>
           </template>
-          <p v-if="ai.error && !ai.running" class="err net">{{ ai.error }}（回答会在后台继续，重新打开对话可看到）</p>
+          <p v-if="ai.reconnecting" class="net-bar"><span class="spin"></span>连接断了，回答仍在服务器上继续，正在重新连接…</p>
+          <div v-else-if="!ai.running && ai.msgs.length && (ai.interrupted || ai.msgs[ai.msgs.length - 1].error)" class="retry">
+            <span>{{ ai.interrupted ? '这次回答被中断了（服务重启或网络问题）' : '回答没有完成' }}</span>
+            <button type="button" @click="retry">重试</button>
+          </div>
         </div>
 
         <footer v-if="!showHistory && !showNotes" class="ft" @touchmove="e => (e.target as HTMLElement).tagName !== 'TEXTAREA' && e.preventDefault()">
@@ -286,13 +311,19 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
 .md :deep(table) { display: block; overflow-x: auto; border-collapse: collapse; font-size: var(--fs-sm); margin: 8px 0; }
 .md :deep(th), .md :deep(td) { padding: 4px 8px; border: 1px solid var(--line-2); white-space: nowrap; }
 .md :deep(blockquote) { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--line-2); color: var(--text-2); }
+.md :deep(a.app-link) { display: inline-flex; align-items: center; gap: 3px; margin: 1px 2px; padding: 1px 9px; border-radius: 12px; font-weight: 600; font-size: .92em;
+  color: var(--accent); background: var(--accent-bg); border: 1px solid rgba(188, 255, 47, .3); text-decoration: none; white-space: nowrap; vertical-align: baseline; }
+.md :deep(a.app-link)::after { content: '›'; opacity: .7; }
+.md :deep(a.app-link:active) { background: rgba(188, 255, 47, .22); }
 .md :deep(hr) { border: 0; border-top: 1px solid var(--line-2); margin: 12px 0; }
 .thinking { display: flex; gap: 5px; padding: 10px 2px; }
 .thinking span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: bounce 1.2s infinite ease-in-out; }
 .thinking span:nth-child(2) { animation-delay: .15s; background: #2fe0ff; }
 .thinking span:nth-child(3) { animation-delay: .3s; background: #9b7df0; }
 .err { display: flex; align-items: center; gap: 6px; margin: 6px 0; color: var(--warn); font-size: var(--fs-sm); }
-.err.net { color: var(--text-3); }
+.net-bar { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 8px 12px; border-radius: 10px; background: var(--bg-2); color: var(--text-2); font-size: var(--fs-sm); }
+.retry { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; padding: 8px 8px 8px 12px; border-radius: 10px; border: 1px solid rgba(247, 166, 0, .35); background: rgba(247, 166, 0, .06); font-size: var(--fs-sm); color: var(--text-2); }
+.retry button { all: unset; padding: 6px 14px; border-radius: 8px; background: var(--accent); color: #000; font-weight: 600; cursor: pointer; }
 .foot { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); margin-top: 2px; }
 
 .hist { padding-top: 4px; }

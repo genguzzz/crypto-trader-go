@@ -1,6 +1,7 @@
 package aigate
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -88,5 +89,49 @@ func TestNotesRememberReplaceDelete(t *testing.T) {
 	}
 	if _, err := e.g.AddNote("  ", "owner", 0); err == nil {
 		t.Fatal("empty note accepted")
+	}
+}
+
+func TestChatInterruptedRetryNotify(t *testing.T) {
+	e := newEnv(t, Options{})
+	e.g.SetCredential(KindAPIKey, testKey)
+	notified := make(chan string, 2)
+	e.g.SetNotify(func(_ context.Context, text string) error { notified <- text; return nil })
+	e.run(t)
+	w := e.dial(t, true)
+	waitFor(t, "available", e.g.Available)
+
+	// a turn the worker drops (as on a server restart): error, nobody watching → notified
+	id, err := e.g.StartChat(ChatInput{Message: "SOL 能空吗"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := w.recv()
+	w.send(map[string]any{"type": "error", "id": m["id"], "error": "AI worker 已断开"})
+	if got := <-notified; !strings.Contains(got, "回答失败") {
+		t.Fatalf("notify %q", got)
+	}
+	waitFor(t, "run ended", func() bool { return e.g.run(id) == nil })
+
+	// an unanswered question (restart before any answer was stored) reads as interrupted
+	e.g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=? AND role='assistant'`, id)
+	if c, _ := e.g.ChatByID(id); !c.Interrupted {
+		t.Fatalf("not interrupted: %+v", c)
+	}
+
+	// retry re-asks the same question without adding it again, and replaces the failed answer
+	if _, err := e.g.StartChat(ChatInput{ChatID: id, Retry: true}); err != nil {
+		t.Fatal(err)
+	}
+	m = w.recv()
+	if m["message"] != "SOL 能空吗" {
+		t.Fatalf("retry message %v", m["message"])
+	}
+	w.send(map[string]any{"type": "result", "id": m["id"], "result": map[string]any{"text": "能空", "sessionId": "s2"}})
+	<-notified
+	waitFor(t, "retry ended", func() bool { return e.g.run(id) == nil })
+	c, _ := e.g.ChatByID(id)
+	if len(c.Messages) != 2 || c.Messages[0].Role != "user" || c.Messages[1].Content != "能空" || c.Interrupted {
+		t.Fatalf("after retry %+v", c.Messages)
 	}
 }

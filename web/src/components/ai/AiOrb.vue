@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Sparkles, Mic, X } from 'lucide-vue-next'
-import { ai, send } from '../../composables/ai'
+import { ai, send, resume } from '../../composables/ai'
 import { useHoldToTalk } from '../../composables/holdToTalk'
 
 /**
@@ -22,6 +22,9 @@ const { phase, cancelZone, levels, level, handlers } = useHoldToTalk({
   onError: flash,
 })
 const rec = computed(() => phase.value === 'rec')
+// an answer that finished while the panel was closed (or the app was away): say so once
+watch(() => ai.unread, u => { if (u) flash('AI 回答好了，点按钮查看') })
+onMounted(() => resume()) // app start: pick up a question left running
 const style = computed(() => ({ '--lv': String(level.value) }))
 </script>
 

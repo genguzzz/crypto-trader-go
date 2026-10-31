@@ -199,7 +199,7 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
         mcp_servers=mcp,
         strict_mcp_config=True,
         setting_sources=["project"],  # skills from agent/.claude/skills (no CLAUDE.md there)
-        skills=["perp-analysis"],
+        skills=["perp-analysis", "ctg-platform"],
         permission_mode="dontAsk",
         max_turns=CHAT_MAX_TURNS,
         env=env,

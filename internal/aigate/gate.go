@@ -94,6 +94,7 @@ type Gate struct {
 
 	agent   Agent
 	notesMu sync.Mutex
+	notify  func(ctx context.Context, text string) error
 	runMu   sync.Mutex
 	runs    map[int64]*chatRun
 
