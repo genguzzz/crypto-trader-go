@@ -9,6 +9,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStreamConnected, useUniverse } from "@/lib/market";
 import { time, usd } from "@/lib/fmt";
+import { useSettings } from "@/lib/settings";
 import { colors, fs, tnum } from "@/lib/theme";
 import { closeDrawer, openDrawer, useDrawerOpen } from "./drawerState";
 import { Dot, tap, type IconName } from "./ui";
@@ -22,6 +23,7 @@ export function DrawerHost() {
   const [x] = useState(() => new Animated.Value(-panel));
   const snap = useUniverse().data;
   const live = useStreamConnected();
+  const devTab = useSettings((s) => s.devTab);
 
   useEffect(() => {
     Animated.spring(x, { toValue: isOpen ? 0 : -panel, useNativeDriver: true, friction: 10, tension: 70 }).start();
@@ -70,7 +72,7 @@ export function DrawerHost() {
             <Item icon="pulse-outline" label="系统状态" onPress={() => go("/status")} />
             <Item icon="book-outline" label="帮助" onPress={() => go("/help")} />
             <Item icon="settings-outline" label="设置" onPress={() => go("/settings")} />
-            <Item icon="code-slash-outline" label="Dev" onPress={() => go("/dev")} />
+            {devTab ? <Item icon="code-slash-outline" label="Dev" onPress={() => go("/dev")} /> : null}
           </Section>
         </ScrollView>
       </Animated.View>

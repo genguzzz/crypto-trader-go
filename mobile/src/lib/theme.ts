@@ -32,6 +32,7 @@ export const colors = {
   info: "#5b9bff",
   infoBg: "rgba(91,155,255,0.14)",
   gold: "#f5c542",
+  violet: "#9b7df0", // web theme C.violet (OI line)
   // aliases used by the shared components
   success: "#25a750",
   warning: "#f7a600",

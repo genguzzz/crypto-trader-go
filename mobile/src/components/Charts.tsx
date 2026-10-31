@@ -25,8 +25,11 @@ function ticks(min: number, max: number, n = 4) {
   return out;
 }
 
-/** Lines sharing one y axis; `fmtY` labels the axis and the readout. Touch and drag to read values. */
-export function LineChart({ series, height = 180, fmtY = (v) => v.toFixed(2), fmtT }: { series: LineSeriesData[]; height?: number; fmtY?: (v: number) => string; fmtT: (t: number) => string }) {
+/**
+ * Lines sharing one y axis; `fmtY` labels the axis and the readout. Touch and drag to read values.
+ * `refY` draws a dashed reference line (e.g. zero basis) when it falls inside the range.
+ */
+export function LineChart({ series, height = 180, fmtY = (v) => v.toFixed(2), fmtT, refY }: { series: LineSeriesData[]; height?: number; fmtY?: (v: number) => string; fmtT: (t: number) => string; refY?: number }) {
   const { w, onLayout } = useWidth();
   const [hover, setHover] = useState<number | null>(null);
   const geo = useMemo(() => {
@@ -76,6 +79,7 @@ export function LineChart({ series, height = 180, fmtY = (v) => v.toFixed(2), fm
             {series.map((s) => (
               <Path key={s.label} d={s.points.map((p, i) => `${i ? "L" : "M"}${geo.x(p.t).toFixed(1)},${geo.y(p.v).toFixed(1)}`).join("")} stroke={s.color} strokeWidth={s.width ?? 1.5} fill="none" />
             ))}
+            {refY != null && refY > geo.y0 && refY < geo.y1 ? <Line x1={PAD.l} x2={w - PAD.r} y1={geo.y(refY)} y2={geo.y(refY)} stroke="#8a8a8a" strokeDasharray="4,4" strokeWidth={1} /> : null}
             {hover != null ? <Line x1={hover} x2={hover} y1={PAD.t} y2={height - PAD.b} stroke="#5b5b5b" strokeDasharray="3,3" /> : null}
           </Svg>
         ) : null}

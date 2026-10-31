@@ -4,9 +4,8 @@ import { ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { strategyDocs } from "@/content/strategyDocs";
-import { WEB_ORIGIN } from "@/lib/api";
-import { openPage } from "@/lib/device";
 import { colors, fs, tnum } from "@/lib/theme";
+import { API_ARTICLE } from "@/components/ApiRef";
 import { Card, Screen, TopBar, styles } from "@/components/ui";
 
 export default function HelpScreen() {
@@ -29,13 +28,13 @@ export default function HelpScreen() {
             <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
           </Card>
         ))}
-        <Card onPress={() => void openPage(`${WEB_ORIGIN}/help/strategy/api`)} style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
+        <Card onPress={() => router.push({ pathname: "/help/[slug]", params: { slug: API_ARTICLE.slug } })} style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
           <Ionicons name="code-slash-outline" size={18} color={colors.textFaint} style={{ width: 20 }} />
           <View style={{ flex: 1, gap: 3 }}>
-            <Text style={{ fontSize: fs.xl, fontWeight: "600", color: colors.text }}>API 参考</Text>
-            <Text style={{ fontSize: fs.md, lineHeight: 19, color: colors.textSoft }}>所有类、方法、字段（从 SDK 源码生成）· 在网页版打开</Text>
+            <Text style={{ fontSize: fs.xl, fontWeight: "600", color: colors.text }}>{API_ARTICLE.title}</Text>
+            <Text style={{ fontSize: fs.md, lineHeight: 19, color: colors.textSoft }}>{API_ARTICLE.summary}</Text>
           </View>
-          <Ionicons name="open-outline" size={16} color={colors.textFaint} />
+          <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
         </Card>
       </ScrollView>
     </Screen>

@@ -21,6 +21,7 @@ export interface Settings {
   oiHalf: number; // OI (USD) that fills half a scanner row
   chartBar: string; // last K-line period in the detail chart
   chartTall: boolean; // detail chart height: tall (520) or normal (420)
+  devTab: boolean; // Dev entry in the drawer (web 显示 Dev 标签)
 }
 
 const store =
@@ -39,6 +40,7 @@ let state: Settings = {
   oiHalf: 5e6,
   chartBar: "15m",
   chartTall: false,
+  devTab: true,
 };
 let loaded = false;
 const listeners = new Set<() => void>();

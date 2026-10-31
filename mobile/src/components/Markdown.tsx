@@ -166,12 +166,20 @@ function highlight(code: string, lang: string): ReactNode[] {
   return out;
 }
 
-export function CodeBlock({ text, lang = "" }: { text: string; lang?: string }) {
+export type CodeAction = { label: string; icon?: keyof typeof Ionicons.glyphMap; onPress: () => void };
+
+export function CodeBlock({ text, lang = "", action }: { text: string; lang?: string; action?: CodeAction | null }) {
   const parts = useMemo(() => highlight(text, lang), [text, lang]);
   return (
     <View style={{ marginVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: "#050505" }}>
       <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingTop: 6 }}>
         <Text style={{ fontSize: fs.xs, color: colors.textDim, flex: 1 }}>{lang || "text"}</Text>
+        {action ? (
+          <Pressable hitSlop={10} accessibilityLabel={action.label} onPress={() => { tap(); action.onPress(); }} style={{ flexDirection: "row", alignItems: "center", gap: 4, marginRight: 14 }}>
+            <Ionicons name={action.icon ?? "open-outline"} size={13} color={colors.primary} />
+            <Text style={{ fontSize: fs.xs, color: colors.primary }}>{action.label}</Text>
+          </Pressable>
+        ) : null}
         <Pressable hitSlop={10} accessibilityLabel="复制代码" onPress={() => { tap(); void copy(text).then(() => toast("已复制代码")); }} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
           <Ionicons name="copy-outline" size={13} color={colors.textFaint} />
           <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>复制</Text>
@@ -208,7 +216,9 @@ function Table({ head, rows, onLink }: { head: string[]; rows: string[][]; onLin
   );
 }
 
-function Blocks({ blocks, onLink, depth = 0 }: { blocks: Block[]; onLink: (h: string) => void; depth?: number }) {
+type CodeActionFor = (text: string, lang: string) => CodeAction | null;
+
+function Blocks({ blocks, onLink, codeAction, depth = 0 }: { blocks: Block[]; onLink: (h: string) => void; codeAction?: CodeActionFor; depth?: number }) {
   return (
     <>
       {blocks.map((b, i) => {
@@ -224,13 +234,13 @@ function Blocks({ blocks, onLink, depth = 0 }: { blocks: Block[]; onLink: (h: st
           case "p":
             return <Text key={i} style={[body, { marginVertical: 6 }]}>{inline(b.text, onLink, `p${i}`)}</Text>;
           case "code":
-            return <CodeBlock key={i} text={b.text} lang={b.lang} />;
+            return <CodeBlock key={i} text={b.text} lang={b.lang} action={codeAction?.(b.text, b.lang)} />;
           case "hr":
             return <View key={i} style={{ height: 1, backgroundColor: colors.border, marginVertical: 20 }} />;
           case "quote":
             return (
               <View key={i} style={{ marginVertical: 8, paddingVertical: 4, paddingHorizontal: 12, borderLeftWidth: 3, borderColor: colors.primary, backgroundColor: colors.raised, borderTopRightRadius: 6, borderBottomRightRadius: 6 }}>
-                <Blocks blocks={b.blocks} onLink={onLink} depth={depth + 1} />
+                <Blocks blocks={b.blocks} onLink={onLink} codeAction={codeAction} depth={depth + 1} />
               </View>
             );
           case "table":
@@ -243,7 +253,7 @@ function Blocks({ blocks, onLink, depth = 0 }: { blocks: Block[]; onLink: (h: st
                     <Text style={[body, { width: b.ordered ? 22 : 14, textAlign: b.ordered ? "right" : "center", color: b.ordered ? colors.textFaint : colors.primary }]}>{b.ordered ? `${b.start + j}.` : depth % 2 ? "◦" : "•"}</Text>
                     <View style={{ flex: 1 }}>
                       <Text style={body}>{inline(it.text, onLink, `l${i}.${j}`)}</Text>
-                      {it.children.length ? <Blocks blocks={it.children} onLink={onLink} depth={depth + 1} /> : null}
+                      {it.children.length ? <Blocks blocks={it.children} onLink={onLink} codeAction={codeAction} depth={depth + 1} /> : null}
                     </View>
                   </View>
                 ))}
@@ -256,7 +266,8 @@ function Blocks({ blocks, onLink, depth = 0 }: { blocks: Block[]; onLink: (h: st
   );
 }
 
-export const Markdown = memo(function Markdown({ source, onLink }: { source: string; onLink: (href: string) => void }) {
+/** `codeAction` adds a button to a fenced code block's header (help: 「在编辑器中打开」 on strategy examples). */
+export const Markdown = memo(function Markdown({ source, onLink, codeAction }: { source: string; onLink: (href: string) => void; codeAction?: CodeActionFor }) {
   const blocks = useMemo(() => parse(source), [source]);
-  return <Blocks blocks={blocks} onLink={onLink} />;
+  return <Blocks blocks={blocks} onLink={onLink} codeAction={codeAction} />;
 });

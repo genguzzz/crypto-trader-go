@@ -1,49 +1,26 @@
 // Account performance explorer (web TradeExplorer), shared by the account page and the backtest
-// report. 组合视角: native equity curve with the deposit line and a drawdown pane; 币对视角: the web
-// trade-marked candle chart in a WebView (TradeCandleView). Below: the round trips with the web's
-// filters; a row opens its card in a sheet (prev / next, 在 K 线中查看).
+// report. 组合视角: native equity curve with trade bubbles and a drawdown pane (EquityTradesChart); a
+// tapped bubble is pinned under the chart, the full-screen button opens the same chart in a modal.
+// 币对视角: the web trade-marked candle chart in a WebView (TradeCandleView). Below: the round trips
+// with the web's filters (they fade the other bubbles); a row opens its card in a sheet.
 import { forwardRef, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { price, time } from "@/lib/fmt";
 import { useQuery } from "@/lib/query";
 import { tradeApi, type Trade } from "@/lib/tradeApi";
 import { amt, byInstrument, exitKindLabel, holdText, pctf, qty, tone } from "@/lib/tradeMeta";
 import { colors, fs, radius, tnum } from "@/lib/theme";
-import { LineChart } from "../Charts";
 import { CoinIcon } from "../CoinIcon";
+import { EquityTradesChart } from "./EquityTradesChart";
 import { IconButton, PickerSheet, Segmented, Sheet, Tag, tap } from "../ui";
 import { InfoTip, LTag, MoreButton, Muted, SmallButton, toneText } from "./common";
 import { TradeCandleView } from "./TradeCandleView";
 
 const symOf = (id: string) => id.replace("-USDT-SWAP", "");
-
-/** Equity (USDT) with the deposit as a flat line, and the running drawdown from the peak below. */
-export function EquityChart({ points, deposit, height = 200 }: { points: [number, number][]; deposit: number; height?: number }) {
-  const { eq, dd } = useMemo(() => {
-    const eq: { t: number; v: number }[] = [], dd: { t: number; v: number }[] = [];
-    let peak = -Infinity, last = -Infinity;
-    for (const [t, v] of points) {
-      if (!(t > last) || !isFinite(v)) continue;
-      last = t;
-      peak = Math.max(peak, v);
-      eq.push({ t, v });
-      dd.push({ t, v: peak > 0 ? (v / peak - 1) * 100 : 0 });
-    }
-    return { eq, dd };
-  }, [points]);
-  if (eq.length < 2) return null;
-  const fmtT = (t: number) => time(t, true);
-  const big = Math.max(...eq.map((p) => Math.abs(p.v))) >= 1000;
-  const base = deposit ? [{ label: "入金", color: colors.textDim, width: 1, points: [{ t: eq[0].t, v: deposit }, { t: eq[eq.length - 1].t, v: deposit }] }] : [];
-  return (
-    <View style={{ gap: 6 }}>
-      <LineChart height={height} fmtT={fmtT} fmtY={(v) => amt(v, big ? 0 : 2)} series={[{ label: "权益", color: colors.primary, width: 2, points: eq }, ...base]} />
-      <LineChart height={86} fmtT={fmtT} fmtY={(v) => v.toFixed(1) + "%"} series={[{ label: "回撤%", color: colors.down, points: dd }]} />
-    </View>
-  );
-}
 
 interface Filter { inst: string; side: "all" | "long" | "short"; result: "all" | "win" | "loss" | "open"; exit: string; sort: "time" | "net" | "ret" }
 const matches = (t: Trade, x: Filter) =>
@@ -61,7 +38,10 @@ export const TradeExplorer = forwardRef<ExplorerHandle, {
   const insts = useMemo(() => byInstrument(trades), [trades]);
   const [view, setView] = useState<"equity" | "inst">("equity");
   const [inst, setInst] = useState("");
-  const [sel, setSel] = useState(0); // trade selected in 币对视角
+  const [sel, setSel] = useState(0); // selected trade (both views, the list highlights it)
+  const [pinned, setPinned] = useState(false); // 组合视角: the tapped bubble's card under the chart
+  const [full, setFull] = useState(false); // 组合视角 full screen
+  const [fullH, setFullH] = useState(0);
   const [card, setCard] = useState(0); // trade shown in the sheet
   const [filter, setFilter] = useState<Filter>({ inst: "all", side: "all", result: "all", exit: "all", sort: "time" });
   const [pickOpen, setPickOpen] = useState<"" | "inst" | "exit" | "sort">("");
@@ -69,22 +49,28 @@ export const TradeExplorer = forwardRef<ExplorerHandle, {
   const curInst = inst || insts[0]?.instId || "";
   const byId = useMemo(() => new Map(trades.map((t) => [t.id, t])), [trades]);
 
-  const openInst = (id: string) => { setInst(id); setSel(0); setView("inst"); };
+  const openInst = (id: string) => { setInst(id); setSel(0); setPinned(false); setView("inst"); };
   useImperativeHandle(ref, () => ({ openInst }));
   const openTrade = (id: number) => {
     const t = byId.get(id);
     if (!t) return;
     setCard(0);
+    setFull(false);
+    setPinned(false);
     setInst(t.instId);
     setSel(id);
     setView("inst");
+  };
+  /** 组合视角 bubble tap: select and pin the card (web phone behaviour); blank clears. */
+  const pickEq = (ids: number[]) => {
+    if (ids.length === 1) { setSel(ids[0]); setPinned(true); } else { setSel(0); setPinned(false); }
   };
   const navIdx = (id: number) => trades.findIndex((t) => t.id === id);
   const step = (d: number) => {
     if (!trades.length) return;
     const i = navIdx(sel);
     const j = Math.min(trades.length - 1, Math.max(0, (i < 0 ? (d > 0 ? -1 : trades.length) : i) + d));
-    openTrade(trades[j].id);
+    if (view === "equity") { setSel(trades[j].id); setPinned(true); } else openTrade(trades[j].id);
   };
   const cardStep = (d: number) => {
     const i = navIdx(card);
@@ -101,6 +87,10 @@ export const TradeExplorer = forwardRef<ExplorerHandle, {
   const cardTrade = byId.get(card);
   const sortOpts = [{ value: "time", label: "按时间" }, { value: "net", label: "按净盈亏" }, { value: "ret", label: "按收益率" }];
   const exitOpts = [{ value: "all", label: "全部离场" }, ...Object.entries(exitKindLabel).map(([k, v]) => ({ value: k, label: v.t }))];
+  const visible = useMemo(() => {
+    if (![filter.inst, filter.side, filter.result, filter.exit].some((v) => v !== "all")) return null;
+    return new Set(trades.filter((t) => matches(t, filter)).map((t) => t.id));
+  }, [trades, filter]);
   const instOpts = [{ value: "all", label: "全部合约" }, ...[...new Set(trades.map((t) => t.instId))].sort().map((i) => ({ value: i, label: symOf(i) }))];
 
   return (
@@ -108,11 +98,12 @@ export const TradeExplorer = forwardRef<ExplorerHandle, {
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <Segmented small value={view} onChange={(v) => { if (v === "inst" && !trades.length) return; setView(v); }} options={[{ value: "equity", label: "组合视角" }, { value: "inst", label: "币对视角" }]} />
         <InfoTip title="组合视角 / 币对视角" items={[
-          ["组合视角", "：账户权益曲线，入金为灰色水平线；下方是自权益高点的回撤。按住图表拖动查看任意时点。"],
+          ["组合视角", "：账户权益曲线，每笔交易是一个币种气泡，画在平仓时刻（盈利在曲线上方、亏损在下方；持仓中的画在开仓时刻）。气泡面积 ∝ 名义价值；外圈颜色 = 结果（绿盈红亏），虚线圈 = 开仓 / 持仓中；角标：止 = 止损，盈 = 止盈，爆 = 强平，手 = 手动。挨得太近的气泡合并成一组并显示笔数，点击放大展开。入金为灰色虚线，下方是自权益高点的回撤。"],
           ["币对视角", "：所选合约的 K 线，每次成交按成交价和时间标出（▲ 买入 ▼ 卖出，虚线圈 = 开仓），持仓区间按盈亏着色，所选交易的止损 / 止盈 / 开平仓价画成价格线。双指缩放，拖动平移。"],
-          "点下方列表里的一笔交易看详情，再点“在 K 线中查看”。",
+          ["操作", "：按住图表拖动查看任意时点（权益、盈亏、回撤、当时的持仓），点气泡看详情，双指缩放、平移，“复位”回到整个区间；右上角按钮全屏。点下方列表里的一笔交易看详情，再点“在 K 线中查看”。"],
         ]} />
         <View style={{ flex: 1 }} />
+        {view === "equity" ? <IconButton name="expand-outline" size={18} label="全屏" onPress={() => setFull(true)} /> : null}
         {view === "inst" && trades.length ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <IconButton name="chevron-back" size={18} label="上一笔" onPress={() => step(-1)} />
@@ -141,9 +132,15 @@ export const TradeExplorer = forwardRef<ExplorerHandle, {
       ) : null}
 
       {view === "equity" ? (
-        <View>
-          <EquityChart points={points} deposit={deposit} />
-          {q.data && !trades.length ? <Muted style={{ marginTop: 4 }}>还没有交易</Muted> : null}
+        <View style={{ gap: 10 }}>
+          <EquityTradesChart points={points} deposit={deposit} trades={trades} selectedId={sel} dimmed={visible} height={300} onPick={pickEq} onTouchActive={onTouchActive} />
+          {q.data && !trades.length ? <Muted>还没有交易</Muted> : null}
+          {pinned && selTrade ? (
+            <View style={{ padding: 12, borderRadius: radius.md, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.borderStrong }}>
+              <TradeCard t={selTrade} fills nav={{ i: navIdx(sel), n: trades.length }} onPrev={() => step(-1)} onNext={() => step(1)} onClose={() => { setPinned(false); setSel(0); }}
+                onKline={() => openTrade(selTrade.id)} onAi={selTrade.aiDecisionId ? () => router.push({ pathname: "/trade", params: { pane: "ai" } }) : undefined} />
+            </View>
+          ) : null}
         </View>
       ) : curInst ? (
         <>
@@ -171,7 +168,7 @@ export const TradeExplorer = forwardRef<ExplorerHandle, {
             {sum.n} 笔 · 胜率 {sum.closed ? pctf(sum.wins / sum.closed, 0) : "—"} · <Text style={{ fontWeight: "600", color: toneText(tone(sum.net)) }}>{amt(sum.net, 2, true)}</Text>
           </Text>
           <View style={{ borderTopWidth: 1, borderColor: colors.border }}>
-            {rows.slice(0, shown).map((t) => <TradeRow key={t.id} t={t} selected={t.id === sel && view === "inst"} onPress={() => setCard(t.id)} />)}
+            {rows.slice(0, shown).map((t) => <TradeRow key={t.id} t={t} selected={t.id === sel} onPress={() => { setSel(t.id); setCard(t.id); }} />)}
             {!rows.length ? <Muted style={{ paddingVertical: 8 }}>没有符合筛选的交易</Muted> : null}
             {rows.length > shown ? <MoreButton label={`显示更多（共 ${rows.length} 笔）`} onPress={() => setShown((n) => n + 50)} /> : null}
           </View>
@@ -181,6 +178,22 @@ export const TradeExplorer = forwardRef<ExplorerHandle, {
       <PickerSheet visible={pickOpen === "inst"} onClose={() => setPickOpen("")} title="合约" value={filter.inst} options={instOpts} onPick={(v) => setFilter({ ...filter, inst: v })} />
       <PickerSheet visible={pickOpen === "exit"} onClose={() => setPickOpen("")} title="离场方式" value={filter.exit} options={exitOpts} onPick={(v) => setFilter({ ...filter, exit: v })} />
       <PickerSheet visible={pickOpen === "sort"} onClose={() => setPickOpen("")} title="排序" value={filter.sort} options={sortOpts} onPick={(v) => setFilter({ ...filter, sort: v as Filter["sort"] })} />
+      <Modal visible={full} animationType="fade" presentationStyle="fullScreen" supportedOrientations={["portrait", "landscape-left", "landscape-right"]} onRequestClose={() => setFull(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: colors.card }}>
+          <StatusBar hidden />
+          <View style={{ flexDirection: "row", alignItems: "center", height: 36, paddingHorizontal: 12, gap: 10 }}>
+            <IconButton name="close" size={22} label="退出全屏" color={colors.text} onPress={() => setFull(false)} />
+            <Text style={{ color: colors.text, fontSize: fs.lg, fontWeight: "700" }}>组合视角</Text>
+            <View style={{ flex: 1 }} />
+            <Text style={[{ fontSize: fs.xs, color: colors.textFaint }, tnum]}>{trades.length} 笔</Text>
+          </View>
+          <View style={{ flex: 1, paddingHorizontal: 8 }} onLayout={(e) => setFullH(Math.round(e.nativeEvent.layout.height))}>
+            {/* the legend (≈40 px) sits above the plot */}
+            {fullH > 120 ? <EquityTradesChart points={points} deposit={deposit} trades={trades} selectedId={sel} dimmed={visible} height={fullH - 44} onPick={pickEq} /> : null}
+          </View>
+          {selTrade && pinned ? <FullStrip t={selTrade} nav={{ i: navIdx(sel), n: trades.length }} onPrev={() => step(-1)} onNext={() => step(1)} onKline={() => openTrade(selTrade.id)} onClose={() => { setPinned(false); setSel(0); }} /> : null}
+        </SafeAreaView>
+      </Modal>
       <Sheet visible={!!cardTrade} onClose={() => setCard(0)} scroll>
         {cardTrade ? (
           <TradeCard t={cardTrade} fills nav={{ i: navIdx(card), n: trades.length }} onPrev={() => cardStep(-1)} onNext={() => cardStep(1)}
@@ -190,6 +203,27 @@ export const TradeExplorer = forwardRef<ExplorerHandle, {
     </View>
   );
 });
+
+/** Full screen: the selected trade in one line under the chart (prev / next, K 线, close). */
+function FullStrip({ t, nav, onPrev, onNext, onKline, onClose }: { t: Trade; nav: { i: number; n: number }; onPrev: () => void; onNext: () => void; onKline: () => void; onClose: () => void }) {
+  const long = t.posSide === "long";
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: 1, borderColor: colors.border }}>
+      <CoinIcon instId={t.instId} size={18} />
+      <Text style={{ fontWeight: "700", color: colors.text, fontSize: fs.md }}>{symOf(t.instId)}</Text>
+      <Text style={{ fontSize: fs.sm, fontWeight: "600", color: long ? colors.up : colors.down }}>{long ? "多" : "空"} {t.leverage}x</Text>
+      <LTag l={exitKindLabel[t.exitKind]} fallback={t.exitKind} />
+      <Text style={[{ fontSize: fs.md, fontWeight: "700", color: toneText(tone(t.net)) }, tnum]}>{amt(t.net, 2, true)}</Text>
+      <Text style={[{ fontSize: fs.xs, color: toneText(tone(t.returnPct)) }, tnum]} numberOfLines={1}>{pctf(t.returnPct, 1, true)}</Text>
+      <View style={{ flex: 1 }} />
+      <IconButton name="chevron-back" size={18} label="上一笔" onPress={onPrev} color={nav.i <= 0 ? colors.textDim : undefined} />
+      <Text style={[{ fontSize: fs.xs, color: colors.textFaint }, tnum]}>{nav.i + 1}/{nav.n}</Text>
+      <IconButton name="chevron-forward" size={18} label="下一笔" onPress={onNext} color={nav.i >= nav.n - 1 ? colors.textDim : undefined} />
+      <SmallButton label="K 线" icon="stats-chart" active onPress={onKline} />
+      <IconButton name="close" size={18} label="关闭" onPress={onClose} />
+    </View>
+  );
+}
 
 function Dropdown({ label, onPress }: { label: string; onPress: () => void }) {
   return (
@@ -224,8 +258,8 @@ const fillKind: Record<string, string> = { open: "开仓", add: "加仓", reduce
 const orderType: Record<string, string> = { market: "市价", limit: "限价", stop: "止损", target: "止盈", liquidation: "强平" };
 
 /** One round trip (web TradeCard): result, prices, size, costs, reasons, fills. */
-export function TradeCard({ t, fills, nav, onPrev, onNext, onKline, onAi }: {
-  t: Trade; fills?: boolean; nav?: { i: number; n: number }; onPrev?: () => void; onNext?: () => void; onKline?: () => void; onAi?: () => void;
+export function TradeCard({ t, fills, nav, onPrev, onNext, onKline, onAi, onClose }: {
+  t: Trade; fills?: boolean; nav?: { i: number; n: number }; onPrev?: () => void; onNext?: () => void; onKline?: () => void; onAi?: () => void; onClose?: () => void;
 }) {
   const long = t.posSide === "long";
   const kv = (k: string, v: ReactNode) => (
@@ -250,6 +284,7 @@ export function TradeCard({ t, fills, nav, onPrev, onNext, onKline, onAi }: {
             <IconButton name="chevron-forward" size={18} label="下一笔" onPress={() => onNext?.()} color={nav.i >= nav.n - 1 ? colors.textDim : undefined} />
           </>
         ) : null}
+        {onClose ? <IconButton name="close" size={18} label="关闭" onPress={onClose} /> : null}
       </View>
       <View style={{ flexDirection: "row", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
         <Text style={[{ fontSize: fs.x2, fontWeight: "700", color: toneText(tone(t.net)) }, tnum]}>{amt(t.net, 2, true)}<Text style={{ fontSize: fs.xs, color: colors.textFaint, fontWeight: "500" }}> USDT</Text></Text>

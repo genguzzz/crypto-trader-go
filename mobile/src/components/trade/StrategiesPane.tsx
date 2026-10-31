@@ -5,8 +5,6 @@ import { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { WEB_ORIGIN } from "@/lib/api";
-import { openPage } from "@/lib/device";
 import { useMeta } from "@/lib/market";
 import { useQuery } from "@/lib/query";
 import { templates } from "@/lib/strategyTemplates";
@@ -86,7 +84,7 @@ export function StrategiesPane() {
           "策略只发信号，下单、风控、仓位都由账户统一处理；策略进程在隔离容器里运行，没有网络。",
         ]} />
         <View style={{ flex: 1 }} />
-        <IconButton name="book-outline" label="策略文档" onPress={() => void openPage(`${WEB_ORIGIN}/help/strategy`)} />
+        <IconButton name="book-outline" label="策略文档" onPress={() => router.push("/help")} />
         <IconButton name={reloading ? "hourglass-outline" : "refresh"} label="重新扫描" onPress={() => { if (!reloading) void reload(); }} />
       </View>
       {q.error && !q.data ? <ErrorBox text={q.error} onRetry={() => void q.refresh()} /> : null}

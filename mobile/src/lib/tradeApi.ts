@@ -91,6 +91,14 @@ export interface Trade {
   fills: TradeFill[];
 }
 export interface StrategyEntry { name: string; latest: StrategyVersion; versions: StrategyVersion[] }
+/** internal/trade CandleResp: rows = [ts, o, h, l, c, vol (contracts), volQuote (USDT)]. */
+export interface AccountCandles { instId: string; bar: string; from: number; to: number; rows: [number, number, number, number, number, number, number][] }
+/** 试运行: a throwaway backtest over the last `days` days (code, a stored version or a draft). */
+export interface TrialInput { code?: string; versionId?: string; sourceId?: number; params?: Record<string, number>; universe?: Universe; days?: number }
+export interface TrialResult {
+  check?: CheckResult; error?: string; from: number; to: number; strategy: string; report?: Report;
+  signals: Signal[]; trades: Trade[]; logs: LogLine[]; candles?: AccountCandles; seconds: number;
+}
 
 // ---------- interaction ----------
 export interface TradeEvent { kind: string; accountId: number; account: string; mode: Mode; title: string; lines: string[]; ts: number; ref?: string }
@@ -168,9 +176,15 @@ export const tradeApi = {
   sources: async () => arr<Source>(await req<unknown>(`${T}/sources`)),
   source: (id: number) => req<Source>(`${T}/sources/${id}`),
   createSource: (x: { code?: string; fromVersion?: string }) => w<Source>(`${T}/sources`, "POST", x),
+  saveSource: (id: number, code: string) => w<Source>(`${T}/sources/${id}`, "PUT", { code }),
   deleteSource: (id: number) => req<unknown>(`${T}/sources/${id}`, { method: "DELETE" }),
   publishSource: (id: number) => w<{ version?: StrategyVersion; check: CheckResult }>(`${T}/sources/${id}/publish`, "POST"),
   check: (code: string) => w<CheckResult>(`${T}/check`, "POST", { code }),
+  /** Runs up to 90 s on the server. */
+  trial: async (x: TrialInput) => {
+    const r = await req<TrialResult>(`${T}/trial`, { method: "POST", body: x, timeoutMs: 120_000 });
+    return { ...r, signals: arr<Signal>(r.signals), trades: arr<Trade>(r.trades), logs: arr<LogLine>(r.logs) };
+  },
   runLog: async (instanceId: number) => arr<LogLine>(await req<unknown>(`${T}/instances/${instanceId}/logs`)),
   instances: async (accountId: number) => arr<Instance>(await req<unknown>(`${T}/accounts/${accountId}/instances`), "instances"),
   createInstance: (accountId: number, x: NewInstance) => w<Instance>(`${T}/accounts/${accountId}/instances`, "POST", x),

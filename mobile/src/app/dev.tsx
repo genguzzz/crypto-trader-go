@@ -1,21 +1,21 @@
 // Dev (web views/Dev.vue): access credentials for the external read-only API / MCP (create, edit,
 // revoke, delete; the secret is shown once), connection details and snippets, recent external
-// requests, and the endpoint reference. The interactive tester stays on the web page.
-import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+// requests, the endpoint reference and the tester (web components/dev/Tester.vue).
+import { useMemo, useRef, useState } from "react";
+import { Pressable, ScrollView, Text, View, type ScrollViewInstance } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { WEB_ORIGIN } from "@/lib/api";
+import { API_ORIGIN, WEB_ORIGIN } from "@/lib/api";
 import { copy, openPage } from "@/lib/device";
 import { ago, time } from "@/lib/fmt";
 import { mutate, useQuery } from "@/lib/query";
-import { sysApi, type ApiKey, type DevConfig, type DevEndpoints, type DevLog, type KeyKind } from "@/lib/sysApi";
+import { sysApi, type ApiKey, type DevConfig, type DevEndpoint, type DevEndpoints, type DevLog, type KeyKind } from "@/lib/sysApi";
 import { track } from "@/lib/track";
 import { colors, fs, tnum } from "@/lib/theme";
 import { B, Code, Field, InfoTip, Input, LinkText, NumInput, P } from "@/components/Form";
 import { CodeBlock, mono } from "@/components/Markdown";
 import { DEV_CONFIG } from "@/components/settings/DevSection";
-import { Card, Dot, EmptyState, ErrorBox, IconButton, Loading, PanelTitle, PillButton, Pull, Screen, Segmented, Sheet, Tag, TopBar, confirm, tap, toast, toastError, styles } from "@/components/ui";
+import { Card, Chip, Dot, EmptyState, ErrorBox, IconButton, Loading, PanelTitle, PickerSheet, PillButton, Pull, Screen, Segmented, Sheet, Tag, TopBar, confirm, tap, toast, toastError, styles } from "@/components/ui";
 
 const KEY_PLACEHOLDER = "<YOUR_KEY>";
 const restBase = `${WEB_ORIGIN}/api/open/v1`;
@@ -39,6 +39,10 @@ export default function DevScreen() {
   const [snip, setSnip] = useState<"claude" | "json">("claude");
   const [shown, setShown] = useState(30);
   const [openEp, setOpenEp] = useState<string | null>(null);
+  const [testEp, setTestEp] = useState("");
+  const scroll = useRef<ScrollViewInstance>(null);
+  const testerY = useRef(0);
+  const tryIt = (name: string) => { setTestEp(name); scroll.current?.scrollTo({ y: Math.max(0, testerY.current - 8), animated: true }); };
 
   const upsert = (k: ApiKey) => mutate<ApiKey[]>(KEYS, (l = []) => (l.some((x) => x.id === k.id) ? l.map((x) => (x.id === k.id ? k : x)) : [k, ...l]));
   const revoke = (k: ApiKey) => confirm("吊销凭证", `吊销「${k.name}」？使用它的 Agent 会立即收到 401，无法恢复。`, "吊销", async () => {
@@ -52,7 +56,7 @@ export default function DevScreen() {
   return (
     <Screen>
       <TopBar title="Dev" sub="外部 API 与 MCP" right={<IconButton name="add" size={26} color={colors.primary} label="新建凭证" onPress={() => setForm({ open: true, edit: null })} />} />
-      <ScrollView contentContainerStyle={{ padding: 12, gap: 12, paddingBottom: 60 }} refreshControl={<Pull onRefresh={() => Promise.all([keys.refresh(), logs.refresh()])} />}>
+      <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 12, gap: 12, paddingBottom: 60 }} refreshControl={<Pull onRefresh={() => Promise.all([keys.refresh(), logs.refresh()])} />}>
         {cfg && !cfg.enabled ? (
           <Pressable onPress={() => { tap(); router.push("/settings"); }} style={{ flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: 8, backgroundColor: colors.warnBg }}>
             <Ionicons name="warning-outline" size={16} color={colors.warn} />
@@ -165,7 +169,7 @@ export default function DevScreen() {
                     ))}
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                       <Text style={{ flex: 1, fontSize: fs.xs, color: colors.textFaint }}>MCP 工具 <Text style={{ fontFamily: mono }}>{e.name}</Text></Text>
-                      <LinkText label="在网页版试用 →" onPress={() => void openPage(`${WEB_ORIGIN}/dev`)} />
+                      <LinkText label="试用 →" onPress={() => tryIt(e.name)} />
                     </View>
                   </View>
                 ) : null}
@@ -173,6 +177,13 @@ export default function DevScreen() {
             );
           })}
         </Card>
+
+        <View onLayout={(e) => { testerY.current = e.nativeEvent.layout.y; }}>
+          <Card>
+            <PanelTitle title="试用" right={<InfoTip title="试用"><P>像 Agent 一样调用只读接口：<Code>GET /api/open/v1/…</Code>，带 <Code>Authorization: Bearer &lt;key&gt;</Code>。显示状态码、耗时、限流响应头和返回内容。</P><P>密钥只保存在本页（新建凭证后自动填入），离开页面即清空。</P></InfoTip>} />
+            {eps ? <Tester endpoints={eps.endpoints} endpoint={testEp || (eps.endpoints.find((e) => e.name === "get_universe") ?? eps.endpoints[0])?.name || ""} onEndpoint={setTestEp} apiKey={fresh} onApiKey={setFresh} /> : <Loading text="加载接口" />}
+          </Card>
+        </View>
       </ScrollView>
       <KeyForm open={form.open} edit={form.edit} maxRate={eps?.limits.maxRatePerMin ?? 6000} maxBurst={eps?.limits.maxBurst ?? 1000}
         onClose={() => setForm((f) => ({ ...f, open: false }))}
@@ -191,6 +202,147 @@ function CopyRow({ label, text, secret }: { label: string; text: string; secret?
         <Ionicons name="copy-outline" size={15} color={colors.textFaint} />
       </View>
     </Pressable>
+  );
+}
+
+// ---------- tester (web components/dev/Tester.vue) ----------
+
+const LIMIT = 30_000;
+const PREVIEW_LINES = 40;
+const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
+type TestRes = { status: number; ms: number; headers: [string, string][]; body: string; size: number };
+
+function initVals(e: DevEndpoint | undefined) {
+  const v: Record<string, string> = {};
+  for (const p of e?.params ?? []) v[p.name] = p.name === "instId" ? "BTC-USDT-SWAP" : p.name === "ruleId" ? "" : p.default != null ? String(p.default) : "";
+  return v;
+}
+
+function Tester({ endpoints, endpoint, onEndpoint, apiKey, onApiKey }: { endpoints: DevEndpoint[]; endpoint: string; onEndpoint: (n: string) => void; apiKey: string; onApiKey: (k: string) => void }) {
+  const ep = endpoints.find((e) => e.name === endpoint) ?? endpoints[0];
+  const [vals, setVals] = useState<Record<string, string>>(() => initVals(ep));
+  const [seen, setSeen] = useState(ep?.name);
+  if (seen !== ep?.name) { setSeen(ep?.name); setVals(initVals(ep)); }
+  const [pick, setPick] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [res, setRes] = useState<TestRes | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  const path = useMemo(() => {
+    if (!ep) return "";
+    let p = ep.path;
+    const qs: string[] = [];
+    for (const x of ep.params ?? []) {
+      const v = (vals[x.name] ?? "").trim();
+      if (x.in === "path") p = p.replace(`{${x.name}}`, encodeURIComponent(v));
+      else if (v !== "" && String(x.default ?? "") !== v) qs.push(`${encodeURIComponent(x.name)}=${encodeURIComponent(v)}`);
+    }
+    return qs.length ? `${p}?${qs.join("&")}` : p;
+  }, [ep, vals]);
+
+  const send = async () => {
+    setSending(true);
+    const t0 = Date.now();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30_000);
+    try {
+      const key = apiKey.trim();
+      const r = await fetch(`${API_ORIGIN}/api/open/v1/${path}`, { headers: key ? { Authorization: `Bearer ${key}` } : {}, signal: ctrl.signal });
+      const text = await r.text();
+      let body = text;
+      try { body = JSON.stringify(JSON.parse(text), null, 2); } catch { /* not JSON */ }
+      const headers: [string, string][] = [];
+      r.headers.forEach((v, k) => { const l = k.toLowerCase(); if (l.startsWith("x-ratelimit") || l === "retry-after") headers.push([l, v]); });
+      setRes({ status: r.status, ms: Date.now() - t0, headers, body: body.length > LIMIT ? body.slice(0, LIMIT) + "\n… (truncated)" : body, size: text.length });
+      track("dev.test", { endpoint: ep?.name ?? "", status: r.status });
+    } catch (e) {
+      setRes({ status: 0, ms: Date.now() - t0, headers: [], body: ctrl.signal.aborted ? "请求超时（30 秒）" : e instanceof Error ? e.message : String(e), size: 0 });
+    } finally {
+      clearTimeout(timer);
+      setSending(false);
+      setExpanded(false);
+    }
+  };
+
+  if (!ep) return null;
+  const lines = res ? res.body.split("\n") : [];
+  const long = lines.length > PREVIEW_LINES;
+  const shownBody = res && long && !expanded ? lines.slice(0, PREVIEW_LINES).join("\n") + "\n…" : res?.body ?? "";
+  const tone = !res ? undefined : res.status === 200 ? "good" : res.status === 429 ? "warn" : "bad";
+  const label = { fontSize: fs.xs, color: colors.textFaint } as const;
+
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={{ gap: 4 }}>
+        <Text style={label}>接口</Text>
+        <Pressable onPress={() => { tap(); setPick(true); }} style={{ flexDirection: "row", alignItems: "center", gap: 8, height: 40, paddingHorizontal: 10, borderRadius: 6, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.cardMuted }}>
+          <Text style={{ flex: 1, fontFamily: mono, fontSize: fs.md, color: colors.text }} numberOfLines={1}>/{ep.path}</Text>
+          <Ionicons name="chevron-down" size={15} color={colors.textFaint} />
+        </Pressable>
+        <Text style={{ fontSize: fs.xs, color: colors.textFaint }} numberOfLines={2}>{ep.summary}</Text>
+      </View>
+      <View style={{ gap: 4 }}>
+        <Text style={label}>API Key / Token</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Input mono value={apiKey} onChangeText={onApiKey} secureTextEntry={!showKey} placeholder="ctg_sk_…（新建后自动填入，仅保存在本页）" style={{ flex: 1 }} />
+          <IconButton name={showKey ? "eye-off-outline" : "eye-outline"} size={19} label={showKey ? "隐藏密钥" : "显示密钥"} onPress={() => setShowKey((v) => !v)} />
+        </View>
+      </View>
+      {(ep.params ?? []).map((p) => {
+        const opts = p.enum ?? (p.type === "boolean" ? ["false", "true"] : null);
+        const v = vals[p.name] ?? "";
+        const set = (x: string) => setVals((o) => ({ ...o, [p.name]: x }));
+        return (
+          <View key={p.name} style={{ gap: 4 }}>
+            <Text style={label}>
+              <Text style={{ fontFamily: mono, color: colors.textSoft }}>{p.name}</Text>{p.required || p.in === "path" ? <Text style={{ color: colors.down }}>*</Text> : null}
+              {"  "}{p.desc}
+            </Text>
+            {opts ? (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                {[...(p.required || p.default != null ? [] : [""]), ...opts].map((o) => <Chip key={o || "-"} label={o || "—"} active={v === o} onPress={() => set(o)} />)}
+              </View>
+            ) : (
+              <Input mono value={v} onChangeText={set} keyboardType={p.type === "integer" ? "number-pad" : p.type === "number" ? "decimal-pad" : "default"}
+                placeholder={p.max ? `${p.min}–${p.max}` : p.default != null ? String(p.default) : undefined} style={{ height: 36 }} />
+            )}
+          </View>
+        );
+      })}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <Text selectable style={{ flex: 1, fontFamily: mono, fontSize: fs.sm, color: colors.textSoft }}>GET /api/open/v1/{path}</Text>
+        <PillButton small icon="play" label={sending ? "请求中…" : "发送"} loading={sending} onPress={() => void send()} />
+      </View>
+      <View>
+        <Text style={label}>cURL</Text>
+        <CodeBlock text={curlSnippet(apiKey.trim() || undefined, path)} lang="shell" />
+      </View>
+      {res ? (
+        <View style={{ gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Tag text={res.status ? String(res.status) : "网络错误"} tone={tone} />
+            <Text style={[{ fontSize: fs.sm, color: colors.textFaint }, tnum]}>{res.ms} ms · {kb(res.size)}</Text>
+            <View style={{ flex: 1 }} />
+            <Pressable hitSlop={8} accessibilityLabel="复制响应" onPress={() => { tap(); void copy(res.body).then(() => toast("已复制响应")); }} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Ionicons name="copy-outline" size={14} color={colors.textFaint} />
+              <Text style={{ fontSize: fs.sm, color: colors.textFaint }}>复制</Text>
+            </Pressable>
+          </View>
+          {res.headers.length ? (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+              {res.headers.map(([k, v]) => <Text key={k} style={[{ fontSize: fs.xs, color: colors.textFaint }, tnum]}>{k.replace("x-ratelimit-", "")} <Text style={{ color: colors.text, fontWeight: "600" }}>{v}</Text></Text>)}
+            </View>
+          ) : null}
+          <ScrollView nestedScrollEnabled style={{ maxHeight: 420, borderRadius: 6, borderWidth: 1, borderColor: colors.border, backgroundColor: "#050505" }} contentContainerStyle={{ padding: 10 }}>
+            <Text selectable style={{ fontFamily: mono, fontSize: 12, lineHeight: 18, color: "#d6d6d6" }}>{shownBody}</Text>
+          </ScrollView>
+          {long ? <PillButton small variant="ghost" label={expanded ? "收起" : `展开全部（${lines.length} 行）`} onPress={() => setExpanded((x) => !x)} /> : null}
+        </View>
+      ) : null}
+      <PickerSheet visible={pick} onClose={() => setPick(false)} title="接口" value={ep.name} onPick={(n) => { onEndpoint(n); setRes(null); }}
+        options={endpoints.map((e) => ({ value: e.name, label: `/${e.path}`, desc: e.summary, badge: e.cost && e.cost !== "1" ? `消耗 ${e.cost}` : undefined }))} />
+    </View>
   );
 }
 

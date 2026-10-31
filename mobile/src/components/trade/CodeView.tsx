@@ -1,15 +1,17 @@
-// Read-only Python source with line numbers and syntax colors (strategy code; the web edits it in
-// CodeMirror). A small line tokenizer: comments, strings (incl. triple-quoted blocks), keywords,
-// builtins, numbers, decorators, class / def names. Lines with diagnostics get a red or amber mark.
+// Python source with line numbers and syntax colors (strategy code; CodeEditor shows it while the
+// keyboard is down, `onLinePress` starts editing at that line). A small line tokenizer: comments,
+// strings (incl. triple-quoted blocks), keywords, builtins, numbers, decorators, class / def names.
+// Lines with diagnostics get a red or amber mark.
 import { memo, useMemo } from "react";
-import { Platform, ScrollView, Text, View } from "react-native";
+import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import type { Diagnostic } from "@/lib/tradeApi";
 import { colors } from "@/lib/theme";
 
 const C = { kw: "#c792ea", str: "#c3e88d", com: "#6a737d", num: "#f78c6c", fn: "#82aaff", cls: "#ffcb6b", dec: "#bcff2f", self: "#ff5370", text: "#d4d4d4", ln: "#4b4b4b" };
 const KW = new Set("False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case".split(" "));
 const BUILTIN = new Set("abs all any bool dict enumerate filter float int len list map max min print range round set sorted str sum tuple zip isinstance getattr hasattr super".split(" "));
-const font = Platform.select({ ios: "Menlo", default: "monospace" });
+export const codeFont = Platform.select({ ios: "Menlo", default: "monospace" });
+const font = codeFont;
 
 type Tok = { t: string; c: string };
 
@@ -63,7 +65,7 @@ function tokenize(code: string): Tok[][] {
   return out;
 }
 
-export const CodeView = memo(function CodeView({ code, diagnostics }: { code: string; diagnostics?: Diagnostic[] }) {
+export const CodeView = memo(function CodeView({ code, diagnostics, onLinePress }: { code: string; diagnostics?: Diagnostic[]; onLinePress?: (line: number) => void }) {
   const lines = useMemo(() => tokenize(code), [code]);
   const marks = useMemo(() => {
     const m = new Map<number, Diagnostic>();
@@ -76,13 +78,19 @@ export const CodeView = memo(function CodeView({ code, diagnostics }: { code: st
       <View>
         {lines.map((toks, i) => {
           const d = marks.get(i + 1);
-          return (
-            <View key={i} style={{ flexDirection: "row", backgroundColor: d ? (d.severity === "error" ? colors.downBg : colors.warnBg) : "transparent" }}>
+          const bg = d ? (d.severity === "error" ? colors.downBg : colors.warnBg) : "transparent";
+          const body = (
+            <>
               <Text style={{ width: w, textAlign: "right", paddingRight: 8, fontFamily: font, fontSize: 11, lineHeight: 17, color: d ? (d.severity === "error" ? colors.down : colors.warn) : C.ln }}>{i + 1}</Text>
-              <Text selectable style={{ fontFamily: font, fontSize: 11, lineHeight: 17, color: C.text }}>
+              <Text selectable={!onLinePress} style={{ fontFamily: font, fontSize: 11, lineHeight: 17, color: C.text }}>
                 {toks.length ? toks.map((t, j) => <Text key={j} style={{ color: t.c }}>{t.t}</Text>) : " "}
               </Text>
-            </View>
+            </>
+          );
+          return onLinePress ? (
+            <Pressable key={i} onPress={() => onLinePress(i + 1)} style={({ pressed }) => ({ flexDirection: "row", backgroundColor: pressed ? colors.raised : bg })}>{body}</Pressable>
+          ) : (
+            <View key={i} style={{ flexDirection: "row", backgroundColor: bg }}>{body}</View>
           );
         })}
       </View>

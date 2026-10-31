@@ -6,7 +6,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { api, type InstrumentInfo, type Row } from "@/lib/api";
-import { ago, catLabel, fieldValue, fundingLevel, fundingLevelText, logPct, num, pct, price, sign, sym, usd, time } from "@/lib/fmt";
+import { ago, catLabel, fieldValue, fundingLevel, logPct, num, pct, price, sign, sym, usd } from "@/lib/fmt";
 import { askAbout } from "@/lib/ai";
 import { toggleWatch, useLivePrice, useMeta, useRuleId, setRule } from "@/lib/market";
 import { mutate, useQuery } from "@/lib/query";
@@ -16,7 +16,9 @@ import { colors, fs, radius, tnum } from "@/lib/theme";
 import { ChartView } from "@/components/ChartView";
 import { CoinIcon } from "@/components/CoinIcon";
 import { ComparePanel, FundingPanel, LiqPanel, OIPanel } from "@/components/HistoryPanels";
+import { B, InfoTip, P } from "@/components/Form";
 import { OrderBook } from "@/components/OrderBook";
+import { FundingDetail, OIDetail, SpotDetail, TurnoverDetail } from "@/components/StatDetails";
 import { Card, Dot, ErrorBox, Loading, PanelTitle, PickerSheet, Pull, Row as KvRow, Screen, Sheet, Tag, TopBar, tap, toastError, toneColor, styles } from "@/components/ui";
 
 type DetailKey = "score" | "supply" | "book" | "spot" | "funding" | "oi" | "turnover";
@@ -220,57 +222,32 @@ function StatCard({ label, icon, value, sub, onPress }: { label: string; icon: k
   );
 }
 
-// ---------- stat details (web components/details/*) ----------
+// ---------- stat details (web components/details/*; funding/OI/spot/turnover in StatDetails.tsx) ----------
 
 function DetailSheet({ k, onClose, info, row, ruleId, countdown, spread }: { k: DetailKey | null; onClose: () => void; info: InstrumentInfo; row?: Row; ruleId: string; countdown: string; spread: number | null }) {
   const title = { score: "评分", supply: "总市值与解锁", book: "盘口", spot: "OKX 现货与基差", funding: "资金费", oi: "持仓量", turnover: "成交额" }[k ?? "score"];
   return (
     <Sheet visible={!!k} onClose={onClose} title={`${sym(info.instId)}/USDT · ${title}`} scroll>
       {k === "score" ? <ScoreDetail row={row} ruleId={ruleId} /> : null}
-      {k === "book" ? <OrderBook id={info.instId} ladder={10} /> : null}
+      {k === "book" ? (
+        <>
+          <View style={{ alignSelf: "flex-start", marginBottom: 8 }}>
+            <InfoTip title="怎么看" label="怎么看">
+              <P><B>数据</B>：OKX 永续实时盘口快照（每侧最多 5000 档，是 OKX 公开的最深盘口；覆盖范围见深度图标题；每秒刷新），金额按 价格 × 张数 × 合约面值 换算成 <B>USDT</B>。</P>
+              <P><B>深度图</B>：横轴是相对中间价的偏离（%），纵轴是从中间价到该价位的累计挂单金额。左绿 = 买盘，右红 = 卖盘。</P>
+              <P><B>按住/拖动</B>：手指放到任意位置，例如 +2%，显示“用市价买单把价格推到 +2% 需要吃掉多少 USDT、成交均价和平均滑点”；负方向同理是卖出压低。</P>
+              <P><B>速查表</B>：常用偏离下的所需资金；“+”表示超出 OKX 公开盘口深度，实际更多。</P>
+              <P>盘口会被撤单/新挂单快速改变，数字只代表此刻的挂单，不含隐藏单和冰山单。</P>
+            </InfoTip>
+          </View>
+          <OrderBook id={info.instId} ladder={10} />
+        </>
+      ) : null}
       {k === "supply" ? <SupplyDetail info={info} /> : null}
-      {k === "spot" ? (
-        info.spotId ? (
-          <>
-            <KvRow label="现货" value={info.spotId} />
-            <KvRow label="现货价" value={price(info.spotLast)} />
-            <KvRow label="永续价" value={price(info.last)} />
-            <KvRow label="基差" value={fieldValue("basis", row?.values?.basis)} />
-            <Text style={[styles.note, { marginTop: 10 }]}>基差 = 永续收盘 ÷ 同时刻 OKX 同名 USDT 现货收盘 − 1。正值 = 永续比现货贵（多头情绪/资金费偏正时常见），负值相反。只是 OKX 一家现货，不代表全市场。K 线图可叠加现货线。</Text>
-          </>
-        ) : <Text style={styles.note}>该合约没有 OKX 同名 USDT 现货（股票/商品永续或未上现货的币），无法计算基差。</Text>
-      ) : null}
-      {k === "funding" ? (
-        <>
-          <KvRow label="本期费率" value={`${(info.fundingRate * 100).toFixed(4)}%`} />
-          <KvRow label="结算间隔" value={`${info.fundingIntervalH || "?"} 小时`} />
-          <KvRow label="距结算" value={countdown} />
-          <KvRow label="折合每小时" value={fieldValue("funding_hourly", row?.values?.funding_hourly)} />
-          <KvRow label="预测每小时" value={fieldValue("funding_pred_hourly", row?.values?.funding_pred_hourly)} />
-          <KvRow label="年化（简单）" value={info.fundingIntervalH ? `${((info.fundingRate * (24 / info.fundingIntervalH) * 365) * 100).toFixed(1)}%` : "—"} />
-          <KvRow label="水平" value={fundingLevelText[fundingLevel(info.fundingRate, info.fundingIntervalH)]} />
-          <Text style={[styles.note, { marginTop: 10 }]}>正值 = 多头付给空头，负值 = 空头付给多头。OKX 各合约结算间隔不同（4h/8h），比较时看“折合每小时”。年化只是按本期费率简单换算，不代表未来。</Text>
-          <View style={{ marginTop: 12 }}><FundingPanel id={info.instId} /></View>
-        </>
-      ) : null}
-      {k === "oi" ? (
-        <>
-          <KvRow label="持仓量（USD）" value={usd(info.oiUsd)} />
-          <KvRow label="持仓量（币）" value={usd(info.oiCcy)} />
-          <KvRow label="4h 变化（币）" value={logPct(row?.values?.oi_chg_4h)} />
-          <KvRow label="采样时间" value={time(info.oiTs, true)} />
-          <View style={{ marginTop: 12 }}><OIPanel id={info.instId} /></View>
-        </>
-      ) : null}
-      {k === "turnover" ? (
-        <>
-          <KvRow label="12h 成交额" value={`${usd(row?.turnover12h)} USDT`} />
-          <KvRow label="24h 成交额" value={info.turnover24h ? `${usd(info.turnover24h)} USDT` : "—"} />
-          <KvRow label="4h 放量" value={fieldValue("vol_surprise_4h", row?.values?.vol_surprise_4h)} />
-          <KvRow label="点差" value={`${num(spread, 1)} bps`} />
-          <Text style={[styles.note, { marginTop: 10 }]}>12h 成交额 = 最近 720 根已确认 1m K 线 volCcyQuote 之和，严格大于阈值才进监控池。放量 = 近 4 小时成交额相对 7 天中位数的倍数。</Text>
-        </>
-      ) : null}
+      {k === "spot" ? <SpotDetail info={info} row={row} /> : null}
+      {k === "funding" ? <FundingDetail info={info} row={row} countdown={countdown} /> : null}
+      {k === "oi" ? <OIDetail info={info} row={row} /> : null}
+      {k === "turnover" ? <TurnoverDetail info={info} row={row} /> : null}
     </Sheet>
   );
 }

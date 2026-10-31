@@ -15,6 +15,7 @@ import { colors, fs, tnum } from "@/lib/theme";
 import { Card, IconButton, Loading, PillButton, Screen, Segmented, Sheet, Tag, TopBar, confirm, tap, toast } from "@/components/ui";
 import { FieldRow, FormSheet, GroupTitle, InfoTip, LTag, Muted, NumInput, TextField, mono } from "@/components/trade/common";
 import { InstanceForm, LimitsForm } from "@/components/trade/forms";
+import { DateField } from "@/components/trade/DateSheet";
 import { StrategyPicker, defaultParams, freshUniverse, useAiReady } from "@/components/trade/InstanceEditor";
 
 const DAY = 86_400_000;
@@ -133,7 +134,11 @@ export default function NewAccountScreen() {
   }, [range.to, range.from, to, now]);
   const setPreset = (v: string) => {
     const n = Number(v);
-    const f = day(Date.now() - n * DAY), t = day(Date.now() - DAY);
+    const f = day(now - n * DAY), t = day(now - DAY);
+    setRange(f, t);
+  };
+  /** Picked dates; an untouched default name follows the range (like the presets). */
+  const setRange = (f: string, t: string) => {
     if (name === defaultName(mode)) setName(defaultName(mode, f, t));
     setFrom(f);
     setTo(t);
@@ -241,9 +246,9 @@ export default function NewAccountScreen() {
                 <View style={{ gap: 8, alignSelf: "stretch" }}>
                   <Segmented small value={rangePreset} onChange={setPreset} options={[{ value: "7", label: "7 天" }, { value: "30", label: "30 天" }, { value: "90", label: "90 天" }, { value: "365", label: "1 年" }]} />
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <View style={{ flex: 1 }}><TextField value={from} onChange={setFrom} placeholder="yyyy-mm-dd" maxLength={10} /></View>
+                    <View style={{ flex: 1 }}><DateField title="开始日期" value={from} onChange={(v) => setRange(v, to)} max={to < day(now) ? to : day(now)} range={[from, to]} /></View>
                     <Text style={{ color: colors.textFaint }}>→</Text>
-                    <View style={{ flex: 1 }}><TextField value={to} onChange={setTo} placeholder="yyyy-mm-dd" maxLength={10} /></View>
+                    <View style={{ flex: 1 }}><DateField title="结束日期" value={to} onChange={(v) => setRange(from, v)} min={from} max={day(now)} range={[from, to]} /></View>
                   </View>
                 </View>
               </FieldRow>
