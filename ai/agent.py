@@ -130,10 +130,15 @@ def sandbox_server(chat: str, key: str):
 
     @tool("shell", "Run a bash command in the isolated analysis sandbox (Python 3 + numpy/pandas, curl, jq, the `ca` "
           "crypto-analyzer CLI). The working directory persists for this conversation. No access to ctg's host. "
-          "Output is capped at 30k characters.", {"cmd": str, "timeout": int})
+          "Output is capped at 30k characters.",
+          # a full JSON schema: the short {name: type} form makes every key required, and calls without
+          # `timeout` failed validation ("'timeout' is a required property")
+          {"type": "object", "properties": {"cmd": {"type": "string", "description": "bash command"},
+                                            "timeout": {"type": "integer", "description": "seconds, default 60, max 300"}},
+           "required": ["cmd"]})
     async def shell(args: dict) -> dict:
         try:
-            res = await sandbox_exec(chat, str(args.get("cmd", "")), int(args.get("timeout") or 60), key)
+            res = await sandbox_exec(chat, str(args.get("cmd", "")), max(5, min(300, int(args.get("timeout") or 60))), key)
         except (OSError, asyncio.TimeoutError, ValueError) as e:
             return {"content": [{"type": "text", "text": f"sandbox unavailable: {e}"}], "is_error": True}
         text = f"exit {res.get('exit')} · {res.get('ms')} ms\n"
@@ -153,7 +158,10 @@ def memory_server(emit: Emit):
 
     @tool("remember", "Save one lasting preference or fact about the owner (e.g. 杠杆偏好：多空都用 8 倍). Use when the owner "
           "states a standing preference or asks you to remember something. Pass replaces=<id> to update an existing note "
-          "from the list in your instructions instead of adding a duplicate.", {"text": str, "replaces": int})
+          "from the list in your instructions instead of adding a duplicate.",
+          {"type": "object", "properties": {"text": {"type": "string"},
+                                            "replaces": {"type": "integer", "description": "id of the note this one updates"}},
+           "required": ["text"]})
     async def remember(args: dict) -> dict:
         text = str(args.get("text", "")).strip()[:300]
         if not text:
