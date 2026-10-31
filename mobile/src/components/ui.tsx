@@ -238,7 +238,7 @@ export function Row({ label, value, onPress, right }: { label: string; value?: s
 
 // ---------- bottom sheet ----------
 
-export function Sheet({ visible, onClose, title, children, scroll, footer }: { visible: boolean; onClose: () => void; title?: string; children?: ReactNode; scroll?: boolean; footer?: ReactNode }) {
+export function Sheet({ visible, onClose, title, children, scroll, footer, fill }: { visible: boolean; onClose: () => void; title?: string; children?: ReactNode; scroll?: boolean; footer?: ReactNode; fill?: boolean }) {
   // The native iOS page sheet (like the AI panel): swipe down to close (the content hands the drag to
   // the sheet once it is scrolled to the top), rounded glass edge, the screen behind scales back.
   // Content always scrolls, so tall details are never cut off; `scroll` is kept for callers.
@@ -256,9 +256,14 @@ export function Sheet({ visible, onClose, title, children, scroll, footer }: { v
             </Pressable>
           </View>
         </View>
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: footer ? 12 : insets.bottom + 20 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
-          {children}
-        </ScrollView>
+        {fill ? (
+          // the caller lays out its own scrolling (e.g. horizontal cards)
+          <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 6, paddingBottom: footer ? 12 : insets.bottom + 12 }}>{children}</View>
+        ) : (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: footer ? 12 : insets.bottom + 20 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
+            {children}
+          </ScrollView>
+        )}
         {footer ? <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: insets.bottom + 12, borderTopWidth: 1, borderColor: colors.border }}>{footer}</View> : null}
       </KeyboardAvoidingView>
     </Modal>

@@ -1,7 +1,7 @@
 // Instrument detail (web components/InstrumentDetail.vue): header with live price and key numbers,
 // stat cards that open their detail, the web K-line chart in a WebView, live order book, relative
 // performance, OI and funding history, liquidations. Info polls every 5 s while shown.
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -19,9 +19,9 @@ import { ComparePanel, FundingPanel, LiqPanel, OIPanel } from "@/components/Hist
 import { B, InfoTip, P } from "@/components/Form";
 import { OrderBook } from "@/components/OrderBook";
 import { FundingDetail, OIDetail, SpotDetail, TurnoverDetail } from "@/components/StatDetails";
-import { Card, Dot, ErrorBox, Loading, PanelTitle, PickerSheet, Pull, Row as KvRow, Screen, Sheet, Tag, TopBar, tap, toastError, toneColor, styles } from "@/components/ui";
+import { StatBoard, type Tile } from "@/components/StatBoard";
+import { Card, Dot, ErrorBox, Loading, PanelTitle, PickerSheet, Pull, Row as KvRow, Screen, Tag, TopBar, tap, toastError, toneColor, styles } from "@/components/ui";
 
-type DetailKey = "score" | "supply" | "book" | "spot" | "funding" | "oi" | "turnover";
 const statusText: Record<string, string> = { live: "实时", stale: "数据缺口，补洞中", warming: "预热中", new: "上市不足 12h" };
 
 export default function InstrumentScreen() {
@@ -35,7 +35,6 @@ export default function InstrumentScreen() {
   const [chartPx, setChartPx] = useState<number | null>(null);
   const streamPx = useLivePrice(id, info?.last);
   const live = chartPx ?? streamPx;
-  const [detail, setDetail] = useState<DetailKey | null>(null);
   const [scrollOn, setScrollOn] = useState(true);
   const tall = useSettings((s) => s.chartTall);
   const now = useNow();
@@ -63,6 +62,33 @@ export default function InstrumentScreen() {
     track("chart.fullscreen");
     router.push({ pathname: "/chart/[id]", params: { id, spot: info?.spotId ? "1" : "0", oi: info && info.oiUsd > 0 ? "1" : "0" } });
   };
+
+  const fundingTitle = `资金费 ${info?.fundingIntervalH || "?"}h`;
+  const tiles: Tile[] = !info ? [] : [
+    { key: "funding", label: fundingTitle, title: "资金费",
+      value: <Text style={{ color: fundingTone(info.fundingRate, info.fundingIntervalH) }}>{(info.fundingRate * 100).toFixed(4)}%</Text>,
+      sub: countdown, body: () => <FundingDetail info={info} row={row} countdown={countdown} /> },
+    { key: "oi", label: "持仓量", title: "持仓量", value: usd(info.oiUsd),
+      sub: <Text style={{ color: toneColor(sign(row?.values?.oi_chg_4h), colors.textFaint) }}>4h {logPct(row?.values?.oi_chg_4h)}</Text>,
+      body: () => <OIDetail info={info} row={row} /> },
+    { key: "turnover", label: "12h 额", title: "成交额", value: usd(row?.turnover12h),
+      sub: row?.values?.vol_surprise_4h != null ? `放量 ×${Math.exp(row.values.vol_surprise_4h).toFixed(2)}` : "—",
+      body: () => <TurnoverDetail info={info} row={row} /> },
+    { key: "score", label: "评分", title: "评分",
+      value: <Text><Text style={{ color: (score?.long.score ?? 0) >= 50 ? colors.up : colors.textSoft }}>多{score?.long.score?.toFixed(0) ?? "—"}</Text><Text style={{ color: colors.textFaint }}>·</Text><Text style={{ color: (score?.short.score ?? 0) >= 50 ? colors.down : colors.textSoft }}>空{score?.short.score?.toFixed(0) ?? "—"}</Text></Text>,
+      sub: score ? (score.gate === "PASS" ? ruleName : score.gate.replace("BLOCKED:", "门槛：")) : "预热中",
+      body: () => <ScoreDetail row={row} ruleId={ruleId} /> },
+    { key: "supply", label: "总市值", title: "总市值与解锁", value: info.coin ? usd(info.coin.marketCap) : "—",
+      sub: info.coin && info.coin.total ? `流通 ${((info.coin.circulating / info.coin.total) * 100).toFixed(1)}%` : info.category === "1" ? "无数据" : "非代币",
+      body: () => <SupplyDetail info={info} /> },
+    { key: "book", label: "盘口点差", title: "盘口", value: `${num(spread, 1)} bps`, sub: `${price(info.bid)}`,
+      body: () => <BookDetail id={info.instId} /> },
+    { key: "spot", label: "现货基差", title: "OKX 现货与基差", value: info.spotId ? fieldValue("basis", row?.values?.basis) : "—",
+      sub: info.spotId ? price(info.spotLast) : "无现货", body: () => <SpotDetail info={info} row={row} /> },
+    { key: "rel", label: "跑赢 BTC 4h", title: "相对 BTC / ETH",
+      value: <Text style={{ color: toneColor(sign(row?.values?.excess_btc_4h), colors.text) }}>{logPct(row?.values?.excess_btc_4h)}</Text>,
+      sub: row?.values?.beta_btc_48h != null ? `β ${row.values.beta_btc_48h.toFixed(2)}` : "—", body: () => <ComparePanel id={info.instId} bare /> },
+  ];
 
   return (
     <Screen>
@@ -102,38 +128,16 @@ export default function InstrumentScreen() {
               {row?.active ? <Tag text={`活跃 #${row.rank}`} tone="info" /> : info.eligible ? <Tag text="非活跃" /> : <Tag text="未录制" />}
               {info.syncing ? <Tag text="同步中" tone="info" /> : null}
             </View>
-            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-              <View style={{ flex: 1, gap: 6 }}>
-                <Text style={[{ fontSize: 28, fontWeight: "700", color: toneColor(sign(ret24)), letterSpacing: -0.3 }, tnum]} numberOfLines={1} adjustsFontSizeToFit>{price(live)}</Text>
-                <View style={{ flexDirection: "row", gap: 6 }}>
-                  <Chg label="24h" v={ret24} />
-                  <Chg label="4h" v={ret4} />
-                </View>
-              </View>
-              <View style={{ gap: 1 }}>
-                <KeyNum k={`资金费 ${info.fundingIntervalH || "?"}h`} v={`${(info.fundingRate * 100).toFixed(4)}%`} color={fundingTone(info.fundingRate, info.fundingIntervalH)} x={countdown} onPress={() => setDetail("funding")} />
-                <KeyNum k="持仓量" v={usd(info.oiUsd)} x={logPct(row?.values?.oi_chg_4h)} xColor={toneColor(sign(row?.values?.oi_chg_4h), colors.textFaint)} onPress={() => setDetail("oi")} />
-                <KeyNum k="12h 额" v={usd(row?.turnover12h)} x={row?.values?.vol_surprise_4h != null ? "×" + Math.exp(row.values.vol_surprise_4h).toFixed(2) : "—"} onPress={() => setDetail("turnover")} />
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Text style={[{ flex: 1, fontSize: 28, fontWeight: "700", color: toneColor(sign(ret24)), letterSpacing: -0.3 }, tnum]} numberOfLines={1} adjustsFontSizeToFit>{price(live)}</Text>
+              <View style={{ gap: 4, alignItems: "flex-end" }}>
+                <Chg label="24h" v={ret24} />
+                <Chg label="4h" v={ret4} />
               </View>
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10, marginHorizontal: -12, borderTopWidth: 1, borderColor: colors.border }} contentContainerStyle={{ paddingHorizontal: 6, paddingTop: 8, gap: 4 }}>
-              <StatCard label="评分" icon="analytics-outline" onPress={() => setDetail("score")}
-                value={<Text style={[{ fontSize: fs.md, fontWeight: "600", color: colors.text }, tnum]}>
-                  <Text style={sl}>多 </Text><Text style={{ color: (score?.long.score ?? 0) >= 50 ? colors.up : colors.textSoft }}>{score?.long.score?.toFixed(0) ?? "—"}</Text>
-                  <Text style={{ color: colors.textFaint }}> · </Text>
-                  <Text style={sl}>空 </Text><Text style={{ color: (score?.short.score ?? 0) >= 50 ? colors.down : colors.textSoft }}>{score?.short.score?.toFixed(0) ?? "—"}</Text>
-                </Text>}
-                sub={score ? (score.gate === "PASS" ? ruleName : score.gate.replace("BLOCKED:", "门槛：")) : "预热中"} />
-              <StatCard label="总市值" icon="pie-chart-outline" onPress={() => setDetail("supply")}
-                value={<Text style={valStyle}>{info.coin ? usd(info.coin.marketCap) : "—"}{info.coin ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}> USD</Text> : null}</Text>}
-                sub={info.coin && info.coin.total ? `已流通 ${((info.coin.circulating / info.coin.total) * 100).toFixed(1)}%` : info.category === "1" ? "无市值数据" : "非代币"} />
-              <StatCard label="买一 / 卖一" icon="reorder-four-outline" onPress={() => setDetail("book")}
-                value={<Text style={valStyle}>{price(info.bid)} <Text style={{ color: colors.textFaint }}>/</Text> {price(info.ask)}</Text>}
-                sub={`点差 ${num(spread, 1)} bps`} />
-              <StatCard label="OKX 现货" icon="swap-horizontal-outline" onPress={() => setDetail("spot")}
-                value={<Text style={valStyle}>{info.spotId ? price(info.spotLast) : "—"}</Text>}
-                sub={info.spotId ? `基差 ${fieldValue("basis", row?.values?.basis)}` : "无同名 USDT 现货"} />
-            </ScrollView>
+            <View style={{ marginTop: 8, marginHorizontal: -6, borderTopWidth: 1, borderColor: colors.border }}>
+              <StatBoard tiles={tiles} onHold={(h) => setScrollOn(!h)} />
+            </View>
           </Card>
 
           <ChartView
@@ -160,13 +164,10 @@ export default function InstrumentScreen() {
           </Card>
         </ScrollView>
       )}
-      {info ? <DetailSheet k={detail} onClose={() => setDetail(null)} info={info} row={row} ruleId={ruleId} countdown={countdown} spread={spread} /> : null}
     </Screen>
   );
 }
 
-const sl = { fontSize: fs.xs, fontWeight: "500" as const, color: colors.textFaint };
-const valStyle = [{ fontSize: fs.md, fontWeight: "600" as const, color: colors.text }, tnum];
 
 function useNow() {
   const [now, setNow] = useState(() => Date.now());
@@ -198,57 +199,24 @@ function Chg({ label, v }: { label: string; v?: number | null }) {
   );
 }
 
-function KeyNum({ k, v, x, color, xColor, onPress }: { k: string; v: string; x?: string; color?: string; xColor?: string; onPress: () => void }) {
-  return (
-    <Pressable onPress={() => { tap(); onPress(); }} style={({ pressed }) => ({ flexDirection: "row", alignItems: "baseline", justifyContent: "flex-end", gap: 6, paddingHorizontal: 4, paddingVertical: 2, borderRadius: 6, backgroundColor: pressed ? colors.raised : "transparent" })}>
-      <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{k}</Text>
-      <Text style={[{ fontSize: fs.sm, fontWeight: "600", color: color ?? colors.text, minWidth: 64, textAlign: "right" }, tnum]}>{v}</Text>
-      {x ? <Text style={[{ fontSize: fs.xs, color: xColor ?? colors.textFaint, minWidth: 54, textAlign: "right" }, tnum]}>{x}</Text> : null}
-    </Pressable>
-  );
-}
 
-function StatCard({ label, icon, value, sub, onPress }: { label: string; icon: keyof typeof Ionicons.glyphMap; value: ReactNode; sub: string; onPress: () => void }) {
-  return (
-    <Pressable onPress={() => { tap(); onPress(); }} style={({ pressed }) => ({ width: 148, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: pressed ? colors.raised : "transparent", gap: 2 })}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-        <Ionicons name={icon} size={12} color={colors.textFaint} />
-        <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{label}</Text>
-        <Ionicons name="chevron-forward" size={11} color={colors.textDim} />
-      </View>
-      {value}
-      <Text style={{ fontSize: fs.xs, color: colors.textFaint }} numberOfLines={1}>{sub}</Text>
-    </Pressable>
-  );
-}
 
 // ---------- stat details (web components/details/*; funding/OI/spot/turnover in StatDetails.tsx) ----------
 
-function DetailSheet({ k, onClose, info, row, ruleId, countdown, spread }: { k: DetailKey | null; onClose: () => void; info: InstrumentInfo; row?: Row; ruleId: string; countdown: string; spread: number | null }) {
-  const title = { score: "评分", supply: "总市值与解锁", book: "盘口", spot: "OKX 现货与基差", funding: "资金费", oi: "持仓量", turnover: "成交额" }[k ?? "score"];
+function BookDetail({ id }: { id: string }) {
   return (
-    <Sheet visible={!!k} onClose={onClose} title={`${sym(info.instId)}/USDT · ${title}`} scroll>
-      {k === "score" ? <ScoreDetail row={row} ruleId={ruleId} /> : null}
-      {k === "book" ? (
-        <>
-          <View style={{ alignSelf: "flex-start", marginBottom: 8 }}>
-            <InfoTip title="怎么看" label="怎么看">
-              <P><B>数据</B>：OKX 永续实时盘口快照（每侧最多 5000 档，是 OKX 公开的最深盘口；覆盖范围见深度图标题；每秒刷新），金额按 价格 × 张数 × 合约面值 换算成 <B>USDT</B>。</P>
-              <P><B>深度图</B>：横轴是相对中间价的偏离（%），纵轴是从中间价到该价位的累计挂单金额。左绿 = 买盘，右红 = 卖盘。</P>
-              <P><B>按住/拖动</B>：手指放到任意位置，例如 +2%，显示“用市价买单把价格推到 +2% 需要吃掉多少 USDT、成交均价和平均滑点”；负方向同理是卖出压低。</P>
-              <P><B>速查表</B>：常用偏离下的所需资金；“+”表示超出 OKX 公开盘口深度，实际更多。</P>
-              <P>盘口会被撤单/新挂单快速改变，数字只代表此刻的挂单，不含隐藏单和冰山单。</P>
-            </InfoTip>
-          </View>
-          <OrderBook id={info.instId} ladder={10} />
-        </>
-      ) : null}
-      {k === "supply" ? <SupplyDetail info={info} /> : null}
-      {k === "spot" ? <SpotDetail info={info} row={row} /> : null}
-      {k === "funding" ? <FundingDetail info={info} row={row} countdown={countdown} /> : null}
-      {k === "oi" ? <OIDetail info={info} row={row} /> : null}
-      {k === "turnover" ? <TurnoverDetail info={info} row={row} /> : null}
-    </Sheet>
+    <>
+      <View style={{ alignSelf: "flex-start", marginBottom: 8 }}>
+        <InfoTip title="怎么看" label="怎么看">
+          <P><B>数据</B>：OKX 永续实时盘口快照（每侧最多 5000 档，是 OKX 公开的最深盘口；覆盖范围见深度图标题；每秒刷新），金额按 价格 × 张数 × 合约面值 换算成 <B>USDT</B>。</P>
+          <P><B>深度图</B>：横轴是相对中间价的偏离（%），纵轴是从中间价到该价位的累计挂单金额。左绿 = 买盘，右红 = 卖盘。</P>
+          <P><B>按住/拖动</B>：手指放到任意位置，例如 +2%，显示“用市价买单把价格推到 +2% 需要吃掉多少 USDT、成交均价和平均滑点”；负方向同理是卖出压低。</P>
+          <P><B>速查表</B>：常用偏离下的所需资金；“+”表示超出 OKX 公开盘口深度，实际更多。</P>
+          <P>盘口会被撤单/新挂单快速改变，数字只代表此刻的挂单，不含隐藏单和冰山单。</P>
+        </InfoTip>
+      </View>
+      <OrderBook id={id} ladder={10} />
+    </>
   );
 }
 

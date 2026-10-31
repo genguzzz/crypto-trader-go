@@ -11,20 +11,21 @@ import { Card, Loading, PanelTitle, Segmented } from "./ui";
 const LINE_COLORS = [colors.primary, colors.warn, colors.info]; // this coin, BTC, ETH (web CompareChart)
 
 /** Relative performance vs BTC / ETH, rebased to 100 at the left edge. */
-export function ComparePanel({ id }: { id: string }) {
+export function ComparePanel({ id, bare }: { id: string; bare?: boolean }) {
   const [bar, setBar] = useState("15m");
   const { data, error } = useQuery(`compare:${id}:${bar}`, () => api.compare(id, bar, 300), { staleMs: 60_000, interval: 60_000 });
   const series = useMemo(
     () => (data?.ids ?? []).map((sid, i) => ({ label: sym(sid), color: LINE_COLORS[i] ?? colors.textSoft, width: i === 0 ? 2 : 1.2, points: (data?.points ?? []).filter((p) => p.v[sid] != null).map((p) => ({ t: p.t, v: p.v[sid] })) })),
     [data],
   );
-  return (
-    <Card>
-      <PanelTitle title="相对 BTC / ETH 表现" right={<Segmented small value={bar} onChange={setBar} options={["5m", "15m", "1H", "4H"].map((v) => ({ value: v, label: v }))} />} />
+  const body = (
+    <>
+      <PanelTitle title={bare ? "" : "相对 BTC / ETH 表现"} right={<Segmented small value={bar} onChange={setBar} options={["5m", "15m", "1H", "4H"].map((v) => ({ value: v, label: v }))} />} />
       {series.length ? <LineChart series={series} height={170} fmtY={(v) => v.toFixed(1)} fmtT={(t) => time(t, true)} /> : error ? <Text style={note}>{error}</Text> : <Loading />}
       <Text style={[note, { marginTop: 6 }]}>三者都以左端为 100 重新定基，看的是同一段时间里的相对涨跌。</Text>
-    </Card>
+    </>
   );
+  return bare ? body : <Card>{body}</Card>;
 }
 
 /** Open interest in coins over 7 days (removes the "price went up so USD OI grew" effect). */
