@@ -1,6 +1,6 @@
 // Monitoring-pool list (web views/Scanner.vue, phone cards): search, direction, rule, categories,
 // gate filter, sort field + direction, watchlist stars, OI bar, recently removed, and matches from
-// the whole OKX catalog while searching. `watchOnly` is the 自选 tab: the same rows, starred only.
+// the whole OKX catalog while searching. The 自选 chip narrows it to starred rows (no separate tab).
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -33,7 +33,8 @@ function sortOptions(meta?: Meta) {
   ];
 }
 
-export function ScannerList({ watchOnly = false, header }: { watchOnly?: boolean; header?: React.ReactNode }) {
+export function ScannerList({ header }: { header?: React.ReactNode }) {
+  const [watchOnly, setWatchOnly] = useState(false);
   const router = useRouter();
   const meta = useMeta();
   const uni = useUniverse();
@@ -149,6 +150,7 @@ export function ScannerList({ watchOnly = false, header }: { watchOnly?: boolean
         <Ionicons name="chevron-down" size={14} color={colors.textFaint} />
       </Pressable>
       <ChipRow>
+        <Chip label="自选" icon={watchOnly ? "star" : "star-outline"} count={rows.filter((r) => r.watch).length} active={watchOnly} onPress={() => setWatchOnly((w) => !w)} />
         {!watchOnly ? ALL_CATS.map((c) => (
           <Chip key={c} label={catLabel[c]} count={catCount(c)} active={cats.includes(c)} onPress={() => {
             const on = cats.includes(c);

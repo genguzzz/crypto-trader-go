@@ -13,7 +13,7 @@ import { colors, fs } from "@/lib/theme";
 import { useHoldToTalk } from "@/lib/voice";
 
 const SIZE = 56;
-const TAB_ROUTES = new Set(["/", "/watch", "/trade"]);
+const TAB_ROUTES = new Set(["/", "/trade"]);
 const HIDDEN = [/^\/ai/, /^\/chart\//, /^\/settings/, /^\/diagnostics/];
 
 function open(pathname: string) {
