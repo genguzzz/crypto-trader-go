@@ -66,7 +66,15 @@ export function useLivePrice(instId: string, fallback?: number) {
 export const usePrices = () => useSyncExternalStore(subscribe, () => prices);
 export const useStreamConnected = () => useSyncExternalStore(subscribe, () => connected);
 
+// Other stream events (trade, interact) for the trading pages (lib/tradeLive.ts).
+const eventHooks = new Set<(type: string, data: string) => void>();
+export function onStreamEvent(fn: (type: string, data: string) => void) {
+  eventHooks.add(fn);
+  return () => void eventHooks.delete(fn);
+}
+
 function onEvent(type: string, data: string) {
+  eventHooks.forEach((f) => f(type, data));
   if (type === "prices") {
     try {
       prices = JSON.parse(data) as Prices;
@@ -136,6 +144,7 @@ function connect(): () => void {
     es.addEventListener("hello", (e) => { setConnected(true); onEvent("hello", (e as MessageEvent).data); });
     es.addEventListener("universe", (e) => onEvent("universe", (e as MessageEvent).data));
     es.addEventListener("prices", (e) => onEvent("prices", (e as MessageEvent).data));
+    for (const t of ["trade", "interact"]) es.addEventListener(t, (e) => onEvent(t, (e as MessageEvent).data));
     es.onerror = () => setConnected(false);
     return () => { es.close(); setConnected(false); };
   }

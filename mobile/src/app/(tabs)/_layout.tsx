@@ -2,10 +2,12 @@ import { View } from "react-native";
 import { NativeTabs } from "expo-router/native-tabs";
 import { DrawerEdge, DrawerHost } from "@/components/Drawer";
 import { colors } from "@/lib/theme";
+import { useOpenPrompts } from "@/lib/tradeLive";
 
 // Four daily screens on the system tab bar (Liquid Glass on iOS 26+); rules, monitoring, status,
 // help, settings and Dev live in the left drawer.
 export default function TabsLayout() {
+  const prompts = useOpenPrompts(); // open confirmations: badge on 交易 (web nav badge)
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <NativeTabs tintColor={colors.primary} minimizeBehavior="onScrollDown">
@@ -24,6 +26,7 @@ export default function TabsLayout() {
         <NativeTabs.Trigger name="trade">
           <NativeTabs.Trigger.Icon sf={{ default: "chart.line.uptrend.xyaxis", selected: "chart.line.uptrend.xyaxis" }} md="candlestick_chart" />
           <NativeTabs.Trigger.Label>交易</NativeTabs.Trigger.Label>
+          <NativeTabs.Trigger.Badge hidden={!prompts}>{prompts ? String(prompts) : undefined}</NativeTabs.Trigger.Badge>
         </NativeTabs.Trigger>
       </NativeTabs>
       <DrawerEdge />

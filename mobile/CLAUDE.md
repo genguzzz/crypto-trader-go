@@ -33,6 +33,15 @@ iPhone OKX Helper ──HTTPS──▶ ctg.gugenzzz.top (ctg-prod nginx → ctg 
 - Device features only through `lib/device.ts` (`has(capability)` first — OTA code can run on an older binary). Runtime 1 ships the capability pack: glass, haptics, blur, symbols, secure-store, sqlite, local notifications, speech recognition, audio recording (microphone permission for AI voice), clipboard, sharing, linking, web-browser, WebView, network, keep-awake, quick actions, Face ID, orientation. Settings → 能力自检 exercises them.
 - Logging: `logger("area")` (ids, counts, timings, errors; never keys). Settings → 上传日志 → `data/mobile/logs/<id>.log`. Usage events: `track(name, props)` → `data/mobile/events/YYYY-MM-DD.jsonl`.
 
+## 交易 tab (paper trading, port of web views/trading/*)
+
+- `app/(tabs)/trade.tsx`: segmented sub-navigation 账户 · 策略库 · 待确认 · AI 决策 (`?pane=accounts|strategies|prompts|ai`), one pane each in `components/trade/*Pane.tsx`. Pushed screens: `trading/account/[id]` (KPIs, explorer, 持仓/委托/历史/成交/流水, instances, signals, 入金 / 风控 / 全部平仓 / 归档), `trading/backtest/[id]` (report), `trading/new` (4-step wizard; `?mode=backtest&strategy=` / `?from=<accountId>`), `trading/strategy?version=|source=` (read-only code with syntax colors, check / publish for drafts; editing and trial runs open the web editor in the in-app browser).
+- API + types: `lib/tradeApi.ts` (web/src/tradeApi.ts); labels, formatting, validation: `lib/tradeMeta.ts` (web components/trade/meta.ts + tradeMeta.ts — keep the Chinese copy identical); strategy templates `lib/strategyTemplates.ts` (copy of web editor/templates.ts). Owner-key writes (sources, check, trial, AI memory reflect) go through `req`'s AdminKeySheet retry like everything else.
+- Live refresh: `lib/tradeLive.ts` — `useTradeEvents` (stream `trade` / `interact` events via `market.onStreamEvent`, focused screens only) and `useOpenPrompts` (30 s poll + `interact` events) → badge on the 交易 tab (`NativeTabs.Trigger.Badge`) and on 待确认.
+- Charts: equity + drawdown are native (`TradeExplorer.EquityChart` on `Charts.LineChart`); 币对视角 is the web `TradeCandleChart` in a WebView: `/embed/trades/:accountId?inst=&trade=` (web `views/EmbedTrades.vue`, lives on `main`). The app selects a trade with `injectJavaScript("window.ctgSelect(id)")`; the page posts `{type:'pick', ids}`. Key the view by instrument (another instrument = fresh page).
+- InfoTip text from the web is an (i) button → sheet (`components/trade/common.tsx InfoTip`). Forms with inputs use `FormSheet` (keyboard-avoiding), not `Sheet`.
+- Testing: never write to production from previews (no accounts, instance actions, answers, publishes). The preview server should proxy GET only.
+
 ## Traps
 
 - `react-native-webview` 14 types `WebView` as `never` under strict TS; `ChartView.tsx` casts it to `ComponentType<WebViewProps>`.
