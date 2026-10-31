@@ -9,7 +9,7 @@ import { askAdminKey, clearAdminKey, getAdminKey } from './adminKey'
 
 export type Part =
   | { t: 'text'; v: string }
-  | { t: 'tool'; id: string; name: string; label: string; input: string; ok: boolean | null; sub?: boolean }
+  | { t: 'tool'; id: string; name: string; label: string; input: string; ok: boolean | null; sub?: boolean; args?: string; output?: string }
 export interface Msg { id?: number; role: 'user' | 'assistant'; parts: Part[]; error?: string; costUsd?: number; latencyMs?: number; live?: boolean }
 export interface ChatSummary { id: number; title: string; instId?: string; updated: number; costUsd: number; running: boolean }
 
@@ -25,7 +25,11 @@ export const ai = reactive({
   unread: false,
   /** instrument the owner is looking at (route /instrument/:id) */
   instId: '',
+  /** model for the next turn (remembered on this device) */
+  model: localStorage.getItem('ctg.aiModel') || 'claude-sonnet-5',
 })
+export const AI_MODELS = [{ value: 'claude-sonnet-5', label: 'Sonnet' }, { value: 'claude-opus-5-5', label: 'Opus' }]
+export function setModel(m: string) { ai.model = m; localStorage.setItem('ctg.aiModel', m) }
 
 let abort: AbortController | null = null
 
@@ -83,8 +87,14 @@ function apply(ev: any) {
     case 'tool_done': {
       const p = last().parts.find(p => p.t === 'tool' && p.id === ev.id) as Extract<Part, { t: 'tool' }> | undefined
       if (!p) return
-      if (ev.type === 'tool_input') p.input = ev.input
-      else p.ok = ev.ok
+      if (ev.type === 'tool_input') {
+        p.input = ev.input
+        if (ev.args) p.args = ev.args
+        if (ev.label) p.label = ev.label
+      } else {
+        p.ok = ev.ok
+        if (ev.output != null) p.output = ev.output
+      }
       return
     }
     case 'done': {
@@ -155,7 +165,7 @@ export async function send(text: string) {
   if (!text || ai.running) return
   ai.msgs.push({ role: 'user', parts: [{ t: 'text', v: text }] })
   if (!ai.chatId) ai.title = text.slice(0, 40)
-  const body = JSON.stringify({ chatId: ai.chatId || 0, message: text, instId: ai.instId })
+  const body = JSON.stringify({ chatId: ai.chatId || 0, message: text, instId: ai.instId, model: ai.model })
   await stream(() => kfetch('/api/v1/ai/chat', { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, signal: abort!.signal }))
   if (ai.error && ai.chatId) await reattach() // dropped mid-answer: reload what was saved / keep following
 }

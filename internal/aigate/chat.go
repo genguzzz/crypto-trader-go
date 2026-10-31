@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -140,13 +141,20 @@ type ChatInput struct {
 	ChatID  int64  `json:"chatId"`
 	Message string `json:"message"`
 	InstID  string `json:"instId"` // the instrument page the owner is on (context only)
+	Model   string `json:"model"`  // one of ChatModels; empty = the configured model
 }
+
+// ChatModels the app may pick per turn.
+var ChatModels = []string{"claude-sonnet-5", "claude-opus-5-5"}
 
 var errChatBusy = errors.New("这个对话还在回答中")
 
 // StartChat stores the user's message and starts the agent run; the caller streams it with Attach.
 func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	in.Message = strings.TrimSpace(in.Message)
+	if in.Model != "" && !slices.Contains(ChatModels, in.Model) {
+		return 0, errors.New("unknown model")
+	}
 	if in.Message == "" {
 		return 0, errors.New("empty message")
 	}
@@ -202,7 +210,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		defer cancel()
 		defer g.endRun(in.ChatID)
 		start := g.now()
-		msg := map[string]any{"type": "chat", "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID}
+		msg := map[string]any{"type": "chat", "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model}
 		resp, err := g.callStream(ctx, msg, run.publish)
 		lat := g.now().Sub(start).Milliseconds()
 		var out struct {
@@ -231,7 +239,11 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		} else {
 			g.st.DB.Exec(`UPDATE ai_chats SET updated=? WHERE id=?`, ts, in.ChatID)
 		}
-		row := auditRow{Kind: "chat", InstID: in.InstID, Model: g.currentModel(), CostUSD: out.Cost, LatencyMs: lat, Error: errText}
+		model := in.Model
+		if model == "" {
+			model = g.currentModel()
+		}
+		row := auditRow{Kind: "chat", InstID: in.InstID, Model: model, CostUSD: out.Cost, LatencyMs: lat, Error: errText}
 		g.writeAudit(&row)
 		if errText != "" {
 			run.publish(evJSON(map[string]any{"type": "error", "error": errText}))

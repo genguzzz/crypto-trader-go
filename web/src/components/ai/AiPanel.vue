@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { X, History, SquarePen, ArrowUp, Square, Mic, Check, CircleAlert, Copy, Trash2, Sparkles, ChartCandlestick, ChevronRight } from 'lucide-vue-next'
-import { ai, send, stop, newChat, openChat, loadChats, deleteChat, textOf, type Msg, type Part } from '../../composables/ai'
+import { X, History, SquarePen, ArrowUp, Square, Mic, CircleAlert, Copy, Trash2, Sparkles, ChartCandlestick, ChevronRight } from 'lucide-vue-next'
+import { ai, send, stop, newChat, openChat, loadChats, deleteChat, textOf, setModel, AI_MODELS, type Msg, type Part } from '../../composables/ai'
 import { useTapToTalk } from '../../composables/holdToTalk'
+import AiSteps from './AiSteps.vue'
 import { useDesktop } from '../../composables/device'
 
 /** AI chat: bottom sheet on phones (drag the header down to close), side panel on desktop. */
@@ -92,9 +93,6 @@ function groups(m: Msg): Group[] {
   }
   return out
 }
-const opened = ref(new Set<string>())
-const groupKey = (m: Msg, i: number) => `${m.id ?? 'live'}-${i}`
-function toggleGroup(k: string) { const s = new Set(opened.value); s.has(k) ? s.delete(k) : s.add(k); opened.value = s }
 async function copy(m: Msg) {
   try { await navigator.clipboard.writeText(textOf(m)); flash('已复制') } catch { flash('复制失败') }
 }
@@ -137,6 +135,9 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
         <header class="hd" @pointerdown="dragStart" @pointermove="dragMove" @pointerup="dragEnd" @pointercancel="dragEnd">
           <i v-if="!desktop" class="grab"></i>
           <span class="ttl"><span class="mini-orb"></span>{{ showHistory ? '历史对话' : ai.title || 'AI 研究助手' }}</span>
+          <span v-if="!showHistory" class="models" role="radiogroup" aria-label="模型" @pointerdown.stop>
+            <button v-for="o in AI_MODELS" :key="o.value" type="button" role="radio" :aria-checked="ai.model === o.value" :class="{ on: ai.model === o.value }" @click="setModel(o.value)">{{ o.label }}</button>
+          </span>
           <span class="acts" @pointerdown.stop>
             <button type="button" class="ib" :class="{ on: showHistory }" title="历史对话" aria-label="历史对话" @click="toggleHistory"><History :size="17" /></button>
             <button type="button" class="ib" title="新对话" aria-label="新对话" @click="fresh"><SquarePen :size="17" /></button>
@@ -168,15 +169,7 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
             <div v-if="m.role === 'user'" class="u"><div class="ubub">{{ textOf(m) }}</div></div>
             <div v-else class="a">
               <template v-for="(g, gi) in groups(m)" :key="gi">
-                <div v-if="g.k === 'tools'" class="steps" :class="{ folded: !m.live && !opened.has(groupKey(m, gi)) }">
-                  <button v-if="!m.live" type="button" class="steps-sum" @click="toggleGroup(groupKey(m, gi))">
-                    <Check :size="13" /> 调用了 {{ g.items.length }} 个工具<span class="muted"> · {{ [...new Set(g.items.map(x => x.label))].slice(0, 4).join('、') }}</span><ChevronRight :size="14" class="chev" />
-                  </button>
-                  <div v-for="s in g.items" :key="s.id" class="step" :class="{ sub: s.sub }">
-                    <span class="st"><span v-if="s.ok == null" class="spin"></span><Check v-else-if="s.ok" :size="13" class="ok" /><CircleAlert v-else :size="13" class="bad" /></span>
-                    <span class="sl">{{ s.label }}</span><code v-if="s.input" class="si">{{ s.input }}</code>
-                  </div>
-                </div>
+                <AiSteps v-if="g.k === 'tools'" :items="g.items" :live="!!m.live" />
                 <div v-else class="md" v-html="md.render(g.v)"></div>
               </template>
               <div v-if="m.live && !m.parts.length" class="thinking"><span></span><span></span><span></span></div>
@@ -222,6 +215,9 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
 .ttl { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: var(--fs-lg); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .mini-orb { flex: none; width: 14px; height: 14px; border-radius: 50%; background: conic-gradient(#bcff2f, #2fe0ff, #9b7df0, #ff5fa2, #bcff2f); box-shadow: 0 0 10px rgba(188, 255, 47, .5); animation: spin 4s linear infinite; }
 .acts { display: flex; gap: 2px; }
+.models { flex: none; display: flex; padding: 2px; border-radius: 9px; background: var(--bg-2); border: 1px solid var(--line-2); }
+.models button { all: unset; padding: 3px 9px; border-radius: 7px; font-size: var(--fs-xs); color: var(--text-3); cursor: pointer; }
+.models button.on { background: var(--bg-3); color: var(--text-1); box-shadow: inset 0 0 0 1px rgba(188, 255, 47, .35); }
 .ib { all: unset; box-sizing: border-box; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--text-2); cursor: pointer; }
 .ib.sm { width: 26px; height: 26px; }
 .ib.on { color: var(--accent); background: var(--accent-bg); }
@@ -247,19 +243,6 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
 .u { display: flex; justify-content: flex-end; margin: 14px 0 6px; }
 .ubub { max-width: 84%; padding: 9px 13px; border-radius: 16px 16px 4px 16px; background: #22281a; border: 1px solid rgba(188, 255, 47, .18); white-space: pre-wrap; word-break: break-word; font-size: var(--fs-lg); }
 .a { margin: 8px 0 4px; }
-.steps { margin: 6px 0; padding: 6px 10px; border-radius: 10px; background: rgba(255, 255, 255, .03); border: 1px solid var(--line); }
-.steps.folded .step { display: none; }
-.steps-sum { all: unset; display: flex; align-items: center; gap: 6px; width: 100%; font-size: var(--fs-sm); color: var(--text-2); cursor: pointer; white-space: nowrap; overflow: hidden; }
-.steps-sum .muted { overflow: hidden; text-overflow: ellipsis; }
-.steps-sum .chev { margin-left: auto; flex: none; transition: transform .2s; transform: rotate(90deg); }
-.steps.folded .chev { transform: none; }
-.step { display: flex; align-items: center; gap: 7px; padding: 4px 0; font-size: var(--fs-sm); min-width: 0; animation: pop .25s ease-out; }
-.step.sub { padding-left: 16px; }
-.st { flex: none; width: 14px; display: grid; place-items: center; }
-.ok { color: var(--accent); }
-.bad { color: var(--warn); }
-.sl { flex: none; color: var(--text-1); }
-.si { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: var(--fs-xs); background: none; }
 .md { font-size: var(--fs-lg); line-height: 1.7; word-break: break-word; }
 .md :deep(p) { margin: 6px 0; }
 .md :deep(h1), .md :deep(h2), .md :deep(h3) { font-size: var(--fs-xl); margin: 14px 0 6px; }
