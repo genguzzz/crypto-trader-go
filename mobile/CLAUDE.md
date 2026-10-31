@@ -35,7 +35,9 @@ iPhone OKX Helper ──HTTPS──▶ ctg.gugenzzz.top (ctg-prod nginx → ctg 
 - Help articles: `node scripts/gen-docs.mjs` bundles `web/src/docs/strategy/*.md` into `src/content/strategyDocs.ts` (generated, commit it; rerun after the web docs change). `components/Markdown.tsx` renders them (headings, lists, tables, quotes, code blocks with copy and Python highlighting; no HTML). Links `/help/strategy/x` stay in the app, other paths open the web.
 - Logging: `logger("area")` (ids, counts, timings, errors; never keys). Settings → 上传日志 → `data/mobile/logs/<id>.log`. Usage events: `track(name, props)` → `data/mobile/events/YYYY-MM-DD.jsonl`.
 
-## AI tab (`src/app/(tabs)/ai.tsx`)
+## AI (floating orb + sheet, `src/app/ai.tsx`)
+
+- The AI is not a tab: `components/ai/FloatingOrb.tsx` (rendered by the root layout over every screen, hidden on /ai, /chart, settings, diagnostics) floats centred above the tab bar. Tap → `router.push("/ai")`, a `formSheet` (detents 0.65/1); on an instrument page the coin becomes the context (`setContext`, the chat stays). Press and hold → `useHoldToTalk` (waveform capsule, slide up to cancel), the text is sent and the sheet opens. A satellite circles it while an answer runs; an orange dot marks an unread answer. `initAi()` and the 「AI 回答好了」 toast live in the root layout. ai-history / ai-notes are modals so they stack above the sheet.
 
 - Port of the web assistant (`web/src/composables/ai.ts`, `components/ai/*`); backend `internal/aigate` (chat.go, http.go, notes.go). When the web changes, port it here.
 - `lib/ai.ts`: one global chat store (`useAi()` re-renders per event, text deltas batched to 60 ms; `useAiSelect(pick)` for one value, e.g. the tab badge). POST `/api/v1/ai/chat` → SSE read through `expo/fetch` (real streaming body on iOS; plain fetch on web). Same connection logic as the web: `stream` (40 s silence watchdog, server pings every 15 s) / `sync` / `reconnect` (backoff 1 s→15 s, only while active) / `resume` (AppState active, expo-network back, tab focus). `syncSeq` makes older loads give way. Device keys (SecureStore; localStorage on web): `okxh.aiChat`, `okxh.aiPending`, `okxh.aiModel`.

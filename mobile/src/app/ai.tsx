@@ -12,7 +12,6 @@ import { copy, haptic } from "@/lib/device";
 import { useHoldToTalk, useTapToTalk } from "@/lib/voice";
 import { colors, fs } from "@/lib/theme";
 import { Screen, tap, toast, toastError } from "@/components/ui";
-import { openDrawer } from "@/components/drawerState";
 import { AiBlock } from "@/components/ai/AiBlock";
 import { AiSteps } from "@/components/ai/AiSteps";
 import { Markdown } from "@/components/ai/Markdown";
@@ -47,7 +46,7 @@ function phaseOf(m: Msg, now: number): "thinking" | "typing" | "tool" | null {
 
 const flash = (m: string) => toast(m, undefined, undefined, true);
 
-export default function AiTab() {
+export default function AiScreen() {
   const s = useAi();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -103,17 +102,14 @@ export default function AiTab() {
     ? [`${sym} 资金费和 OI 最近有什么变化？`, `${sym} 上方和下方的清算密集区在哪？`, `${sym} 最近有什么新闻或利空？`]
     : ["今天哪些币逼空风险高、别空？", "大盘怎么样？BTC 和 ETH 的资金费与 OI", "监控池里哪些币多头最拥挤？"];
   const lastMsg = s.msgs[s.msgs.length - 1];
-  const bottomPad = kb || Platform.OS === "web" ? 8 : insets.bottom + 54;
+  const bottomPad = kb || Platform.OS === "web" ? 8 : insets.bottom + 8; // a sheet: no tab bar under it
 
   return (
     <Screen>
-      {/* header: drawer, title, model switch, memory, history, new chat */}
-      <View style={{ paddingTop: insets.top + 6, paddingLeft: 16, paddingRight: 8, paddingBottom: 8, flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: 1, borderColor: colors.border }}>
-        <Pressable hitSlop={10} accessibilityLabel="打开菜单" onPress={() => { tap(); openDrawer(); }} style={({ pressed }) => ({ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderStrong, opacity: pressed ? 0.7 : 1 })}>
-          <View style={{ gap: 4 }}>
-            <View style={{ width: 15, height: 2, borderRadius: 1, backgroundColor: colors.text }} />
-            <View style={{ width: 10, height: 2, borderRadius: 1, backgroundColor: colors.text }} />
-          </View>
+      {/* header: close the sheet, title, model switch, memory, history, new chat */}
+      <View style={{ paddingTop: Platform.OS === "web" ? insets.top + 6 : 18, paddingLeft: 16, paddingRight: 8, paddingBottom: 8, flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: 1, borderColor: colors.border }}>
+        <Pressable hitSlop={10} accessibilityLabel="收起" onPress={() => { tap(); if (router.canGoBack()) router.back(); else router.replace("/"); }} style={({ pressed }) => ({ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderStrong, opacity: pressed ? 0.7 : 1 })}>
+          <Ionicons name="chevron-down" size={18} color={colors.text} />
         </Pressable>
         <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 7, minWidth: 0 }}>
           <Orb size={14} ring={7} period={4000} glow={0.6} />

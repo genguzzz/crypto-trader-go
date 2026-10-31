@@ -26,7 +26,7 @@ export const AI_MODELS = [
 ];
 
 export const ai = {
-  /** the AI tab is on screen */
+  /** the AI sheet is on screen */
   open: false,
   chatId: 0,
   title: "",
@@ -34,7 +34,7 @@ export const ai = {
   running: false,
   chats: [] as ChatSummary[],
   error: "",
-  /** an answer finished while the tab was not on screen (tab badge) */
+  /** an answer finished while the sheet was closed (orb dot) */
   unread: false,
   /** when the last text token arrived (thinking indicator) */
   lastDelta: 0,
@@ -491,6 +491,12 @@ export function askAbout(instId: string) {
   ai.instId = instId;
   track("ai.context", { inst: instId });
   if (!ai.running && ai.msgs.length) newChat(); // a fresh chat shows the one-click analysis card
+  emit();
+}
+/** The floating orb opened the chat from an instrument page: that coin becomes the context, the chat stays. */
+export function setContext(instId: string) {
+  if (ai.instId === instId) return;
+  ai.instId = instId;
   emit();
 }
 export function clearContext() {

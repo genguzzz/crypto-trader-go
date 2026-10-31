@@ -1,22 +1,12 @@
-import { useEffect } from "react";
 import { View } from "react-native";
-import { router } from "expo-router";
 import { NativeTabs } from "expo-router/native-tabs";
 import { DrawerEdge, DrawerHost } from "@/components/Drawer";
-import { toast } from "@/components/ui";
-import { initAi, useAiSelect } from "@/lib/ai";
 import { colors } from "@/lib/theme";
 import { useOpenPrompts } from "@/lib/tradeLive";
 
-// Four daily screens on the system tab bar (Liquid Glass on iOS 26+); rules, monitoring, status,
-// help, settings and Dev live in the left drawer.
+// Three daily screens on the system tab bar (Liquid Glass on iOS 26+); the AI is the floating orb
+// above it (root layout); rules, monitoring, status, help, settings and Dev live in the left drawer.
 export default function TabsLayout() {
-  // AI: pick up a question left running; an answer that finished elsewhere badges the tab and says so once
-  const unread = useAiSelect((a) => a.unread);
-  useEffect(() => { void initAi(); }, []);
-  useEffect(() => {
-    if (unread) toast("AI 回答好了", undefined, { label: "查看", onPress: () => router.navigate("/ai") });
-  }, [unread]);
   const prompts = useOpenPrompts(); // open confirmations: badge on 交易 (web nav badge)
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -28,11 +18,6 @@ export default function TabsLayout() {
         <NativeTabs.Trigger name="watch">
           <NativeTabs.Trigger.Icon sf={{ default: "star", selected: "star.fill" }} md="star" />
           <NativeTabs.Trigger.Label>自选</NativeTabs.Trigger.Label>
-        </NativeTabs.Trigger>
-        <NativeTabs.Trigger name="ai">
-          <NativeTabs.Trigger.Icon sf={{ default: "sparkles", selected: "sparkles" }} md="auto_awesome" />
-          <NativeTabs.Trigger.Label>AI</NativeTabs.Trigger.Label>
-          {unread ? <NativeTabs.Trigger.Badge>新</NativeTabs.Trigger.Badge> : null}
         </NativeTabs.Trigger>
         <NativeTabs.Trigger name="trade">
           <NativeTabs.Trigger.Icon sf={{ default: "chart.line.uptrend.xyaxis", selected: "chart.line.uptrend.xyaxis" }} md="candlestick_chart" />
