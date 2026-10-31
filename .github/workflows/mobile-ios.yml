@@ -1,0 +1,146 @@
+name: Mobile iOS IPA
+
+# Native iOS client (Expo, mobile/ on branch ios) as an unsigned IPA on a GitHub-hosted Mac; 全能签
+# signs it on the phone. Separate from the Capacitor app (ios.yml, web/ios).
+#   push to ios touching mobile/**  → build only (artifact), to catch native breakage early
+#   push tag m-vX.Y.Z               → build + GitHub Release + publish to the 全能签 source
+#   manual run                      → build only
+# Cut a release with: mobile/scripts/release.sh 0.2.0 "新增：…；修复：…"
+# JS-only changes ship over the air instead: mobile/scripts/ota.sh "说明".
+on:
+  push:
+    branches: [ios]
+    tags: ["m-v*.*.*"]
+    paths: ["mobile/**", ".github/workflows/mobile-ios.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # release.sh pushes its "Release m-vX" commit together with the tag; build it once, via the tag.
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'Release m-v')
+    runs-on: xcode-27 # same image as mediahub
+    environment: production # deploy key for publishing (same as deploy.yml / ios.yml)
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/m-v') }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$IS_TAG" = "true" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#m-v}"
+            if [ "$TAG_VERSION" != "$PKG" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match mobile/package.json version $PKG"; exit 1
+            fi
+            git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+            NOTES=$(git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents:subject)%0a%0a%(contents:body)' | sed '/^-----BEGIN PGP/,$d')
+          else
+            NOTES=$(git log -1 --format=%s)
+          fi
+          echo "VERSION=$PKG" >> "$GITHUB_ENV"
+          { echo "NOTES<<__EOF__"; echo "$NOTES"; echo "__EOF__"; } >> "$GITHUB_ENV"
+          echo "Building $PKG ($BUILD_NUMBER)"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Typecheck and lint
+        run: npx tsc --noEmit && npx eslint src
+
+      - name: Expo prebuild (generate ios/)
+        run: npx expo prebuild --platform ios --clean --non-interactive
+
+      - name: Pods
+        working-directory: mobile/ios
+        run: pod install
+
+      - name: Archive (no signing)
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild -version
+          WS=$(ls -d *.xcworkspace | head -1); SCHEME=${WS%.xcworkspace}
+          xcodebuild -workspace "$WS" -scheme "$SCHEME" -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/app.xcarchive" archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tee "$RUNNER_TEMP/xcodebuild.log" | grep -E "error:|\*\* ARCHIVE" || true
+          test -d "$RUNNER_TEMP/app.xcarchive/Products/Applications"
+
+      - name: Package IPA
+        run: |
+          APP=$(ls -d "$RUNNER_TEMP"/app.xcarchive/Products/Applications/*.app | head -1)
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" && cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          PL="$APP/Info.plist"
+          echo "BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PL")" >> "$GITHUB_ENV"
+          echo "APP_NAME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$PL")" >> "$GITHUB_ENV"
+          echo "MIN_IOS=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PL")" >> "$GITHUB_ENV"
+          PLIST_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PL")
+          test "$PLIST_VERSION" = "$VERSION" || { echo "::error::Info.plist version $PLIST_VERSION != $VERSION"; exit 1; }
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$PL" >/dev/null
+          IPA="$RUNNER_TEMP/OKX-Helper-native-$VERSION.ipa"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$IPA" Payload)
+          echo "IPA=$IPA" >> "$GITHUB_ENV"
+          ls -la "$IPA"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OKX-Helper-native-${{ env.VERSION }}-${{ github.run_number }}
+          path: ${{ env.IPA }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: xcodebuild-log-${{ github.run_number }}
+          path: ${{ runner.temp }}/xcodebuild.log
+
+      - name: GitHub Release
+        if: env.IS_TAG == 'true'
+        run: gh release create "$GITHUB_REF_NAME" "$IPA" --title "OKX Helper (native) $VERSION" --notes "$NOTES" --verify-tag
+
+      - name: Publish to software source
+        if: env.IS_TAG == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        # Same deploy key and publisher as ios.yml: Murmur's /admin/publish (127.0.0.1:8791 on ctg-prod)
+        # writes the IPA into /var/www/apps and appstore.json. Its admin token is read on the server.
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf 'Host ctg-prod\n  HostName %s\n  User root\n  IdentityFile ~/.ssh/deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking yes\n  ConnectTimeout 15\n' "$DEPLOY_HOST" > ~/.ssh/config
+          REMOTE=/tmp/okxh-ios-$VERSION
+          ssh ctg-prod "mkdir -p $REMOTE"
+          scp -q "$IPA" ctg-prod:$REMOTE/app.ipa
+          scp -q assets/icon.png ctg-prod:$REMOTE/icon.png
+          printf '%s' "${NOTES:0:1000}" | ssh ctg-prod "cat > $REMOTE/notes.txt"
+          ssh ctg-prod "cd $REMOTE && TOKEN=\$(grep '^ADMIN_TOKEN=' /opt/voicememo/.env | cut -d= -f2-) && \
+            curl -sS --fail-with-body -X POST http://127.0.0.1:8791/admin/publish -H \"Authorization: Bearer \$TOKEN\" \
+              -F ipa=@app.ipa -F icon=@icon.png -F bundleId=$BUNDLE_ID -F version=$VERSION -F build=$BUILD_NUMBER \
+              -F 'name=$APP_NAME' -F minIos=$MIN_IOS -F notes=\"<notes.txt\"; rc=\$?; cd / && rm -rf $REMOTE; exit \$rc"
+          curl -fsS https://apps.gugenzzz.top/appstore.json | grep -q "$BUNDLE_ID"
+
+      - if: always()
+        run: rm -f ~/.ssh/deploy_key ~/.ssh/config
