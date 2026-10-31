@@ -5,7 +5,7 @@ import { ai, send } from '../../composables/ai'
 import { useHoldToTalk } from '../../composables/holdToTalk'
 
 /**
- * Floating AI orb above the phone tab bar (bottom-right on desktop). Tap opens the chat panel;
+ * Floating AI orb above the phone tab bar, bottom-left (bottom-left on desktop too). Tap opens the chat panel;
  * press and hold talks: a capsule with a live waveform shows above it, slide up to cancel, release
  * to transcribe and send.
  */
@@ -53,9 +53,9 @@ const style = computed(() => ({ '--lv': String(level.value) }))
 </template>
 
 <style scoped>
-.ai-orb-wrap { position: fixed; right: 22px; bottom: 26px; z-index: 30; transition: opacity .2s, transform .25s; }
+.ai-orb-wrap { position: fixed; left: 22px; bottom: 26px; z-index: 30; transition: opacity .2s, transform .25s; }
 .ai-orb-wrap.hidden { opacity: 0; transform: scale(.6); pointer-events: none; }
-@media (max-width: 900px) { .ai-orb-wrap { right: 14px; bottom: calc(66px + env(safe-area-inset-bottom)); } }
+@media (max-width: 900px) { .ai-orb-wrap { left: 14px; bottom: calc(66px + env(safe-area-inset-bottom)); } }
 
 .orb { all: unset; position: relative; display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; cursor: pointer;
   touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
