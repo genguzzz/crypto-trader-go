@@ -1,5 +1,5 @@
 import { ref, watch, type Ref } from 'vue'
-import { createSeriesMarkers, LineStyle, type IPriceLine, type ISeriesApi, type ISeriesMarkersPluginApi, type Time } from 'lightweight-charts'
+import { createSeriesMarkers, LineStyle, type AutoscaleInfo, type IPriceLine, type ISeriesApi, type ISeriesMarkersPluginApi, type Time } from 'lightweight-charts'
 import { chartTime } from '../../fmt'
 import { C } from '../../theme'
 
@@ -45,7 +45,20 @@ export function useAiPlans(series: () => ISeriesApi<'Candlestick'> | undefined, 
     if (!s) return
     for (const l of lines) s.removePriceLine(l)
     lines = []
-    if (markersOf !== s) { markers = createSeriesMarkers(s, []); markersOf = s }
+    if (markersOf !== s) {
+      markers = createSeriesMarkers(s, [])
+      markersOf = s
+      // keep the plan in view: the price scale also spans the entry zone, stop and TP1 (TP2 is often far
+      // enough away to squash the candles, so it only shows when the candles reach it)
+      s.applyOptions({
+        autoscaleInfoProvider: (orig: () => AutoscaleInfo | null) => {
+          const r = orig()
+          const lv = plans.value.flatMap(p => [p.entryLo, p.entryHi, p.stop, p.status === 'tp1' && p.tp2 ? p.tp2 : p.tp1])
+          if (!r || !r.priceRange || !lv.length) return r
+          return { ...r, priceRange: { minValue: Math.min(r.priceRange.minValue, ...lv), maxValue: Math.max(r.priceRange.maxValue, ...lv) } }
+        },
+      })
+    }
     const ms: { time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowDown' | 'arrowUp'; text: string }[] = []
     for (const p of plans.value) {
       const short = p.side === 'short', tag = `AI${short ? '空' : '多'}`
