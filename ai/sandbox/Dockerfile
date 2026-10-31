@@ -7,7 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_
 RUN pip install numpy pandas \
  && apt-get update && apt-get install -y --no-install-recommends curl jq bc && rm -rf /var/lib/apt/lists/*
 COPY crypto-analyzer /opt/ca/crypto-analyzer
-RUN mkdir -p /opt/ca/bin && printf '#!/bin/sh\nexec python3 /opt/ca/crypto-analyzer/crypto.py "$@"\n' > /opt/ca/bin/ca && chmod 755 /opt/ca/bin/ca
+COPY tools /opt/ca/tools
+RUN mkdir -p /opt/ca/bin && printf '#!/bin/sh\nexec python3 /opt/ca/crypto-analyzer/crypto.py "$@"\n' > /opt/ca/bin/ca \
+ && printf '#!/bin/sh\nexec python3 /opt/ca/tools/rev.py "$@"\n' > /opt/ca/bin/rev && chmod 755 /opt/ca/bin/ca /opt/ca/bin/rev
 COPY server.py /app/server.py
 USER 65532:65532
 CMD ["python", "-u", "/app/server.py"]

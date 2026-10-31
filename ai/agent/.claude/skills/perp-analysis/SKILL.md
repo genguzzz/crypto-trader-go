@@ -12,6 +12,7 @@ The research flow follows TradingAgents (TauricResearch, Apache-2.0) — analyst
 | What | Call |
 |---|---|
 | Market context | `ca market` (skip if this conversation already has it from the last hour) |
+| Exhaustion | `rev <SYM>` (1H; add `-b 15m` for an intraday turn): top/bottom exhaustion, checklist, stage, fade plan |
 | The coin, overall | `ca analyze <SYM>` — long/short danger, control score, max leverage, supports/resistances, events. Covers most of the picture. |
 | Positioning | `ca funding <SYM>`, `ca oi <SYM>`, `ca liq <SYM>` (estimated liquidation clusters) |
 | Flow and trend | `ca flow <SYM> -b 1H`, `ca indicators <SYM> -b 4H` |
@@ -25,10 +26,12 @@ Write the strongest bull case and the strongest bear case, 2–4 points each. Ev
 
 ## 3. Decide
 
+Consider both setups: continuation with the move, and a reversal against an exhausted move (rev score ≥ 50 with the turn starting). The owner trades aggressively and prefers reversals (see his notes): when a credible exhaustion exists, lead with the fade; when it does not, say what would make one (e.g. a volume climax with short liquidations, then a wick) and give the continuation view.
+
 Take the side with the stronger evidence. Do not stand aside just because both sides have points; stand aside only for a concrete reason (event within 24 h, no structural edge, reward/risk < 1.5), and give the plan that applies once the trigger hits.
 
 Plan rules:
-- Stop beyond the nearest swing point or liquidation cluster, roughly 1.5 × 4H ATR; state its distance.
+- Continuation: stop beyond the nearest swing point or liquidation cluster, roughly 1.5 × 4H ATR. Reversal: stop just beyond the extreme (wick high/low + ~0.5 ATR of the signal timeframe); tighter stop, larger reward/risk. State the distance either way.
 - TP1 at the next support/resistance or liquidation band with reward/risk ≥ 1.5; TP2 at the next one.
 - Leverage = the owner's preference from his notes. If liquidation would sit closer than 2 × the stop distance, or danger ≥ 50 / control ≥ 60, add one sentence after the plan (smaller size, wick risk); the plan itself keeps his leverage.
 - Risk per trade ≤ 1% of equity. A red event (hack, delisting, large unlock, FOMC/CPI within 24 h) goes first and usually means stand aside.

@@ -57,6 +57,8 @@ def label_for(name: str, inp: Any = None) -> str:
         first = cmd.split()[:3]
         if first and first[0] == "ca" and len(first) > 1:
             return CA_LABELS.get(first[1], "数据分析")
+        if first and first[0] == "rev":
+            return "反转扫描" if len(first) > 1 and first[1] == "scan" else "反转评分"
         if "python" in cmd[:40]:
             return "Python 计算"
         return "计算"
@@ -72,6 +74,8 @@ def brief_input(name: str, inp: Any) -> str:
     short = name.split("__")[-1]
     if short == "shell":
         words = str(inp.get("cmd", "")).split()
+        if len(words) > 1 and words[0] == "rev" and words[1] != "scan":
+            return words[1]
         if len(words) > 2 and words[0] == "ca":
             subj = [w for w in words[2:] if not w.startswith("-") and "=" not in w][:1]
             inst = [w.split("=", 1)[1] for w in words[2:] if w.startswith("instId=")][:1]
