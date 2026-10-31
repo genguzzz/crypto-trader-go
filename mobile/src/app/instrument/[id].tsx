@@ -20,6 +20,7 @@ import { B, InfoTip, P } from "@/components/Form";
 import { OrderBook } from "@/components/OrderBook";
 import { FundingDetail, OIDetail, SpotDetail, TurnoverDetail } from "@/components/StatDetails";
 import { StatBoard, type Tile } from "@/components/StatBoard";
+import { ExhaustionDetail, ExhaustionMeter, exhVerdict, useExhaustion } from "@/components/Exhaustion";
 import { Card, Dot, ErrorBox, Loading, PanelTitle, PickerSheet, Pull, Row as KvRow, Screen, Tag, TopBar, tap, toastError, toneColor, styles } from "@/components/ui";
 
 const statusText: Record<string, string> = { live: "实时", stale: "数据缺口，补洞中", warming: "预热中", new: "上市不足 12h" };
@@ -37,6 +38,7 @@ export default function InstrumentScreen() {
   const live = chartPx ?? streamPx;
   const [scrollOn, setScrollOn] = useState(true);
   const [openCard, setOpenCard] = useState({ key: "", n: 0 });
+  const exh = useExhaustion(id);
   const tall = useSettings((s) => s.chartTall);
   const now = useNow();
 
@@ -82,6 +84,9 @@ export default function InstrumentScreen() {
       value: <Text><Text style={{ color: (score?.long.score ?? 0) >= 50 ? colors.up : colors.textSoft }}>多{score?.long.score?.toFixed(0) ?? "—"}</Text><Text style={{ color: colors.textFaint }}>·</Text><Text style={{ color: (score?.short.score ?? 0) >= 50 ? colors.down : colors.textSoft }}>空{score?.short.score?.toFixed(0) ?? "—"}</Text></Text>,
       sub: score ? (score.gate === "PASS" ? ruleName : score.gate.replace("BLOCKED:", "门槛：")) : "预热中",
       body: () => <ScoreDetail row={row} ruleId={ruleId} /> },
+    { key: "exh", label: `衰竭 ${exh.data?.bar ?? "1H"}`, title: "顶部 / 底部衰竭",
+      value: exh.data ? <Text><Text style={{ color: exh.data.top >= 50 ? colors.warn : colors.text }}>顶{exh.data.top}</Text><Text style={{ color: colors.textFaint }}>·</Text><Text style={{ color: exh.data.bottom >= 50 ? colors.warn : colors.text }}>底{exh.data.bottom}</Text></Text> : "—",
+      sub: exh.data ? exhVerdict(Math.max(exh.data.top, exh.data.bottom)) : "计算中", body: () => <ExhaustionDetail id={info.instId} /> },
     { key: "book", label: "盘口点差", title: "盘口", value: `${num(spread, 1)} bps`, sub: `${price(info.bid)}`,
       body: () => <BookDetail id={info.instId} /> },
     { key: "spot", label: "现货基差", title: "OKX 现货与基差", value: info.spotId ? fieldValue("basis", row?.values?.basis) : "—",
@@ -130,7 +135,10 @@ export default function InstrumentScreen() {
               {info.syncing ? <Tag text="同步中" tone="info" /> : null}
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Text style={[{ flex: 1, fontSize: 28, fontWeight: "700", color: toneColor(sign(ret24)), letterSpacing: -0.3 }, tnum]} numberOfLines={1} adjustsFontSizeToFit>{price(live)}</Text>
+              <View style={{ flex: 1, gap: 4 }}>
+                <Text style={[{ fontSize: 28, fontWeight: "700", color: toneColor(sign(ret24)), letterSpacing: -0.3 }, tnum]} numberOfLines={1} adjustsFontSizeToFit>{price(live)}</Text>
+                <ExhaustionMeter d={exh.data} onPress={() => { tap(); setOpenCard((o) => ({ key: "exh", n: o.n + 1 })); }} />
+              </View>
               <View style={{ width: 168, gap: 6 }}>
                 <View style={{ flexDirection: "row", gap: 4, justifyContent: "flex-end" }}>
                   <Chg label="24h" v={ret24} />

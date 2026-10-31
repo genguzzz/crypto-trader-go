@@ -113,6 +113,13 @@ export interface CatalogItem {
 export interface SeriesPoint { t: number; v: number; u?: number }
 export interface LiqBar { t: number; long: number; short: number; nl: number; ns: number }
 export interface LiqEvent { t: number; long: boolean; px: number; usd: number }
+export interface ExhaustionItem { key: string; label: string; weight: number; points: number }
+export interface FadePlan { side: "long" | "short"; entryLo: number; entryHi: number; stop: number; tp1: number; tp2: number; rr: number }
+/** Top/bottom exhaustion (server internal/market/exhaustion.go, the agent's rev checklist). */
+export interface Exhaustion {
+  instId: string; bar: string; t: number; last: number; top: number; bottom: number; atTop: number; atBottom: number;
+  topItems: ExhaustionItem[]; bottomItems: ExhaustionItem[]; atr: number; ema20: number; high: number; low: number; plan?: FadePlan;
+}
 export interface Liquidations { bars: LiqBar[]; since: number; recent?: LiqEvent[]; err?: string; syncing?: boolean }
 export interface Coin { id: string; symbol: string; name: string; rank: number; marketCap: number; fdv: number; circulating: number; total: number; max: number; updatedAt: string; fetchedAt: number }
 export interface Meta { fields: Field[]; rules: Rule[]; settings: Settings; categories: Record<string, string> }
@@ -139,6 +146,7 @@ export const api = {
   compare: (id: string, bar: string, limit = 300) => req<{ ids: string[]; points: ComparePoint[] | null }>(`/api/v1/compare?instId=${enc(id)}&bar=${bar}&limit=${limit}`),
   series: (id: string, field: "oi" | "funding", hours = 24, step = 0) =>
     req<SeriesPoint[] | null>(`/api/v1/series?instId=${enc(id)}&field=${field}&hours=${hours}${step > 0 ? `&step=${step}` : ""}`),
+  exhaustion: (id: string, bar = "1H") => req<Exhaustion>(`/api/v1/exhaustion?instId=${enc(id)}&bar=${bar}`, { quiet: true }),
   liquidations: (id: string, bar: string, limit: number, recent = 0) =>
     req<Liquidations>(`/api/v1/liquidations?instId=${enc(id)}&bar=${bar}&limit=${limit}&recent=${recent}`),
   watch: (id: string, on: boolean) => req<{ ok: boolean }>(`/api/v1/watchlist/${enc(id)}`, { method: on ? "PUT" : "DELETE" }),
