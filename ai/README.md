@@ -61,7 +61,7 @@ If `CTG_SECRET_KEY` changes, the stored credential can no longer be decrypted; t
 
 ## Network: proxy only
 
-All Anthropic traffic must go through the proxy in **`CTG_AI_PROXY`** (for example `http://127.0.0.1:17080` in production, a reverse SSH tunnel on the host loopback). The worker:
+All Anthropic traffic must go through the proxy in **`CTG_AI_PROXY`** (`http://127.0.0.1:10809` in production: the host's llm-proxy with a residential exit — Anthropic must never see a datacenter IP; verify with `curl -x … https://ipinfo.io/json`). The worker:
 
 - refuses every call with `no proxy configured` when `CTG_AI_PROXY` is empty — there is no fallback to a direct connection;
 - sets `HTTPS_PROXY`/`HTTP_PROXY`/`https_proxy`/`http_proxy` (and `NO_PROXY=127.0.0.1,localhost`) process-wide and again in each call's CLI environment;

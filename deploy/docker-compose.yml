@@ -47,7 +47,8 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   # AI review worker (Claude Agent SDK). Host network only to reach the local proxy inbound on
-  # 127.0.0.1:17080 (x-ui/Xray → relay → residential-exit); the worker refuses to run without it.
+  # 127.0.0.1:10809 (the host's llm-proxy: a residential exit, never a datacenter IP); the worker refuses to
+  # run without it. Check the exit with `curl -x http://127.0.0.1:10809 https://ipinfo.io/json`.
   ctg-ai:
     build: ./ai
     image: ctg-ai:local
@@ -57,7 +58,7 @@ services:
     user: "65532:65532"
     environment:
       CTG_RUN_DIR: /run/ctg
-      CTG_AI_PROXY: http://127.0.0.1:17080
+      CTG_AI_PROXY: http://127.0.0.1:10809
       HOME: /home/agent                                # chat session transcripts (resume across turns and restarts)
     tmpfs: [/tmp]
     volumes:

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { X, History, SquarePen, ArrowUp, Square, Mic, Check, CircleAlert, Copy, Trash2, Sparkles, ChartCandlestick, ChevronRight } from 'lucide-vue-next'
 import { ai, send, stop, newChat, openChat, loadChats, deleteChat, textOf, type Msg, type Part } from '../../composables/ai'
@@ -98,6 +98,21 @@ async function copy(m: Msg) {
   try { await navigator.clipboard.writeText(textOf(m)); flash('已复制') } catch { flash('复制失败') }
 }
 
+// ---- phone: freeze the page behind the sheet (iOS scrolls the body through overflow:hidden, so pin it) ----
+let savedY = 0
+function lockPage(on: boolean) {
+  const b = document.body
+  if (on) {
+    savedY = window.scrollY
+    Object.assign(b.style, { position: 'fixed', top: `-${savedY}px`, left: '0', right: '0', overflow: 'hidden' })
+  } else if (b.style.position === 'fixed') {
+    Object.assign(b.style, { position: '', top: '', left: '', right: '', overflow: '' })
+    window.scrollTo(0, savedY)
+  }
+}
+watch(() => ai.open && !desktop.value, lockPage, { immediate: true })
+onUnmounted(() => lockPage(false))
+
 // the orb opens the sheet on pointerup; the click that follows lands on the backdrop and must not close it
 const bdDown = ref(false)
 
@@ -115,7 +130,7 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
 
 <template>
   <Teleport to="body">
-    <Transition name="fade"><div v-if="ai.open && !desktop" class="ai-backdrop" @pointerdown="bdDown = true" @click="bdDown && (ai.open = false); bdDown = false"></div></Transition>
+    <Transition name="fade"><div v-if="ai.open && !desktop" class="ai-backdrop" @touchmove.prevent @pointerdown="bdDown = true" @click="bdDown && (ai.open = false); bdDown = false"></div></Transition>
     <Transition :name="desktop ? 'side' : 'sheet'">
       <section v-if="ai.open" class="ai-panel" :class="{ desk: desktop }" :style="dragY ? { transform: `translateY(${dragY}px)`, transition: 'none' } : undefined" aria-label="AI 研究助手">
         <header class="hd" @pointerdown="dragStart" @pointermove="dragMove" @pointerup="dragEnd" @pointercancel="dragEnd">
@@ -175,7 +190,7 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
           <p v-if="ai.error && !ai.running" class="err net">{{ ai.error }}（回答会在后台继续，重新打开对话可看到）</p>
         </div>
 
-        <footer v-if="!showHistory" class="ft">
+        <footer v-if="!showHistory" class="ft" @touchmove="e => (e.target as HTMLElement).tagName !== 'TEXTAREA' && e.preventDefault()">
           <button v-if="ai.instId && ai.msgs.length" type="button" class="ctx" :disabled="ai.running" @click="submit(ONE_CLICK)"><ChartCandlestick :size="13" /> 一键分析 {{ sym }}</button>
           <div class="composer">
             <textarea ref="ta" v-model="input" rows="1" :placeholder="talk.phase.value === 'rec' ? (talk.cancelZone.value ? '松开取消' : '正在听…松开发送') : '问点什么…'" @input="autosize" @keydown="onKey"></textarea>
@@ -194,8 +209,8 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
 </template>
 
 <style scoped>
-.ai-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .55); backdrop-filter: blur(2px); }
-.ai-panel { position: fixed; z-index: 41; left: 0; right: 0; bottom: 0; height: min(88vh, calc(100vh - env(safe-area-inset-top) - 24px));
+.ai-backdrop { position: fixed; inset: 0; z-index: 40; touch-action: none; overscroll-behavior: contain; background: rgba(0, 0, 0, .55); backdrop-filter: blur(2px); }
+.ai-panel { position: fixed; z-index: 41; overscroll-behavior: contain; left: 0; right: 0; bottom: 0; height: min(88vh, calc(100vh - env(safe-area-inset-top) - 24px));
   display: flex; flex-direction: column; background: linear-gradient(180deg, #111410 0%, #0b0b0b 140px); border: 1px solid var(--line-2); border-bottom: 0;
   border-radius: 18px 18px 0 0; box-shadow: 0 -20px 60px rgba(0, 0, 0, .6), 0 -1px 0 rgba(188, 255, 47, .12); transition: transform .3s cubic-bezier(.2, .9, .3, 1); }
 .ai-panel.desk { left: auto; top: 0; width: 460px; height: 100vh; border-radius: 0; border-bottom: 1px solid var(--line-2); border-right: 0;

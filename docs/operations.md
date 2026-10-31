@@ -89,7 +89,7 @@ Paper trading adds two containers next to `ctg` (see [trading design](trading-de
 | Container | Image | Network | Notes |
 |---|---|---|---|
 | `ctg-strategy` | `strategies/Dockerfile` (python + numpy) | none | supervisor + one process per strategy instance; `strategies/` is bind-mounted read-only, so a new strategy file only needs `POST /api/v1/trade/strategies/reload` |
-| `ctg-ai` | `ai/Dockerfile` (python + Claude Agent SDK) | host | AI review worker; `CTG_AI_PROXY=http://127.0.0.1:17080` is mandatory and the worker never connects directly. The proxy is a local HTTP inbound on the server routed to the owner's Claude exit (set up outside this repo) |
+| `ctg-ai` | `ai/Dockerfile` (python + Claude Agent SDK) | host | AI review worker; `CTG_AI_PROXY=http://127.0.0.1:10809` (the host's residential-exit llm-proxy) is mandatory and the worker never connects directly. The proxy is a local HTTP inbound on the server routed to the owner's Claude exit (set up outside this repo) |
 
 `deploy/deploy.sh` uploads `strategies/` and `ai/` with the compose file and rebuilds an image only when its Dockerfile or requirements change. Telegram (dedicated bot, owner allowlist) and the AI credential are configured in Settings, not in env.
 
