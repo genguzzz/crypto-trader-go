@@ -79,6 +79,19 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, out)
 	})
+	mux.HandleFunc("GET /api/v1/exhaustion", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		bar := q.Get("bar")
+		if bar == "" {
+			bar = "1H"
+		}
+		out, err := s.E.Exhaustion(r.Context(), q.Get("instId"), bar)
+		if err != nil {
+			httpErr(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, out)
+	})
 	mux.HandleFunc("GET /api/v1/liqmap", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		out, err := s.E.LiqMap(r.Context(), q.Get("instId"), atoiDefault(q.Get("days"), 7))

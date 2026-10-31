@@ -311,6 +311,17 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			},
 		},
 		{
+			Name: "get_exhaustion", Path: "exhaustion", Summary: "Top / bottom exhaustion scores (0–100) with the checklist and a fade plan",
+			Desc: "How close the latest move is to topping out or bottoming: extension from EMA20 in ATR, size of the run, volume climax, " +
+				"rejection wick or pullback, RSI and divergence, liquidation spike on the squeezed side, funding percentile, taker flow; " +
+				"gated by where the extreme sits in the last 30 bars. Same checklist as the agent's rev tool. Heuristic, not validated.",
+			Params: []Param{instParam("query"), {Name: "bar", In: "query", Type: "string", Enum: []string{"15m", "1H", "4H"}, Default: "1H", Desc: "bar size"}},
+			CostTxt: "2", cost: func(Args) int { return 2 },
+			run: func(ctx context.Context, a Args) (any, error) {
+				return e.Exhaustion(ctx, a.Str("instId"), a.Str("bar"))
+			},
+		},
+		{
 			Name: "get_liquidations", Path: "liquidations", Summary: "Liquidations per bar and recent liquidation orders",
 			Desc: "Per bar: long / short = USDT of long / short positions liquidated, nl / ns = counts. Only bars with liquidations are listed: a bar missing at or after since means zero, " +
 				"before since means unknown (not recorded). err is set when the latest sync with OKX failed and stored data was served. recent = newest liquidation orders.",
