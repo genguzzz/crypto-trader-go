@@ -24,6 +24,6 @@ if [ "$CURRENT" != "$VERSION" ]; then
   git add package.json package-lock.json
   git -c user.name=genguzzz -c user.email=38418451+genguzzz@users.noreply.github.com commit -q -m "Release m-v$VERSION"
 fi
-git tag -a "m-v$VERSION" -m "$NOTES"
+git -c user.name=genguzzz -c user.email=38418451+genguzzz@users.noreply.github.com tag -a "m-v$VERSION" -m "$NOTES"
 git push origin HEAD:ios "m-v$VERSION"
 echo "pushed m-v$VERSION — watch: gh run list --workflow mobile-ios.yml --limit 1"
