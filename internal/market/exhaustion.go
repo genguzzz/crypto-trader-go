@@ -137,9 +137,14 @@ func (e *Engine) Exhaustion(ctx context.Context, id, bar string) (Exhaustion, er
 	if bar != "15m" && bar != "1H" && bar != "4H" {
 		return Exhaustion{}, fmt.Errorf("bar must be one of 15m,1H,4H")
 	}
-	cs, err := e.Candles(id, bar, 150)
+	cs, err := e.Candles(id, bar, 151)
 	if err != nil {
 		return Exhaustion{}, err
+	}
+	// closed bars only, like the move risk: with the forming bar the 3-bar window slides off a spike
+	// before that hour has closed, and the two readings on the card would describe different bars
+	for len(cs) > 0 && !cs[len(cs)-1].Confirmed {
+		cs = cs[:len(cs)-1]
 	}
 	if len(cs) < 40 {
 		return Exhaustion{}, fmt.Errorf("not enough candles")
