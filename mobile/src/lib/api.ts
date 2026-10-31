@@ -115,12 +115,16 @@ export interface LiqBar { t: number; long: number; short: number; nl: number; ns
 export interface LiqEvent { t: number; long: boolean; px: number; usd: number }
 export interface ExhaustionItem { key: string; label: string; weight: number; points: number }
 export interface FadePlan { side: "long" | "short"; entryLo: number; entryHi: number; stop: number; tp1: number; tp2: number; rr: number }
-/** Top/bottom exhaustion (server internal/market/exhaustion.go, the agent's rev checklist). */
+/** One side of the validated move risk (server internal/market/moverisk.go, rev-study spec). */
+export interface MoveRiskSide { inState: boolean; ext: number; pos30: number; pTail: number; pBig3: number; baseTail: number; baseBig3: number; extreme: number }
+export interface MoveRisk { t: number; close: number; atr: number; top: MoveRiskSide; bottom: MoveRiskSide }
+/** Top/bottom exhaustion checklist (a description; no direction power out of sample) + the move risk. */
 export interface Exhaustion {
   instId: string; bar: string; t: number; last: number; top: number; bottom: number; atTop: number; atBottom: number;
   topItems: ExhaustionItem[]; bottomItems: ExhaustionItem[]; atr: number; ema20: number; high: number; low: number; plan?: FadePlan;
   /** shorting vetoed: crowded shorts (funding ≤ −0.05%/settlement, or negative and >15% above 1H EMA24) */
   squeeze?: boolean; squeezeWhy?: string;
+  risk?: MoveRisk;
 }
 export interface Liquidations { bars: LiqBar[]; since: number; recent?: LiqEvent[]; err?: string; syncing?: boolean }
 export interface Coin { id: string; symbol: string; name: string; rank: number; marketCap: number; fdv: number; circulating: number; total: number; max: number; updatedAt: string; fetchedAt: number }

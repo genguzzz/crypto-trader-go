@@ -20,7 +20,7 @@ import { B, InfoTip, P } from "@/components/Form";
 import { OrderBook } from "@/components/OrderBook";
 import { FundingDetail, OIDetail, SpotDetail, TurnoverDetail } from "@/components/StatDetails";
 import { StatBoard, type Tile } from "@/components/StatBoard";
-import { ExhaustionDetail, ExhaustionMeter, exhVerdict, useExhaustion } from "@/components/Exhaustion";
+import { ExhaustionDetail, ExhaustionMeter, extendedSide, pc, tailTone, useExhaustion } from "@/components/Exhaustion";
 import { Card, Dot, ErrorBox, Loading, PanelTitle, PickerSheet, Pull, Row as KvRow, Screen, Tag, TopBar, tap, toastError, toneColor, styles } from "@/components/ui";
 
 const statusText: Record<string, string> = { live: "实时", stale: "数据缺口，补洞中", warming: "预热中", new: "上市不足 12h" };
@@ -39,6 +39,7 @@ export default function InstrumentScreen() {
   const [scrollOn, setScrollOn] = useState(true);
   const [openCard, setOpenCard] = useState({ key: "", n: 0 });
   const exh = useExhaustion(id);
+  const exhSide = extendedSide(exh.data);
   const tall = useSettings((s) => s.chartTall);
   const now = useNow();
 
@@ -84,9 +85,10 @@ export default function InstrumentScreen() {
       value: <Text><Text style={{ color: (score?.long.score ?? 0) >= 50 ? colors.up : colors.textSoft }}>多{score?.long.score?.toFixed(0) ?? "—"}</Text><Text style={{ color: colors.textFaint }}>·</Text><Text style={{ color: (score?.short.score ?? 0) >= 50 ? colors.down : colors.textSoft }}>空{score?.short.score?.toFixed(0) ?? "—"}</Text></Text>,
       sub: score ? (score.gate === "PASS" ? ruleName : score.gate.replace("BLOCKED:", "门槛：")) : "预热中",
       body: () => <ScoreDetail row={row} ruleId={ruleId} /> },
-    { key: "exh", label: `衰竭 ${exh.data?.bar ?? "1H"}`, title: "顶部 / 底部衰竭",
-      value: exh.data ? <Text><Text style={{ color: exh.data.top >= 50 ? colors.warn : colors.text }}>顶{exh.data.top}</Text><Text style={{ color: colors.textFaint }}>·</Text><Text style={{ color: exh.data.bottom >= 50 ? colors.warn : colors.text }}>底{exh.data.bottom}</Text></Text> : "—",
-      sub: exh.data ? exhVerdict(Math.max(exh.data.top, exh.data.bottom)) : "计算中", body: () => <ExhaustionDetail id={info.instId} /> },
+    { key: "exh", label: "延伸风险 1H", title: "延伸后的风险",
+      value: exhSide ? <Text><Text style={{ color: tailTone(exhSide.s.pTail) }}>延续{pc(exhSide.s.pTail)}</Text></Text> : exh.data ? "未延伸" : "—",
+      sub: exhSide ? `波动 ${pc(exhSide.s.pBig3)}${exh.data?.squeeze ? " · 轧空否决" : ""}` : exh.data?.squeeze ? "轧空否决" : "统计不适用",
+      body: () => <ExhaustionDetail id={info.instId} /> },
     { key: "book", label: "盘口点差", title: "盘口", value: `${num(spread, 1)} bps`, sub: `${price(info.bid)}`,
       body: () => <BookDetail id={info.instId} /> },
     { key: "spot", label: "现货基差", title: "OKX 现货与基差", value: info.spotId ? fieldValue("basis", row?.values?.basis) : "—",
