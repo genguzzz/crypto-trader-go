@@ -228,7 +228,7 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
           <div v-if="!ai.msgs.length" class="hello">
             <div class="big-orb"><Sparkles :size="26" /></div>
             <h4>想看点什么？</h4>
-            <p class="muted">我能查本站录制的 K 线、持仓、资金费、订单流、清算图，联网搜新闻，在沙箱里跑计算。按住麦克风说话也行。</p>
+            <p class="muted">我能查本站录制的 K 线、持仓、资金费、订单流、清算图，联网搜新闻，做量化计算。按住麦克风说话也行。</p>
             <button v-if="ai.instId" type="button" class="oneclick" @click="submit(ONE_CLICK)">
               <ChartCandlestick :size="18" /><span><b>一键分析 {{ sym }}</b><small>多空辩论 · 风险 · 交易计划</small></span><ChevronRight :size="18" />
             </button>
