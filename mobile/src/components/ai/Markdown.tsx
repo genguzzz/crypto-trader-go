@@ -78,10 +78,20 @@ export function appRoute(href: string): Href | null {
   return "/";
 }
 
+/** Open an app page from inside the AI sheet: pushing from there would stack the page inside the sheet
+ *  (offset under its top gap, covering the grabber), so the sheet closes first and the page opens on
+ *  the main stack once it is down. */
+export function goFromAi(r: Parameters<typeof router.push>[0]) {
+  if (router.canGoBack()) {
+    router.back(); // just the AI sheet; the page it was opened over stays
+    setTimeout(() => router.push(r), 380);
+  } else router.push(r);
+}
+
 export function openLink(href: string) {
   tap();
   const r = appRoute(href);
-  if (r) router.push(r);
+  if (r) goFromAi(r);
   else if (/^https?:\/\//.test(href)) void openPage(href);
 }
 

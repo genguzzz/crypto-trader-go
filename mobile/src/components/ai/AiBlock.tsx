@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Animated, Pressable, Text, View, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import { colors, fs, tnum } from "@/lib/theme";
 import { tap } from "@/components/ui";
 import { instOk, num, symOf, type Segment } from "./blocks";
+import { goFromAi } from "./Markdown";
 
 type Tone = { t: string; c: string; cb: string; line: string };
 const TONE = {
@@ -72,12 +72,11 @@ function Kpi({ items }: { items: any[] }) {
 }
 
 export function AiBlock({ seg }: { seg: Extract<Segment, { k: "block" }> }) {
-  const router = useRouter();
   const d = seg.data ?? {};
   const go = (id: unknown) => {
     if (!instOk(id)) return;
     tap();
-    router.push({ pathname: "/instrument/[id]", params: { id } });
+    goFromAi({ pathname: "/instrument/[id]", params: { id: String(id) } });
   };
 
   // plan: a price ladder from target 2 down to the stop (or up, for shorts)
