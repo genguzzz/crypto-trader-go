@@ -5,7 +5,9 @@
   rev scan [-n 6]        the pool's biggest 4h movers, scored, best reversal candidates first
 
 Reads the ctg open API (CTG_BASE, CTG_API_KEY). Plain text output, a few hundred characters per coin.
-Scores are a checklist of classic blow-off / capitulation signs, not a validated model.
+Scores are a checklist of classic blow-off / capitulation signs, not a validated model: in 6 months of
+OKX alt pumps the single signs had direction AUC ≈ 0.5 (they flag big moves, not their direction). The
+squeeze veto is the one rule with backtest support.
 """
 
 from __future__ import annotations
@@ -171,7 +173,26 @@ def analyse(inst: str, bar: str = "1H") -> dict:
     at_top = ramp((hi_bar["h"] - r_lo) / span, 0.6, 0.92)
     at_bottom = ramp((r_hi - lo_bar["l"]) / span, 0.6, 0.92)
     score = lambda xs, gate: round(100 * gate * sum(x[0] for x in xs) / sum(x[1] for x in xs))
+    # squeeze veto (pump-study backtest rule): funding ≤ −0.05%/settlement, or negative funding while price is
+    # >15% above its 1H EMA24 — then the pump ran another +20% within 24h 43% of the time; never fade it
+    fr = info.get("fundingRate")
+    squeeze = ""
+    if fr is not None:
+        ext24 = None
+        if bar == "1H":
+            ext24 = closes[-1] / ema(closes, 24)[-1] - 1
+        else:
+            h1 = get("candles", instId=inst, bar="1H", limit=60)
+            h1 = h1.get("data", h1) if isinstance(h1, dict) else h1
+            if len(h1) >= 24:
+                c1 = [c["c"] for c in h1]
+                ext24 = c1[-1] / ema(c1, 24)[-1] - 1
+        if fr <= -0.0005:
+            squeeze = f"资金费 {fr * 100:.3f}%/期，空头拥挤（轧空燃料）"
+        elif fr < 0 and ext24 is not None and ext24 > 0.15:
+            squeeze = f"资金费为负且高于 1H EMA24 {ext24:.0%}"
     return {
+        "squeeze": squeeze,
         "inst": inst, "bar": bar, "last": last["c"], "t": last["t"], "atr": a, "ema20": e20,
         "top": score(top, at_top), "bottom": score(bot, at_bottom), "top_items": top, "bot_items": bot,
         "off_hi": off_hi, "off_lo": off_lo,
@@ -210,7 +231,9 @@ def report(d: dict, detail: bool = True) -> str:
     if detail:
         items = d["top_items"] if d["top"] >= d["bottom"] else d["bot_items"]
         out += [f"  {'✓' if got >= w * 0.6 else '·' if got > 0 else '✗'} {text}" for got, w, text in items]
-    if max(d["top"], d["bottom"]) >= 40:
+    if d.get("squeeze"):
+        out.append(f"⚠ 轧空风险，不做空：{d['squeeze']}（回测：此状态 24h 内再涨 20% 的概率 43%，全部暴涨状态为 29%）")
+    if max(d["top"], d["bottom"]) >= 40 and not (d.get("squeeze") and d["top"] >= d["bottom"]):
         off = d["off_hi"] if d["top"] >= d["bottom"] else d["off_lo"]
         stage = ("仍在极值附近：等确认（长影线、放量回落/回升、主动买卖翻转）再进" if off < 0.3 else
                  "刚拐头：介入窗口" if off <= 1.5 else f"已走出 {off:.1f} ATR：不追，等回踩入场区")

@@ -42,6 +42,11 @@ type Exhaustion struct {
 	// a fade plan for the side that scores higher: entry zone near the extreme, stop beyond it,
 	// targets at EMA20 and the 38.2% retrace of the move
 	Plan *FadePlan `json:"plan,omitempty"`
+	// Squeeze: shorting is vetoed — funding ≤ −0.05% per settlement, or negative funding while price is
+	// over 15% above its 1H EMA24. In 6 months of OKX alt pumps (claude pump-study) that state ran another
+	// +20% within 24h 43% of the time vs 29% for all pumps; no fade-short plan is given then.
+	Squeeze    bool   `json:"squeeze,omitempty"`
+	SqueezeWhy string `json:"squeezeWhy,omitempty"`
 }
 
 // FadePlan is the reversal trade the scores point to (reference only).
@@ -147,8 +152,12 @@ func (e *Engine) Exhaustion(ctx context.Context, id, bar string) (Exhaustion, er
 	}
 	var vals map[string]float64
 	var pct map[string]float64
-	if info, ok := e.Instrument(id); ok && info.Row != nil {
-		vals, pct = info.Row.Values, info.Row.Pct
+	fundRate, hasFund := 0.0, false
+	if info, ok := e.Instrument(id); ok {
+		if info.Row != nil {
+			vals, pct = info.Row.Values, info.Row.Pct
+		}
+		fundRate, hasFund = info.FundingRate, info.FundingTime > 0
 	}
 
 	n := len(cs)
@@ -325,7 +334,25 @@ func (e *Engine) Exhaustion(ctx context.Context, id, bar string) (Exhaustion, er
 	out := Exhaustion{InstID: id, Bar: bar, T: last.T, Last: last.C, Top: score(top, atTop), Bottom: score(bot, atBottom),
 		AtTop: atTop, AtBottom: atBottom, TopItems: top, BotItems: bot, ATR: a, EMA20: e20, High: hiBar.H, Low: loBar.L}
 
-	// fade plan for the stronger side (rev.py plan_lines)
+	// squeeze veto (pump-study backtest rule), on the 1H EMA24 whatever the bar size
+	if hasFund {
+		ext24 := math.NaN()
+		if h1, err := e.Candles(id, "1H", 60); err == nil && len(h1) >= 24 {
+			c1 := make([]float64, len(h1))
+			for i, c := range h1 {
+				c1[i] = c.C
+			}
+			ext24 = h1[len(h1)-1].C/emaSeries(c1, 24)[len(c1)-1] - 1
+		}
+		switch {
+		case fundRate <= -0.0005:
+			out.Squeeze, out.SqueezeWhy = true, fmt.Sprintf("资金费 %.3f%%/期，空头拥挤（轧空燃料）", fundRate*100)
+		case fundRate < 0 && ext24 > 0.15:
+			out.Squeeze, out.SqueezeWhy = true, fmt.Sprintf("资金费为负且高于 1H EMA24 %.0f%%", ext24*100)
+		}
+	}
+
+	// fade plan for the stronger side (rev.py plan_lines); none for a short into a squeeze
 	p := FadePlan{TP1: e20}
 	if out.Top >= out.Bottom {
 		p.Side, p.Stop = "short", hiBar.H+0.5*a
@@ -342,6 +369,8 @@ func (e *Engine) Exhaustion(ctx context.Context, id, bar string) (Exhaustion, er
 	if mid := (p.EntryLo + p.EntryHi) / 2; mid != p.Stop {
 		p.RR = math.Round(math.Abs(p.TP1-mid)/math.Abs(mid-p.Stop)*10) / 10
 	}
-	out.Plan = &p
+	if !(p.Side == "short" && out.Squeeze) {
+		out.Plan = &p
+	}
 	return out, nil
 }
