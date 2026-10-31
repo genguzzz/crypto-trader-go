@@ -1,4 +1,5 @@
-// The instrument's key numbers as a dense 4 × 2 tile board, with two ways into the detail behind each:
+// The instrument's key numbers as one row of tiles (four in view, swipe for the rest), with two ways into
+// the detail behind each:
 //  · tap a tile → the card deck: a sheet of swipeable cards (neighbours peeking at the edges, a tab
 //    strip in sync), one per number, each the full detail view;
 //  · press and hold → a peek card pops up over the page; keep the finger down and slide across the
@@ -36,13 +37,15 @@ export function StatBoard({ tiles, onHold }: { tiles: Tile[]; onHold?: (holding:
   const start = useRef({ x: 0, y: 0, i: 0 });
   const peeking = useRef(false);
   const touched = useRef(0); // the tile the finger came down on (set by the tile itself, before any measuring)
-  const rows = Math.ceil(tiles.length / COLS);
+  const [viewW, setViewW] = useState(0);
+  const tileW = viewW / COLS;
+  const scrollX = useRef(0);
 
-  const tileAt = (px: number, py: number) => {
+  // one scrolling row: the tile under a window x, counting the row's scroll offset
+  const tileAt = (px: number) => {
     const f = frame.current;
-    const c = Math.max(0, Math.min(COLS - 1, Math.floor(((px - f.x) / f.w) * COLS)));
-    const r = Math.max(0, Math.min(rows - 1, Math.floor(((py - f.y) / f.h) * rows)));
-    return Math.min(tiles.length - 1, r * COLS + c);
+    const i = Math.floor((px - f.x + scrollX.current) / (f.w / COLS));
+    return Math.max(0, Math.min(tiles.length - 1, i));
   };
   const endPeek = () => {
     peeking.current = false;
@@ -85,7 +88,7 @@ export function StatBoard({ tiles, onHold }: { tiles: Tile[]; onHold?: (holding:
         return up;
       });
       if (!up) {
-        const i = tileAt(pageX, Math.max(frame.current.y + 1, pageY));
+        const i = tileAt(pageX);
         setPeek((cur) => {
           if (cur !== i) void haptic("select");
           return i;
@@ -114,16 +117,21 @@ export function StatBoard({ tiles, onHold }: { tiles: Tile[]; onHold?: (holding:
 
   return (
     <>
-      <View ref={box} {...handlers} style={{ flexDirection: "row", flexWrap: "wrap" }}>
-        {tiles.map((t, i) => (
-          <View key={t.key} onTouchStart={() => { touched.current = i; }} onPointerDown={() => { touched.current = i; }} style={{ width: `${100 / COLS}%`, paddingHorizontal: 8, paddingVertical: 7, gap: 2,
-            backgroundColor: peek === i ? colors.raised : "transparent",
-            borderRightWidth: i % COLS === COLS - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomWidth: i < (rows - 1) * COLS ? StyleSheet.hairlineWidth : 0, borderColor: colors.borderStrong }}>
-            <Text style={{ fontSize: fs.xs, color: colors.textFaint }} numberOfLines={1}>{t.label}</Text>
-            <Text style={[{ fontSize: fs.md, fontWeight: "600", color: colors.text }, tnum]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>{t.value}</Text>
-            {t.sub != null ? <Text style={[{ fontSize: 10.5, color: colors.textFaint }, tnum]} numberOfLines={1}>{t.sub}</Text> : null}
+      <View ref={box} onLayout={(e) => setViewW(e.nativeEvent.layout.width)}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={peek == null} scrollEventThrottle={16}
+          onScroll={(e) => { scrollX.current = e.nativeEvent.contentOffset.x; }} snapToInterval={tileW || undefined} decelerationRate="fast">
+          <View {...handlers} style={{ flexDirection: "row" }}>
+            {tiles.map((t, i) => (
+              <View key={t.key} onTouchStart={() => { touched.current = i; }} onPointerDown={() => { touched.current = i; }} style={{ width: tileW || 88, paddingHorizontal: 8, paddingVertical: 7, gap: 2,
+                backgroundColor: peek === i ? colors.raised : "transparent",
+                borderRightWidth: i === tiles.length - 1 ? 0 : StyleSheet.hairlineWidth, borderColor: colors.borderStrong }}>
+                <Text style={{ fontSize: fs.xs, color: colors.textFaint }} numberOfLines={1}>{t.label}</Text>
+                <Text style={[{ fontSize: fs.md, fontWeight: "600", color: colors.text }, tnum]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>{t.value}</Text>
+                {t.sub != null ? <Text style={[{ fontSize: 10.5, color: colors.textFaint }, tnum]} numberOfLines={1}>{t.sub}</Text> : null}
+              </View>
+            ))}
           </View>
-        ))}
+        </ScrollView>
       </View>
       {peek != null ? <Peek tiles={tiles} index={peek} pin={pin} /> : null}
       <Deck tiles={tiles} index={deck} onClose={() => setDeck(null)} />
