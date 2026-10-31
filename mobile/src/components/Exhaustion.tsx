@@ -35,24 +35,43 @@ const tailWord = (p: number) => (p >= 0.5 ? "高" : p < 0.25 ? "低" : "中");
 export const pc = (p: number) => `${Math.round(p * 100)}%`;
 
 /** The price card's line: extended or not; if extended, continuation risk and move size. */
+export const exhVerdict = (v: number) => (v >= 70 ? "强衰竭" : v >= 50 ? "有衰竭迹象" : v >= 30 ? "弱" : "无");
+const exhTone = (v: number) => (v >= 70 ? colors.down : v >= 50 ? colors.warn : v >= 30 ? colors.textSoft : colors.textDim);
+
+/** Five-segment meter, lit up to the score. */
+function Segs({ v, color }: { v: number; color: string }) {
+  return (
+    <View style={{ flexDirection: "row", gap: 2 }}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <View key={i} style={{ width: 8, height: 6, borderRadius: 1.5, backgroundColor: v >= (i + 1) * 20 - 10 ? color : colors.cardMuted }} />
+      ))}
+    </View>
+  );
+}
+
+/** The price card's line: the exhaustion checklist (how stretched / climactic the move looks — a
+ *  description) next to the validated continuation risk when the move is extended. */
 export function ExhaustionMeter({ d, onPress }: { d?: Exhaustion; onPress: () => void }) {
   const x = extendedSide(d);
+  const top = !d || d.top >= d.bottom;
+  const v = d ? Math.max(d.top, d.bottom) : 0;
+  const c = exhTone(v);
   return (
-    <Pressable onPress={onPress} hitSlop={6} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 6, opacity: pressed ? 0.7 : 1 })}>
-      {!d ? (
-        <Text style={{ fontSize: fs.sm, color: colors.textFaint }}>延伸风险 —</Text>
-      ) : !x ? (
-        <Text style={{ fontSize: fs.sm, color: colors.textFaint }} numberOfLines={1}>未处于延伸状态</Text>
-      ) : (
-        <>
-          <Ionicons name={x.name === "顶" ? "trending-up" : "trending-down"} size={13} color={tailTone(x.s.pTail)} />
-          <Text style={[{ fontSize: fs.sm, color: colors.textFaint, flexShrink: 1 }, tnum]} numberOfLines={1}>
-            延续<Text style={{ fontWeight: "700", color: tailTone(x.s.pTail) }}>{pc(x.s.pTail)}</Text>
-            {" · "}波动<Text style={{ fontWeight: "700", color: colors.text }}>{pc(x.s.pBig3)}</Text>
-          </Text>
-        </>
-      )}
-      {d?.squeeze ? <Ionicons name="warning" size={14} color={colors.warn} accessibilityLabel="轧空否决：不做空" /> : null}
+    <Pressable onPress={onPress} hitSlop={6} style={({ pressed }) => ({ gap: 3, opacity: pressed ? 0.7 : 1 })}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <Text style={[{ fontSize: fs.sm, color: colors.textFaint }, tnum]} numberOfLines={1}>
+          {d ? (top ? "顶部衰竭 " : "底部衰竭 ") : "衰竭 "}<Text style={{ fontWeight: "700", color: c }}>{d ? v : "—"}</Text>
+        </Text>
+        {d ? <Segs v={v} color={c} /> : null}
+        {d?.squeeze ? <Ionicons name="warning" size={13} color={colors.warn} accessibilityLabel="轧空否决：不做空" /> : null}
+      </View>
+      {d ? (
+        <Text style={[{ fontSize: fs.xs, color: colors.textFaint }, tnum]} numberOfLines={1}>
+          {x ? (
+            <>延续风险 <Text style={{ fontWeight: "700", color: tailTone(x.s.pTail) }}>{pc(x.s.pTail)}</Text> · 波动 <Text style={{ fontWeight: "700", color: colors.textSoft }}>{pc(x.s.pBig3)}</Text></>
+          ) : "未处于延伸状态"}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -95,7 +114,7 @@ export function ExhaustionDetail({ id }: { id: string }) {
   const [bar, setBar] = useState("1H");
   const alt = useExhaustion(id, bar);
   const desc = bar === "1H" ? d : alt.data;
-  const [showList, setShowList] = useState(false);
+  const [showList, setShowList] = useState(true);
   const x = extendedSide(d);
   const p = d?.plan;
   return (
@@ -145,7 +164,7 @@ export function ExhaustionDetail({ id }: { id: string }) {
 
       <Pressable onPress={() => { tap(); setShowList(!showList); }} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 14, paddingVertical: 6 }}>
         <Ionicons name="chevron-forward" size={13} color={colors.textFaint} style={{ transform: [{ rotate: showList ? "90deg" : "0deg" }] }} />
-        <Text style={{ flex: 1, fontSize: fs.sm, color: colors.textSoft }}>盘面描述清单（历史检验无方向预测力）</Text>
+        <Text style={{ flex: 1, fontSize: fs.sm, color: colors.textSoft }}>衰竭清单 顶 {d?.top ?? "—"} · 底 {d?.bottom ?? "—"}（盘面描述，历史检验无方向预测力）</Text>
       </Pressable>
       {showList ? (
         <View>
