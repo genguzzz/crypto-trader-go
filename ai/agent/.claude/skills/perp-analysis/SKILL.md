@@ -29,20 +29,15 @@ For a full (一键) analysis, launch the `bull` and `bear` subagents in parallel
 ## 3. Decision (you: head of research and risk)
 
 Critically weigh the debate against the data and make a definitive call: long, short or stand aside. Do not default to 观望 just because both sides have valid points — commit to the side with the stronger, better-evidenced arguments. 观望 needs a concrete reason (event within 24 h, no structural edge, reward/risk < 1.5) plus the trigger that would turn it into a trade. Sizing rules:
-- Stop beyond the nearest swing point or liquidation cluster, ~1.5 × 4H ATR; take-profits at the next resistance/support or liquidation band, reward/risk ≥ 1.5 for TP1. Use the owner's preferred leverage from the notes; liquidation must stay ≥ 2 × the stop distance, otherwise say to cut leverage or size; cut it further when danger ≥ 50 or control ≥ 60 (≤ 3x, warn about wicks).
+- Stop beyond the nearest swing point or liquidation cluster, ~1.5 × 4H ATR; take-profits at the next resistance/support or liquidation band, reward/risk ≥ 1.5 for TP1. The plan always uses the owner's preferred leverage from the notes. If liquidation would sit closer than 2 × the stop distance, or danger ≥ 50 / control ≥ 60, add one line after the plan saying so (smaller size, or ≤ 3x, wick risk) — the plan itself stays at the preference.
 - Risk per trade ≤ 1% of equity. A red event (hack, delisting, large unlock, FOMC/CPI within 24 h) goes first and usually means stand aside.
 - Danger scores are heuristics, not validated; rule scores count only with a significant out-of-sample Rank IC.
 
-## 4. Answer template (Chinese, phone-sized)
+## 4. Answer (components, see the chat prompt for their JSON)
 
-```
-### 结论：做多 / 做空 / 观望（信心 低/中/高）— 一句话理由
-⚠ 事件：…（没有写"无重大事件"）
-**大盘** BTC …（结构/资金费）· 恐惧贪婪 … · 与大盘：顺势/逆势
-**价格** $… · 24h ±% · 7d ±%（相对 BTC ±%）
-**多方** 1… 2… 3…
-**空方** 1… 2… 3…
-**计划**：入场区 … · 止损 …（−x%，理由）· 止盈 1 …（+x%，盈亏比 …）/ 止盈 2 … · 杠杆 N x（按主人偏好）· 单笔风险 …% · 持有 … · 观点作废：…
-**关键数据**：资金费 …/8h（分位）· OI 24h ±% · 多空比 … · 主动买占比 … · 上/下方估算清算密集区 …
-```
-No disclaimers ("仅供参考", "不构成投资建议" and the like): risk is expressed by the stop and the invalidation level.
+1. `verdict` — direction, confidence, instId, one-line title, the reason in one sentence. If the market regime matters, say it in `reason`.
+2. `kpi` — 4–6 numbers that carry the call: price/24h, funding (with pool percentile), OI change, long/short ratio, danger score, nearest estimated liquidation cluster.
+3. 2–4 short bullets: why — market context, structure, positioning, news (direction, size, priced in?).
+4. `bullbear` — the debate's strongest points with scores.
+5. `plan` — entry, stop (beyond the swing point / cluster), TP1 and TP2, the owner's leverage, risk %, hold, invalidation. Standing aside: the plan that applies once the trigger hits.
+6. One line on the main risk as a price or event. No disclaimers ("仅供参考", "不构成投资建议" and the like).

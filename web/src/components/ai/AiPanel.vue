@@ -5,6 +5,8 @@ import { X, History, Brain, Plus, SquarePen, ArrowUp, Square, Mic, CircleAlert, 
 import { ai, send, retry, resume, stop, newChat, openChat, loadChats, deleteChat, textOf, setModel, AI_MODELS, notes, loadNotes, addNote, deleteNote, type Msg, type Part } from '../../composables/ai'
 import { useTapToTalk } from '../../composables/holdToTalk'
 import AiSteps from './AiSteps.vue'
+import AiBlock from './AiBlock.vue'
+import { segments } from './blocks'
 import { useDesktop } from '../../composables/device'
 import { useRouter } from 'vue-router'
 
@@ -26,6 +28,7 @@ md.renderer.rules.link_open = (t, i, o, e, s) => {
   return defaultLink ? defaultLink(t, i, o, e, s) : s.renderToken(t, i, o)
 }
 const router = useRouter()
+function onBlockNav() { if (!desktop.value) ai.open = false }
 function onMdClick(e: MouseEvent) {
   const a = (e.target as HTMLElement).closest<HTMLAnchorElement>('a.app-link')
   if (!a) return
@@ -149,6 +152,22 @@ function lockPage(on: boolean) {
 watch(() => ai.open && !desktop.value, lockPage, { immediate: true })
 onUnmounted(() => lockPage(false))
 
+// ---- "still working" cues: a thinking line when nothing visibly moves, a caret while text streams ----
+const now = ref(Date.now())
+let tick = 0
+watch(() => ai.running, r => {
+  clearInterval(tick)
+  if (r) tick = window.setInterval(() => (now.value = Date.now()), 400)
+}, { immediate: true })
+onUnmounted(() => clearInterval(tick))
+function phaseOf(m: Msg): 'thinking' | 'typing' | 'tool' | null {
+  if (!m.live) return null
+  const p = m.parts[m.parts.length - 1]
+  if (p?.t === 'tool' && p.ok == null) return 'tool'
+  if (p?.t === 'text' && now.value - ai.lastDelta < 1500) return 'typing'
+  return 'thinking'
+}
+
 // the orb opens the sheet on pointerup; the click that follows lands on the backdrop and must not close it
 const bdDown = ref(false)
 
@@ -221,9 +240,14 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
             <div v-else class="a">
               <template v-for="(g, gi) in groups(m)" :key="gi">
                 <AiSteps v-if="g.k === 'tools'" :items="g.items" :live="!!m.live" />
-                <div v-else class="md" @click="onMdClick" v-html="md.render(g.v)"></div>
+                <template v-else>
+                  <template v-for="(sg, si) in segments(g.v, !!m.live)" :key="sg.key">
+                    <div v-if="sg.k === 'md'" class="md" :class="{ typing: gi === groups(m).length - 1 && si === segments(g.v, !!m.live).length - 1 && phaseOf(m) === 'typing' }" @click="onMdClick" v-html="md.render(sg.text)"></div>
+                    <AiBlock v-else :seg="sg" @navigate="onBlockNav" />
+                  </template>
+                </template>
               </template>
-              <div v-if="m.live && !m.parts.length" class="thinking"><span></span><span></span><span></span></div>
+              <div v-if="phaseOf(m) === 'thinking'" class="thinking"><i class="tdot"></i><i class="tdot"></i><i class="tdot"></i><span class="tlabel">{{ m.parts.length ? '整理思路' : '思考中' }}</span></div>
               <div v-if="m.error" class="err"><CircleAlert :size="14" /> {{ m.error }}</div>
               <div v-if="!m.live && textOf(m)" class="foot">
                 <button type="button" class="ib sm" aria-label="复制" @click="copy(m)"><Copy :size="13" /></button>
@@ -316,10 +340,15 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
 .md :deep(a.app-link)::after { content: '›'; opacity: .7; }
 .md :deep(a.app-link:active) { background: rgba(188, 255, 47, .22); }
 .md :deep(hr) { border: 0; border-top: 1px solid var(--line-2); margin: 12px 0; }
-.thinking { display: flex; gap: 5px; padding: 10px 2px; }
-.thinking span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: bounce 1.2s infinite ease-in-out; }
-.thinking span:nth-child(2) { animation-delay: .15s; background: #2fe0ff; }
-.thinking span:nth-child(3) { animation-delay: .3s; background: #9b7df0; }
+.thinking { display: flex; align-items: center; gap: 5px; padding: 10px 2px; }
+.tdot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: bounce 1.2s infinite ease-in-out; }
+.tdot:nth-child(2) { animation-delay: .15s; background: #2fe0ff; }
+.tdot:nth-child(3) { animation-delay: .3s; background: #9b7df0; }
+.tlabel { margin-left: 6px; font-size: var(--fs-sm); background: linear-gradient(90deg, var(--text-3) 30%, var(--text-1) 50%, var(--text-3) 70%); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: shine 1.6s linear infinite; }
+.md.typing :deep(> :last-child)::after { content: ''; display: inline-block; width: 7px; height: 1.05em; margin-left: 2px; vertical-align: -2px; background: var(--accent); animation: blink 1s steps(2) infinite; }
+@keyframes shine { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes blink { 50% { opacity: 0; } }
 .err { display: flex; align-items: center; gap: 6px; margin: 6px 0; color: var(--warn); font-size: var(--fs-sm); }
 .net-bar { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 8px 12px; border-radius: 10px; background: var(--bg-2); color: var(--text-2); font-size: var(--fs-sm); }
 .retry { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; padding: 8px 8px 8px 12px; border-radius: 10px; border: 1px solid rgba(247, 166, 0, .35); background: rgba(247, 166, 0, .06); font-size: var(--fs-sm); color: var(--text-2); }

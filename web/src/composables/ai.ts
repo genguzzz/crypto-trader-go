@@ -23,6 +23,8 @@ export const ai = reactive({
   error: '',
   /** set when an answer finished while the panel was closed (orb dot) */
   unread: false,
+  /** when the last text token arrived (thinking indicator) */
+  lastDelta: 0,
   /** the stream dropped and we are polling the server back */
   reconnecting: false,
   /** the chat's last question has no answer and nothing runs (server restarted): offer retry */
@@ -74,6 +76,7 @@ function apply(ev: any) {
       ai.chatId = ev.chatId
       return
     case 'text': {
+      ai.lastDelta = Date.now()
       const m = last(), p = m.parts[m.parts.length - 1]
       if (p && p.t === 'text') p.v += ev.delta
       else m.parts.push({ t: 'text', v: ev.delta })
@@ -151,31 +154,33 @@ const saved = (k: string) => Number(localStorage.getItem(k) || 0)
 function setChat(id: number) { ai.chatId = id; id ? localStorage.setItem(CHAT_KEY, String(id)) : localStorage.removeItem(CHAT_KEY) }
 function setPending(id: number) { id ? localStorage.setItem(PENDING_KEY, String(id)) : localStorage.removeItem(PENDING_KEY) }
 
-/** Stream one response; resolves true when the turn ended (done/error event), false when the stream dropped. */
-async function stream(open: (signal: AbortSignal) => Promise<Response>): Promise<boolean> {
+type End = 'ended' | 'dropped' | 'replaced'
+let lastData = 0 // last byte from the server (stream liveness)
+let syncSeq = 0 // bumps whenever another chat load starts: older loads give way
+
+/** Stream one response. ended = the turn finished (done/error/idle event); dropped = the connection
+ *  broke first; replaced = a newer stream or chat load took over (it owns the state now). */
+async function stream(open: (signal: AbortSignal) => Promise<Response>): Promise<End> {
   abort?.abort()
   const ac = new AbortController()
   abort = ac
   ai.running = true
   ai.error = ''
-  let last = Date.now(), ended = false
-  const dog = window.setInterval(() => { if (Date.now() - last > STALE_MS) ac.abort() }, 5000)
+  lastData = Date.now()
+  let ended = false
+  const dog = window.setInterval(() => { if (Date.now() - lastData > STALE_MS) ac.abort() }, 5000)
   const onEvent = (ev: any) => {
-    last = Date.now()
     if (ev.type === 'chat') setChat(ev.chatId)
-    if (ev.type === 'done' || ev.type === 'error') {
-      ended = true
-      if (!ai.open) ai.unread = true
-    }
-    if (ev.type === 'idle') ended = true // re-attached to a turn that had already finished
+    if (ev.type === 'done' || ev.type === 'error' || ev.type === 'idle') ended = true
+    if ((ev.type === 'done' || ev.type === 'error') && !ai.open) ai.unread = true
   }
   try {
     const r = await open(ac.signal)
     if (!r.ok) throw await errorOf(r)
-    await pump(r, onEvent, () => (last = Date.now()))
+    await pump(r, onEvent, () => { lastData = Date.now(); ai.reconnecting = false })
   } catch (e: any) {
-    if (abort !== ac) return true // replaced by a newer stream (new chat, reopened chat)
-    if (!ac.signal.aborted || !ended) ai.error = ac.signal.aborted ? '连接超时' : e.message || String(e)
+    if (abort !== ac) return 'replaced'
+    if (!ended) ai.error = ac.signal.aborted ? '连接超时' : e.message || String(e)
   } finally {
     clearInterval(dog)
     if (abort === ac) {
@@ -183,13 +188,20 @@ async function stream(open: (signal: AbortSignal) => Promise<Response>): Promise
       ai.running = false
     }
   }
-  return ended
+  if (abort !== null && abort !== ac) return 'replaced'
+  return ended ? 'ended' : 'dropped'
 }
 
-export async function send(text: string, retry = false) {
+function stopStream() {
+  abort?.abort()
+  abort = null
+  ai.running = false
+}
+
+export async function send(text: string, retrying = false) {
   text = text.trim()
-  if ((!text && !retry) || ai.running) return
-  if (retry) {
+  if ((!text && !retrying) || ai.running) return
+  if (retrying) {
     const m = ai.msgs[ai.msgs.length - 1]
     if (m?.role === 'assistant') ai.msgs.pop() // the failed answer is replaced
   } else {
@@ -197,14 +209,31 @@ export async function send(text: string, retry = false) {
     if (!ai.chatId) ai.title = text.slice(0, 40)
   }
   ai.interrupted = false
-  const body = JSON.stringify({ chatId: ai.chatId || 0, message: text, instId: ai.instId, model: ai.model, retry })
-  const ended = await stream(signal => kfetch('/api/v1/ai/chat', { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, signal }))
-  if (ai.chatId) setPending(ended ? 0 : ai.chatId)
-  if (!ended && ai.chatId) await reconnect()
+  ai.reconnecting = false
+  syncSeq++
+  const body = JSON.stringify({ chatId: ai.chatId || 0, message: text, instId: ai.instId, model: ai.model, retry: retrying })
+  const end = await stream(signal => kfetch('/api/v1/ai/chat', { method: 'POST', body, headers: { 'Content-Type': 'application/json' }, signal }))
+  if (end === 'replaced') return
+  if (end === 'ended') { setPending(0); return }
+  if (ai.chatId) { // the server has the question: the answer goes on there, follow it again
+    setPending(ai.chatId)
+    return reconnect(ai.chatId)
+  }
+  // never reached the server (no chat id yet): keep the question, offer to send it again
+  const m = ai.msgs[ai.msgs.length - 1]
+  if (m?.role === 'assistant' && m.live) ai.msgs.pop()
+  ai.msgs.push({ role: 'assistant', parts: [], error: '没发出去：' + (ai.error || '网络错误') })
 }
 
-/** Re-run the last question after an error or an interrupted answer. */
-export const retry = () => send('', true)
+/** Ask the last question again: in place on the server, or from scratch when it never got there. */
+export async function retry() {
+  if (ai.chatId) return send('', true)
+  const i = ai.msgs.map(m => m.role).lastIndexOf('user')
+  if (i < 0) return
+  const q = textOf(ai.msgs[i])
+  ai.msgs.splice(i)
+  return send(q)
+}
 
 export async function stop() {
   if (!ai.chatId) return
@@ -217,58 +246,75 @@ function fromStored(m: StoredMsg): Msg {
   return { id: m.id, role: m.role, parts, error: m.error, costUsd: m.costUsd, latencyMs: m.latencyMs }
 }
 
-/** Load a chat from the server; when it is still running, follow its live events. */
-export async function openChat(id: number) {
-  abort?.abort()
-  abort = null
+/** Load a chat from the server and, while it is answering, follow it to the end. Throws on HTTP errors. */
+async function sync(id: number): Promise<End> {
+  const my = ++syncSeq
   const r = await fetch(`/api/v1/ai/chats/${id}`)
+  if (my !== syncSeq) return 'replaced'
   if (!r.ok) {
     if (r.status === 404 && id === ai.chatId) newChat()
     throw await errorOf(r)
   }
   const c = await r.json()
+  if (my !== syncSeq) return 'replaced'
   setChat(c.id)
   ai.title = c.title
   ai.msgs = (c.messages as StoredMsg[]).map(fromStored)
   ai.interrupted = !!c.interrupted
   ai.error = ''
-  ai.reconnecting = false
-  if (c.running) {
-    setPending(c.id)
-    ai.msgs.push({ role: 'assistant', parts: [], live: true }) // the stream replays this turn from its start
-    const ended = await stream(signal => fetch(`/api/v1/ai/chats/${c.id}/stream`, { signal }))
-    if (!ended) return reconnect()
-    return openChat(c.id) // load the stored answer (complete, with every step's result)
+  if (!c.running) {
+    stopStream()
+    if (saved(PENDING_KEY) === c.id) {
+      setPending(0)
+      if (!ai.open) ai.unread = true
+    }
+    return 'ended'
   }
-  if (saved(PENDING_KEY) === c.id) {
-    setPending(0)
-    if (!ai.open) ai.unread = true
-  }
+  setPending(c.id)
+  ai.msgs.push({ role: 'assistant', parts: [], live: true }) // the stream replays this turn from its start
+  const end = await stream(signal => fetch(`/api/v1/ai/chats/${c.id}/stream`, { signal }))
+  if (end === 'ended' && my === syncSeq) return sync(id) // load the stored answer: complete, every step's result
+  return end
 }
 
-let reconnecting: Promise<void> | null = null
-/** The stream dropped (background, network, server restart): poll back with backoff until the turn is over. */
-function reconnect(): Promise<void> {
-  if (reconnecting) return reconnecting
-  const id = ai.chatId
-  ai.reconnecting = true
-  reconnecting = (async () => {
-    for (let i = 0; i < 8 && ai.chatId === id; i++) {
+/** Show a chat (history, app start); a dropped stream turns into reconnecting. */
+export async function openChat(id: number) {
+  ai.reconnecting = false
+  if (await sync(id) === 'dropped') await reconnect(id)
+}
+
+let loop: Promise<void> | null = null
+let loopId = 0
+/** The stream dropped (background, network, server restart): retry with backoff until the turn is over. */
+function reconnect(id: number): Promise<void> {
+  if (loop && loopId === id) return loop
+  loopId = id
+  loop = (async () => {
+    for (let i = 0; i < 10; i++) {
+      ai.reconnecting = true
       await new Promise(r => setTimeout(r, Math.min(15_000, 1000 * 2 ** i)))
-      if (document.visibilityState === 'hidden' || ai.chatId !== id) break // resume() picks it up on return
-      try { reconnecting = null; await openChat(id); return } catch { /* offline: try again */ }
+      if (ai.chatId !== id || document.visibilityState === 'hidden') return // resume() picks it up on return
+      try {
+        const end = await sync(id)
+        if (end !== 'dropped') return
+        i = -1 // was connected again for a while: start the backoff over
+      } catch { /* offline or server restarting: next attempt */ }
     }
-  })().finally(() => { reconnecting = null; if (ai.chatId === id) ai.reconnecting = false })
-  return reconnecting
+  })().finally(() => {
+    if (loopId === id) {
+      loop = null
+      ai.reconnecting = false
+    }
+  })
+  return loop
 }
 
 /** App back in front / network back / panel opened: catch up with the chat on screen or the one left running. */
 export async function resume() {
-  if (ai.running && abort) return // a live stream is still flowing
   const id = ai.chatId || saved(CHAT_KEY)
   if (!id) return
-  const pending = saved(PENDING_KEY) === id
-  if (!ai.chatId && !pending && !ai.open) return // nothing in flight: load lazily when the panel opens
+  if (ai.running && abort && Date.now() - lastData < 20_000) return // a live stream is still flowing
+  if (!ai.chatId && saved(PENDING_KEY) !== id && !ai.open) return // nothing in flight: load when the panel opens
   await openChat(id).catch(() => {})
 }
 
@@ -279,14 +325,14 @@ if (typeof window !== 'undefined') {
 }
 
 export function newChat() {
-  abort?.abort()
-  abort = null
+  stopStream()
+  syncSeq++
+  loopId = 0
   setChat(0)
   setPending(0)
   ai.title = ''
   ai.msgs = []
   ai.error = ''
-  ai.running = false
   ai.interrupted = false
   ai.reconnecting = false
 }
