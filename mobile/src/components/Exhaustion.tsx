@@ -46,13 +46,13 @@ export function ExhaustionMeter({ d, onPress }: { d?: Exhaustion; onPress: () =>
       ) : (
         <>
           <Ionicons name={x.name === "顶" ? "trending-up" : "trending-down"} size={13} color={tailTone(x.s.pTail)} />
-          <Text style={[{ fontSize: fs.sm, color: colors.textFaint }, tnum]} numberOfLines={1}>
-            延续 <Text style={{ fontWeight: "700", color: tailTone(x.s.pTail) }}>{pc(x.s.pTail)}</Text>
-            {"  "}波动 <Text style={{ fontWeight: "700", color: colors.text }}>{pc(x.s.pBig3)}</Text>
+          <Text style={[{ fontSize: fs.sm, color: colors.textFaint, flexShrink: 1 }, tnum]} numberOfLines={1}>
+            延续<Text style={{ fontWeight: "700", color: tailTone(x.s.pTail) }}>{pc(x.s.pTail)}</Text>
+            {" · "}波动<Text style={{ fontWeight: "700", color: colors.text }}>{pc(x.s.pBig3)}</Text>
           </Text>
         </>
       )}
-      {d?.squeeze ? <Text style={{ fontSize: fs.xs, fontWeight: "700", color: colors.warn }} numberOfLines={1}>轧空否决</Text> : null}
+      {d?.squeeze ? <Ionicons name="warning" size={14} color={colors.warn} accessibilityLabel="轧空否决：不做空" /> : null}
     </Pressable>
   );
 }
