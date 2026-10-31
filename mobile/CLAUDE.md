@@ -31,6 +31,8 @@ iPhone OKX Helper ──HTTPS──▶ ctg.gugenzzz.top (ctg-prod nginx → ctg 
 - Data: `useQuery(key, fn, {interval, staleMs})` from `lib/query.ts` (shared cache, persisted, polls only while focused and active); `mutate`/`load` after actions. Market data in `lib/market.ts`: `useMeta`, `useUniverse` (15 s poll + stream-triggered refetch), `useLivePrice` (SSE `prices`), `toggleWatch` (optimistic), `useRuleId`.
 - Pull-to-refresh: `<Pull onRefresh>`. Every tap gets haptics (`tap()`), results `toast()` / `toastError()`, destructive actions `confirm()`. UI copy Simplified Chinese, plain and precise, no emoji or exclamation marks.
 - Device features only through `lib/device.ts` (`has(capability)` first — OTA code can run on an older binary). Runtime 1 ships the capability pack: glass, haptics, blur, symbols, secure-store, sqlite, local notifications, speech recognition, audio recording (microphone permission for AI voice), clipboard, sharing, linking, web-browser, WebView, network, keep-awake, quick actions, Face ID, orientation. Settings → 能力自检 exercises them.
+- Drawer pages (phase 2b): `rules/index.tsx` + `rules/[id].tsx` (track record, weight editor), `alerts.tsx`, `status.tsx` (3 s poll while focused), `help/index.tsx` + `help/[slug].tsx`, `settings.tsx` (+ `components/settings/*`: server settings with a save bar, interaction channel, AI authorization, developer), `dev.tsx` (keys, access, request log, endpoint reference; the tester stays on the web). Their endpoints/types live in `lib/sysApi.ts` (port from web `api.ts`/`tradeApi.ts`). Shared form bits in `components/Form.tsx`: `Field`, `Input`, `NumInput`, `Toggle`, `Meter`, `SectionHead`, and `InfoTip` (web ⓘ → bottom sheet; rich text with `P`/`B`/`Code`). Copy the web page's tip text verbatim.
+- Help articles: `node scripts/gen-docs.mjs` bundles `web/src/docs/strategy/*.md` into `src/content/strategyDocs.ts` (generated, commit it; rerun after the web docs change). `components/Markdown.tsx` renders them (headings, lists, tables, quotes, code blocks with copy and Python highlighting; no HTML). Links `/help/strategy/x` stay in the app, other paths open the web.
 - Logging: `logger("area")` (ids, counts, timings, errors; never keys). Settings → 上传日志 → `data/mobile/logs/<id>.log`. Usage events: `track(name, props)` → `data/mobile/events/YYYY-MM-DD.jsonl`.
 
 ## AI tab (`src/app/(tabs)/ai.tsx`)
@@ -46,6 +48,8 @@ iPhone OKX Helper ──HTTPS──▶ ctg.gugenzzz.top (ctg-prod nginx → ctg 
 
 ## Traps
 
+- Number inputs inside rows: RN-web gives `TextInput` an intrinsic width; `NumInput` sets `minWidth: 0` so values don't render outside the box.
+- The web preview server must block non-GET `/api/*` (read-only checks against production).
 - `react-native-webview` 14 types `WebView` as `never` under strict TS; `ChartView.tsx` casts it to `ComponentType<WebViewProps>`.
 - Header values must be ASCII (fetch throws otherwise); `api.ts` strips non-ASCII from `x-app-version`.
 - An OTA only reaches binaries with the same runtime. If a runtime bump's IPA never got built, phones stay on the old runtime and see nothing.

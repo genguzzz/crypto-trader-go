@@ -1,7 +1,7 @@
 // Shared UI pieces (mediahub's ui.tsx, restyled with the web app's tokens). Every tap gets haptics,
 // results use toast()/toastError(), destructive actions go through confirm().
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ActivityIndicator, Alert, Animated, Modal, Pressable, RefreshControl, ScrollView, Text, View, type RefreshControlProps, type StyleProp, type TextProps, type TextStyle, type ViewStyle } from "react-native";
+import { ActivityIndicator, Alert, Animated, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, ScrollView, Text, View, type RefreshControlProps, type StyleProp, type TextProps, type TextStyle, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -241,6 +241,8 @@ export function Sheet({ visible, onClose, title, children, scroll, footer }: { v
   const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      {/* forms in sheets: the keyboard pushes the sheet up instead of covering its inputs */}
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
       <Pressable style={{ flex: 1, backgroundColor: colors.backdrop }} onPress={onClose} />
       <View style={{ maxHeight: "86%", backgroundColor: colors.sheet, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: insets.bottom + 14, borderTopWidth: 1, borderColor: colors.borderStrong }}>
         <View style={{ alignSelf: "center", width: 38, height: 5, borderRadius: 3, backgroundColor: colors.borderStrong, marginBottom: 12 }} />
@@ -248,6 +250,7 @@ export function Sheet({ visible, onClose, title, children, scroll, footer }: { v
         {scroll ? <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">{children}</ScrollView> : children}
         {footer ? <View style={{ paddingTop: 10 }}>{footer}</View> : null}
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
