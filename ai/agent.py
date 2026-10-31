@@ -22,6 +22,14 @@ CHAT_PROMPT = "chat_v1"
 CHAT_MAX_TURNS = 60
 CHAT_MODELS = ("claude-sonnet-5", "claude-opus-5-5")  # chosen per turn in the app
 SANDBOX_SOCKET = os.environ.get("CTG_SANDBOX_SOCKET", "/run/sbx/sbx.sock")
+# ctg data tools the agent may call directly: small, parameterised answers (a few thousand characters).
+# Raw series (candles, minute OI, liquidation map, compare, track records: 15k–95k characters) are only
+# reachable through the shell, where Python reduces them to the numbers the answer needs.
+CTG_DIRECT = ("get_instrument", "get_universe", "search_instruments", "get_orderbook", "get_orderflow", "get_liquidations",
+              "list_rules", "list_fields", "get_alert_events", "get_system_status")
+SHELL_MODEL_LIMIT = 8000  # characters of shell output the model sees; the rest stays in files
+CTG_HIDDEN = ("get_candles", "get_series", "get_liquidation_map", "compare_with_majors", "get_rule_track_record", "get_usage")
+MCP_OUTPUT_TOKENS = "6000"  # hard cap per data-tool result (Claude Code truncates beyond it)
 
 Emit = Callable[[dict], Awaitable[None]]
 
@@ -146,7 +154,9 @@ def sandbox_server(chat: str, key: str):
         if res.get("stdout"):
             text += res["stdout"]
         if res.get("stderr"):
-            text += "\n[stderr]\n" + res["stderr"]
+            text += "\n[stderr]\n" + res["stderr"][-2000:]
+        if len(text) > SHELL_MODEL_LIMIT:
+            text = (text[:SHELL_MODEL_LIMIT] + f"\n…[输出 {len(text)} 字，已截断。把数据写进文件，用 Python 只打印需要的结果]")
         return {"content": [{"type": "text", "text": text}], "is_error": res.get("exit") not in (0, None)}
 
     return create_sdk_mcp_server(name="sandbox", version="1.0.0", tools=[shell])
@@ -187,15 +197,19 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
     if emit is not None:
         mcp["memory"] = memory_server(emit)
         allowed.append("mcp__memory__remember")
+    ctg_tools: list[str] = []
     if agent.get("mcpUrl") and agent.get("mcpToken"):
         mcp["ctg"] = {"type": "http", "url": agent["mcpUrl"], "headers": {"Authorization": "Bearer " + agent["mcpToken"]}}
-        allowed.append("mcp__ctg")
-    data_tools = ["mcp__ctg", "mcp__sandbox__shell", "WebSearch", "WebFetch"]
+        ctg_tools = [f"mcp__ctg__{t}" for t in CTG_DIRECT]
+        allowed += ctg_tools
+    data_tools = ctg_tools + ["mcp__sandbox__shell", "WebSearch", "WebFetch"]
+    env["MAX_MCP_OUTPUT_TOKENS"] = MCP_OUTPUT_TOKENS
     kw: dict[str, Any] = dict(
         system_prompt=prompt,
         model=config.get("model") or llm.DEFAULT_MODEL,
         tools=["WebSearch", "WebFetch", "Skill", "Task", "Agent"],  # Task was renamed Agent in newer CLIs
         allowed_tools=allowed,
+        disallowed_tools=[f"mcp__ctg__{t}" for t in CTG_HIDDEN],  # not even listed to the model
         mcp_servers=mcp,
         strict_mcp_config=True,
         setting_sources=["project"],  # skills from agent/.claude/skills (no CLAUDE.md there)

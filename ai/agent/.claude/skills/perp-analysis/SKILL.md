@@ -11,17 +11,16 @@ Adapted from TradingAgents (TauricResearch, Apache-2.0): analyst team → bull/b
 
 Run `ca market -f json` (reuse it if this chat already has one from the last hour): BTC/ETH trend and funding, breadth, fear & greed, market-wide news. Note the regime in one line; it frames every later judgement.
 
-## 1. Collect (in parallel where possible)
+## 1. Collect (in parallel where possible; summaries first, raw data only inside Python)
 
 | Analyst | Sources |
 |---|---|
-| Structure | `get_instrument` (fact panel, percentiles in the pool, rule scores), `get_candles` 15m/1H/4H, `compare_with_majors` |
-| Derivatives | `get_series` oi + funding (72h+), `get_liquidations`, `get_liquidation_map` (estimate), `get_orderbook` |
-| Flow | `get_orderflow` 15m/1H: taker delta, CVD vs price divergence |
-| Risk scores | sandbox: `ca analyze <SYM> -f json` (long/short danger 0–100, control score, max leverage, supports/resistances, events) |
-| News & catalysts | sandbox `ca events <SYM> -f json` (coin news, exchange announcements, macro calendar); WebSearch / WebFetch to verify or read the source (unlocks, hacks, listings). Judge each item: direction, size, already priced in? |
+| Risk scores & structure | `ca analyze <SYM>` (text): long/short danger, control, max leverage, supports/resistances, events — this covers most of the picture in one call |
+| Derivatives | `ca funding <SYM>`, `ca oi <SYM>`, `ca liq <SYM>` (estimated liquidation clusters), data tool `get_orderbook` (depth ≤ 50) |
+| Flow & trend | `ca flow <SYM> -b 1H`, `ca indicators <SYM> -b 4H`; relative strength vs BTC only through Python on `ca ctg /compare … -f json > f.json` |
+| News & catalysts | `ca events <SYM>`; WebSearch / WebFetch to verify or read the source (unlocks, hacks, listings). Judge each item: direction, size, already priced in? |
 
-Compute indicators in the sandbox when needed (ATR, swing highs/lows, realized vol, funding percentiles) instead of estimating. Interpret risk scores with [references/risk-scores.md](references/risk-scores.md).
+Need something more specific (ATR, swing levels, realized vol, funding percentile)? Fetch the raw series to a file and print only the computed numbers. Interpret risk scores with [references/risk-scores.md](references/risk-scores.md).
 
 ## 2. Debate
 

@@ -156,6 +156,9 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				{Name: "sort", In: "query", Type: "string", Default: "turnover12h", Desc: "turnover12h, long, short (score of the selected rule) or any fact-panel field key"},
 				{Name: "order", In: "query", Type: "string", Enum: []string{"desc", "asc"}, Default: "desc", Desc: "sort order; rows without the sort value go last"},
 				limitParam(200, 1000, "max rows"),
+				{Name: "fields", In: "query", Type: "string", Desc: "compact output: comma-separated fact-panel keys to keep (e.g. ret_24h,funding_hourly,oi_chg_24h). Each row becomes " +
+					"{instId, rank, last, turnover12h, oiUsd, v:{key: value}, p:{key: percentile}, long, short} with the selected rule's scores as plain numbers; " +
+					"removed contracts and score details are left out. Use it whenever you need a table: the full rows are large"},
 			},
 			CostTxt: "1; scope=all costs 2",
 			cost: func(a Args) int {
@@ -471,6 +474,37 @@ func universe(e *market.Engine, a Args) (any, error) {
 	})
 	total := len(rows)
 	rows = rows[:min(len(rows), a.Int("limit"))]
+	head := map[string]any{
+		"asOfMinute": snap.AsOfMinute, "phase": snap.Phase, "threshold": snap.Threshold, "topN": snap.TopN, "rule": ruleID, "total": total,
+	}
+	if fs := a.Str("fields"); fs != "" {
+		keys := strings.Split(fs, ",")
+		for i, k := range keys {
+			keys[i] = strings.TrimSpace(k)
+			if !slices.ContainsFunc(features.Fields, func(f features.Field) bool { return f.Key == keys[i] }) {
+				return nil, fmt.Errorf("unknown field %q (see list_fields)", keys[i])
+			}
+		}
+		out := make([]map[string]any, 0, len(rows))
+		for _, r := range rows {
+			v, p := map[string]float64{}, map[string]float64{}
+			for _, k := range keys {
+				if x, ok := r.Values[k]; ok {
+					v[k] = x
+				}
+				if x, ok := r.Pct[k]; ok {
+					p[k] = x
+				}
+			}
+			c := map[string]any{"instId": r.InstID, "rank": r.Rank, "last": r.Last, "turnover12h": r.Turnover12h, "oiUsd": r.OiUsd, "v": v, "p": p}
+			if sc, ok := r.Scores[ruleID]; ok {
+				c["long"], c["short"] = sc.Long.Score, sc.Short.Score
+			}
+			out = append(out, c)
+		}
+		head["rows"] = out
+		return head, nil
+	}
 	return map[string]any{
 		"seq": snap.Seq, "asOfMinute": snap.AsOfMinute, "decisionTs": snap.DecisionTs, "computedAt": snap.ComputedAt,
 		"preview": snap.Preview, "previewAt": snap.PreviewAt, "provisional": snap.Provisional, "phase": snap.Phase,
