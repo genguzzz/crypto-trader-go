@@ -276,6 +276,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		if errText != "" {
 			run.publish(evJSON(map[string]any{"type": "error", "error": errText}))
 		} else {
+			g.savePlans(in.ChatID, out.Text, confidenceOf(out.Text))
 			run.publish(evJSON(map[string]any{"type": "done", "text": out.Text, "cost": out.Cost, "latencyMs": lat}))
 		}
 		if !run.finish() && errText != "已停止" {

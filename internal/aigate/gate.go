@@ -98,6 +98,8 @@ type Gate struct {
 	runMu   sync.Mutex
 	runs    map[int64]*chatRun
 
+	candles Candles1m // plan tracker's price source
+
 	reflectMu sync.Mutex
 	propMu    sync.Mutex // serializes proposal decisions
 }
@@ -136,7 +138,7 @@ func New(st *store.Store, opts Options) (*Gate, error) {
 	if opts.Logf == nil {
 		opts.Logf = log.Printf
 	}
-	if _, err := st.DB.Exec(schema + chatSchema); err != nil {
+	if _, err := st.DB.Exec(schema + chatSchema + planSchema); err != nil {
 		return nil, fmt.Errorf("aigate schema: %w", err)
 	}
 	g := &Gate{st: st, opts: opts, sock: SocketPath(opts), sealer: newSealer(opts.SecretKey), model: opts.Model}

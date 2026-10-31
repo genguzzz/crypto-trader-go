@@ -32,6 +32,7 @@ import (
 //	POST   /api/v1/ai/notes                 {text, replaces?}
 //	DELETE /api/v1/ai/notes/{id}
 func (g *Gate) Register(mux *http.ServeMux) {
+	g.planRoutes(mux)
 	g.registerNotes(mux)
 	mux.HandleFunc("POST /api/v1/ai/chat", func(w http.ResponseWriter, r *http.Request) {
 		var in ChatInput

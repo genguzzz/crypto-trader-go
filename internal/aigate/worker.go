@@ -136,6 +136,7 @@ func (g *Gate) Run(ctx context.Context) error {
 	}
 	g.logf("aigate: listening on %s", path)
 	go g.reflectLoop(ctx)
+	go g.planLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		ln.Close()

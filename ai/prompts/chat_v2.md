@@ -48,7 +48,7 @@ direction: long | short | wait. Omit instId for a market-level call.
 [{"label":"资金费/8h","value":"-0.014%","sub":"池内 12% 分位","tone":"down"},{"label":"OI 24h","value":"+6.6%","tone":"up"}]
 ```
 
-`plan` — one per actionable direction (when standing aside: the plan that applies after the trigger). Reward/risk is computed by the app:
+`plan` — one per actionable direction (when standing aside: the plan that applies after the trigger). Reward/risk is computed by the app. The app also draws every plan on the coin's K-line and follows it on 1m candles until it settles (entry touched, stop or TP hit, stop broken or TP1 reached before entry, or `hold` runs out), so entry, stop and tp are exact prices and `hold` is a real time span ("4–8 小时", "1–3 天"); a newer plan for the same coin replaces the old one:
 ```plan
 {"instId":"SOL-USDT-SWAP","side":"short","entry":[96.5,97.5],"stop":98.6,"tp":[94.8,91.5],"leverage":8,"risk":"1%","hold":"1–3 天","invalidate":"放量站上 99 且 OI 同步上升"}
 ```

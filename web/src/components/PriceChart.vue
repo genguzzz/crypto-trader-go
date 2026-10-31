@@ -13,6 +13,8 @@ import FilterChip from './ui/FilterChip.vue'
 import ChipGroup from './ui/ChipGroup.vue'
 import Loading from './ui/Loading.vue'
 import { useFullscreen } from '../composables/fullscreen'
+import { getAdminKey } from '../composables/adminKey'
+import { useAiPlans, planStatusText, type AiPlan } from './charts/aiPlans'
 
 /** fill: take the parent's full height (workbench); otherwise fixed chart heights (stacked page).
  *  embed: inside the native app's web view (views/EmbedChart.vue): the full-screen button asks the
@@ -27,6 +29,7 @@ const withOIL = ref(localStorage.getItem('ctg.chartOIL') === '1') // OI level ar
 const withOID = ref(localStorage.getItem('ctg.chartOID') !== '0') // OI change bars: on by default
 const withLiq = ref(localStorage.getItem('ctg.chartLiq') !== '0') // liquidation bars: on by default
 const withMap = ref(localStorage.getItem('ctg.chartLiqMap') === '1') // estimated liquidation map overlay
+const withPlans = ref(localStorage.getItem('ctg.chartAiPlans') !== '0') // the AI's open trade plans: on by default
 const mapDays = ref(localStorage.getItem('ctg.liqMapDays') || '7') // map look-back
 const mapTiers = ref<number[]>(readTiers()) // leverage tiers drawn on the map
 function readTiers(): number[] {
@@ -42,6 +45,8 @@ const loading = ref(false)
 const el = ref<HTMLElement>()
 let chart: IChartApi | undefined
 let candles: ISeriesApi<'Candlestick'> | undefined
+const aiPlans = useAiPlans(() => candles, () => props.id, () => barMs[bar.value], withPlans)
+const planLeft = (p: AiPlan) => { const h = (p.expires - Date.now()) / 3600e3; return h >= 24 ? `剩 ${Math.round(h / 24)} 天` : `剩 ${Math.max(1, Math.round(h))} 小时` }
 let vol: ISeriesApi<'Histogram'> | undefined
 let spot: ISeriesApi<'Line'> | undefined
 let delta: ISeriesApi<'Histogram'> | undefined
@@ -478,11 +483,12 @@ onMounted(() => {
   chart.subscribeCrosshairMove(onCrosshair)
   chart.timeScale().subscribeVisibleLogicalRangeChange(() => { spacing.value = chart?.timeScale().options().barSpacing ?? 6 })
   load('fit')
-  timer = window.setInterval(() => load(), 10_000)
+  aiPlans.refresh()
+  timer = window.setInterval(() => { load(); aiPlans.refresh() }, 10_000)
   hotTimer = window.setInterval(hot, 1000)
 })
 onUnmounted(() => { clearInterval(timer); clearInterval(hotTimer); chart?.remove() })
-watch(bar, v => { localStorage.setItem('bar', v); load('anchor') })
+watch(bar, v => { localStorage.setItem('bar', v); load('anchor'); aiPlans.draw() })
 watch(layer, v => { localStorage.setItem('ctg.chartLayer', v); legendH = 0; load('anchor') })
 watch(withSpot, v => { localStorage.setItem('ctg.chartSpot', v ? '1' : '0'); load('anchor') })
 watch(withOIL, v => { localStorage.setItem('ctg.chartOIL', v ? '1' : '0'); load('anchor') })
@@ -527,6 +533,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <FilterChip v-model="withOID" label="OI Δ" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示每根 K 线的持仓量变化柱（蓝增橙减）' : '没有持仓量数据'" />
         <FilterChip v-model="withLiq" label="强平" title="在 K 线下方显示每根 K 线的强平金额（绿 = 空单被强平，向上；红 = 多单被强平，向下）" />
         <FilterChip v-model="withMap" label="清算图" :disabled="!hasOi" :title="hasOi ? '在价格区右侧叠加估算的清算地图（按近 7 天持仓变化与杠杆分布推算，非交易所数据）' : '没有持仓量数据，无法估算'" />
+        <FilterChip v-model="withPlans" label="AI 点位" title="在 K 线上画出 AI 分析给出的入场区、止损和止盈；入场、止损/止盈触发、计划作废或到期后自动撤下" />
         <FilterChip v-model="withOIL" label="OI" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示持仓量走势（面积图）' : '没有持仓量数据'" />
         <button v-if="embed" type="button" class="fs-btn" :title="embed === 'full' ? '退出全屏' : '全屏'" :aria-label="embed === 'full' ? '退出全屏' : '全屏'" @click="emit('fullscreen')">
           <Minimize2 v-if="embed === 'full'" :size="15" /><Maximize2 v-else :size="15" />
@@ -536,6 +543,19 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         </button>
       </span>
     </h3>
+    <div v-for="p in aiPlans.plans.value" :key="p.id" class="mapbar planbar tnum">
+      <b :class="p.side === 'short' ? 'down' : 'up'">AI {{ p.side === 'short' ? '空' : '多' }}</b>
+      <span v-if="p.confidence" class="muted">{{ p.confidence }}</span>
+      <span class="muted">{{ fmtTime(p.created) }}</span>
+      <span class="st" :class="p.status">{{ planStatusText[p.status] }}</span>
+      <span>入 <b>{{ fmtPrice(p.entryLo) }}{{ p.entryHi !== p.entryLo ? '–' + fmtPrice(p.entryHi) : '' }}</b></span>
+      <span>止 <b class="down">{{ fmtPrice(p.stop) }}</b></span>
+      <span>目 <b class="up">{{ fmtPrice(p.tp1) }}{{ p.tp2 ? ' / ' + fmtPrice(p.tp2) : '' }}</b></span>
+      <span v-if="p.leverage" class="muted">{{ p.leverage }}x</span>
+      <span class="muted">{{ planLeft(p) }}</span>
+      <button type="button" class="pb-x" title="不再显示这条计划" aria-label="不再显示这条计划" @click="aiPlans.dismiss(p, getAdminKey())">×</button>
+      <span v-if="p.invalidate" class="muted inv">作废：{{ p.invalidate }}</span>
+    </div>
     <div v-if="withMap && hasOi" class="mapbar">
       <span class="mb-k">清算图</span>
       <Segmented v-model="mapDays" size="sm" aria-label="清算图回看" :options="[{ value: '1', label: '1 天' }, { value: '7', label: '7 天' }]" />
@@ -634,6 +654,13 @@ h3 { display: flex; justify-content: space-between; align-items: center; flex-wr
 .map-tip .mt-tier { display: flex; align-items: center; gap: 4px; color: var(--text-3); }
 .map-tip .mt-tier i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .map-tip .mt-tier b { color: var(--text-1); font-weight: 500; }
+.planbar { gap: 8px; padding: 4px 8px; border-radius: 6px; background: rgba(188, 255, 47, .05); border: 1px solid rgba(188, 255, 47, .18); }
+.planbar .st { padding: 0 6px; border-radius: 4px; background: var(--bg-3); color: var(--text-1); }
+.planbar .st.pending { color: var(--accent); }
+.planbar .st.active, .planbar .st.tp1 { color: #000; background: var(--accent); }
+.planbar .pb-x { all: unset; cursor: pointer; margin-left: auto; padding: 0 4px; color: var(--text-3); font-size: 15px; line-height: 1; }
+.planbar .inv { flex-basis: 100%; }
+.planbar b.up { color: var(--up); } .planbar b.down { color: var(--down); }
 .mapbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; font-size: var(--fs-xs); }
 .mapbar .mb-k { color: var(--text-3); }
 .mapbar :deep(.fchip) { height: 22px; padding: 0 8px; font-size: var(--fs-xs); }
