@@ -16,7 +16,7 @@ const build = process.env.BUILD_NUMBER ?? "0";
 export const RUNTIME_VERSION = "1";
 
 const config: ExpoConfig = {
-  name: "OKX Helper",
+  name: "OKX Helper β", // side by side with the Capacitor "OKX Helper" until it is retired
   slug: "okx-helper",
   scheme: "okxhelper",
   version: pkg.version,
