@@ -163,7 +163,7 @@ export default function AiTab() {
               ) : (
                 <Text style={{ marginTop: 4, fontSize: fs.x2, fontWeight: "700", color: colors.text }}>想看点什么？</Text>
               )}
-              <Text style={{ fontSize: fs.sm, lineHeight: 20, color: colors.textFaint, textAlign: "center", maxWidth: 340 }}>我能查本站录制的 K 线、持仓、资金费、订单流、清算图，联网搜新闻，在沙箱里跑计算。按住光球说话也行。</Text>
+              <Text style={{ fontSize: fs.sm, lineHeight: 20, color: colors.textFaint, textAlign: "center", maxWidth: 340 }}>我能查本站录制的 K 线、持仓、资金费、订单流、清算图，联网搜新闻，做量化计算。按住光球说话也行。</Text>
               {s.instId ? (
                 <Pressable onPress={() => submit(ONE_CLICK)} style={({ pressed }) => ({ width: "100%", maxWidth: 380, marginTop: 8, flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 14, backgroundColor: "rgba(188,255,47,0.12)", borderWidth: 1, borderColor: "rgba(188,255,47,0.35)", transform: [{ scale: pressed ? 0.98 : 1 }] })}>
                   <Ionicons name="bar-chart-outline" size={18} color={colors.primary} />
