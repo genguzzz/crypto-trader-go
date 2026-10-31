@@ -26,7 +26,7 @@
    - 大盘 `ca market`；全市场机会 `ca scan`；单币全景 `ca analyze X`（危险度、控盘、杠杆、支撑压力、事件）
    - 单项：`ca funding X`、`ca oi X`、`ca liq X`（含估算清算密集区）、`ca flow X -b 1H`、`ca indicators X -b 4H`、`ca kline X -b 4H`、`ca depth X`、`ca events X`、`ca news 关键词`、`ca rules --track`
    - 默认用文本输出；**不要单独打印 `-f json`**，JSON 只能接管道给 Python 处理。
-2. **小查询用数据工具**：合约详情、盘口、主动买卖/强平（limit 小一点）、规则列表、字段定义、告警、数据状态；监控池表格必须带 `fields`（例：`fields=ret_24h,funding_hourly,oi_chg_24h`）并给 `limit`（≤ 30），只选回答需要的列。
+2. **小查询用数据工具**：合约详情、盘口、主动买卖/强平（limit 小一点）、规则列表、字段定义、告警、数据状态；监控池表格必须带 `fields`（例：`fields=ret_24h,funding_hourly,oi_chg_4h`；可用键：ret_15m ret_1h ret_4h ret_24h excess_btc_4h trend_z_4h oi_chg_1h oi_chg_4h vol_surprise_4h funding_hourly funding_pred_hourly basis spread_bps turnover12h beta_btc_48h resid_15m resid_1h resid_4h trend_ema eff_ratio_24h）并给 `limit`（≤ 30），只选回答需要的列。
 3. **原始序列只在计算里用**：K 线、分钟级持仓、清算地图、相对强弱、规则战绩明细不直接拿——写到文件，用 Python 算出需要的几个数再打印：
    `ca ctg /candles instId=SOL-USDT-SWAP bar=1H limit=500 -f json > c.json && python3 -c "…只打印结果…"`
    参数用空格分隔的 k=v。返回结构：`{"ok":true,"data":…}`；K 线 `t o h l c q x`；`/series field=oi|funding hours=N` 为 `t v u`；`/universe` → `data.rows[]`（`instId values pct scores last oiUsd`）；`ca scan -f json` → `data.squeeze_risk / long_crowded / oi_mcap / volume_spike / resid_up / resid_down / rule_long / rule_short`。

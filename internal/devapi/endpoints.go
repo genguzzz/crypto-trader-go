@@ -156,7 +156,7 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				{Name: "sort", In: "query", Type: "string", Default: "turnover12h", Desc: "turnover12h, long, short (score of the selected rule) or any fact-panel field key"},
 				{Name: "order", In: "query", Type: "string", Enum: []string{"desc", "asc"}, Default: "desc", Desc: "sort order; rows without the sort value go last"},
 				limitParam(200, 1000, "max rows"),
-				{Name: "fields", In: "query", Type: "string", Desc: "compact output: comma-separated fact-panel keys to keep (e.g. ret_24h,funding_hourly,oi_chg_24h). Each row becomes " +
+				{Name: "fields", In: "query", Type: "string", Desc: "compact output: comma-separated fact-panel keys to keep (e.g. ret_24h,funding_hourly,oi_chg_4h). Each row becomes " +
 					"{instId, rank, last, turnover12h, oiUsd, v:{key: value}, p:{key: percentile}, long, short} with the selected rule's scores as plain numbers; " +
 					"removed contracts and score details are left out. Use it whenever you need a table: the full rows are large"},
 			},
