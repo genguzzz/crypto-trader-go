@@ -22,6 +22,14 @@ Link: `[SOL](/instrument/SOL-USDT-SWAP)`. On mobile it's a standalone page; on P
 9. **Liquidations**: OKX public liquidation orders (liquidation-orders), amount = bankruptcy price × contracts × contract value (USDT). Long = longs liquidated (red bar down), short = shorts liquidated (green bar up). OKX keeps only ~24h; contracts in active pool/watchlist/recently viewed sync every minute and are kept 30 days locally; windows starting before the recording start are marked "incomplete" (不完整). "Latest liquidations" (最新强平) lists the last 20, top 10% by amount in bold.
 10. **News / unlocks / on-chain holders**: not integrated (planned). "Not integrated" (未接入) doesn't mean there are no events or risks.
 
+## Move risk (延伸风险, under the price and in the key-number tiles)
+
+- **What it shows**: only when a coin is in an *extended state* on 1H (3-bar extreme ≥ 2 ATR from EMA20, in the top/bottom 10% of the last 30 bars, 24h turnover ≥ 2M USDT); otherwise "未处于延伸状态".
+- **延续 P_tail**: probability price runs ≥ 2 ATR past that extreme within 24h — for a fade, the chance its stop is hit. Base ≈ 37%; ≥ 50% shown red (don't fade), < 25% green.
+- **波动 P_big3**: probability of a ≥ 3 ATR move either way within 24h (base ≈ 61%). Says how big, not which way: size down, widen stops.
+- **轧空否决**: funding ≤ −0.05% per settlement, or negative while > 15% above the 1H EMA24 — no short plan (a short pays the funding).
+- **Where it comes from**: a 2-year OKX 1H study (286 contracts, 19-month walk-forward out of sample): these two held up (AUC ≈ 0.63 / 0.62); no top/bottom sign predicted direction (AUC 0.47–0.53), including the exhaustion checklist, which the card keeps folded as a description. Fading extended moves lost ≈ 0.2% per trade, 59% stopped. The card's fade reference shows that base rate.
+
 ## Price chart
 
 Toolbar: layers `K 线` (candles) / `Delta` / `足迹` (footprint); timeframes `1m` `5m` `15m` (default) `1H` `4H`; overlay toggles `现货` (spot) `OI Δ` (default on) `强平` (liquidations, default on) `清算图` (liquidation map, default off) `OI` (default off); fullscreen. Settings are remembered in this browser.

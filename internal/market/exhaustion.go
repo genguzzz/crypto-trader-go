@@ -1,8 +1,10 @@
 package market
 
-// Exhaustion: how close a move is to topping out (or bottoming), as 0–100 scores from a checklist of
-// classic blow-off / capitulation signs. Same checklist and weights as the AI's `rev` tool
-// (ai/sandbox/tools/rev.py) so the app and the agent show the same number; not a validated model.
+// Exhaustion: a checklist of classic blow-off / capitulation signs as 0–100 scores, plus the validated
+// move-risk probabilities (moverisk.go). The checklist DESCRIBES a move; in a 2-year OKX OOS study
+// (claude-workspace/rev-study) neither it nor any other exhaustion feature predicted direction (AUC
+// 0.47–0.53) and fading extended moves lost ~0.2%/trade with a 59% stop rate, so it must not be read
+// as a reversal probability.
 //
 // Each item maps a reading onto 0…1 with a ramp and carries a weight; the score is the weighted share,
 // times a range gate: a top only counts near the top of the last 30 bars (and a bottom near the floor),
@@ -47,6 +49,9 @@ type Exhaustion struct {
 	// +20% within 24h 43% of the time vs 29% for all pumps; no fade-short plan is given then.
 	Squeeze    bool   `json:"squeeze,omitempty"`
 	SqueezeWhy string `json:"squeezeWhy,omitempty"`
+	// Risk: the validated part (moverisk.go) — continuation-tail and move-size probabilities on 1H.
+	// The checklist scores above describe the move; in 2 years of OOS tests they had no direction power.
+	Risk *MoveRisk `json:"risk,omitempty"`
 }
 
 // FadePlan is the reversal trade the scores point to (reference only).
@@ -372,5 +377,6 @@ func (e *Engine) Exhaustion(ctx context.Context, id, bar string) (Exhaustion, er
 	if !(p.Side == "short" && out.Squeeze) {
 		out.Plan = &p
 	}
+	out.Risk = e.MoveRisk(id)
 	return out, nil
 }

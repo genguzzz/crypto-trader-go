@@ -9,13 +9,13 @@ The research flow follows TradingAgents (TauricResearch, Apache-2.0) — analyst
 
 ## 1. Collect (one call first, then only what is missing)
 
-Start with **`ca brief <SYM>`**: one call, about 3 s, all in parallel — market (BTC/ETH, breadth, fear & greed), the 1H exhaustion score (`rev`), the full risk report (`ca analyze`: long/short danger, control, funding, OI, long/short ratios, order book, taker flow, technicals, supports/resistances, max leverage), realised liquidations with estimated clusters, and news/events as one-line digests with ids. It replaces six or seven separate calls; do not repeat its parts.
+Start with **`ca brief <SYM>`**: one call, about 3 s, all in parallel — market (BTC/ETH, breadth, fear & greed), the 1H move risk (`rev`: extended or not, continuation risk, move size, squeeze veto), the full risk report (`ca analyze`: long/short danger, control, funding, OI, long/short ratios, order book, taker flow, technicals, supports/resistances, max leverage), realised liquidations with estimated clusters, and news/events as one-line digests with ids. It replaces six or seven separate calls; do not repeat its parts.
 
 Then add only what the decision still needs, in one parallel round:
 
 | Gap | Call |
 |---|---|
-| An intraday turn | `rev <SYM> -b 15m` |
+| The checklist on another bar size | `rev <SYM> -b 15m` (description only) |
 | The detail behind a headline that matters | `ca news --read <id>` (the article's main text, ~1.8k chars) |
 | Funding or OI history, hourly flow | `ca funding <SYM>`, `ca oi <SYM>`, `ca flow <SYM> -b 1H` |
 | A level or ratio the plan needs (ATR, swing, relative strength) | raw series to a file, print only the result |
@@ -28,7 +28,7 @@ Write the strongest bull case and the strongest bear case, 2–4 points each. Ev
 
 ## 3. Decide
 
-Consider both setups: continuation with the move, and a reversal against an exhausted move (rev score ≥ 50 with the turn starting). The owner trades aggressively and prefers reversals (see his notes): when a credible exhaustion exists, lead with the fade; when it does not, say what would make one (e.g. a volume climax with short liquidations, then a wick) and give the continuation view.
+Consider both setups: continuation with the move, and a fade against an extended move. No exhaustion sign predicts direction (2-year OKX study, AUC ≈ 0.5) and fading extended moves lost ≈ 0.2% per trade with 59% stopped out, so a fade needs: P_tail clearly below its base (≈ 37%; never at ≥ 50%), no squeeze veto, and the turn already visible (wick, flow flip, close back inside the range). The owner likes reversals (his notes): when those conditions hold, give the fade with those base numbers; when they don't, say so and give the continuation or stand-aside view with what would change it. Size and stop width follow P_big3.
 
 Take the side with the stronger evidence. Do not stand aside just because both sides have points; stand aside only for a concrete reason (event within 24 h, no structural edge, reward/risk < 1.5), and give the plan that applies once the trigger hits.
 
