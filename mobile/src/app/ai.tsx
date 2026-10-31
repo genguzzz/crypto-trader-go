@@ -8,13 +8,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AI_MODELS, ai, clearContext, newChat, retry, send, setModel, setOpen, stop, textOf, useAi, type Msg, type ToolPart } from "@/lib/ai";
+import { AI_MODELS, ai, clearContext, newChat, retry, send, setModel, setOpen, stop, textOf, useAi, type Msg } from "@/lib/ai";
 import { copy, haptic } from "@/lib/device";
 import { useHoldToTalk, useTapToTalk } from "@/lib/voice";
 import { colors, fs } from "@/lib/theme";
 import { Screen, tap, toast, toastError } from "@/components/ui";
 import { AiBlock } from "@/components/ai/AiBlock";
-import { AiSteps } from "@/components/ai/AiSteps";
+import { AiSteps, type StepItem } from "@/components/ai/AiSteps";
 import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
 import { VoiceWave } from "@/components/ai/VoiceWave";
@@ -22,8 +22,8 @@ import { segments } from "@/components/ai/blocks";
 
 const ONE_CLICK = "一键分析当前合约：完整的多空分析、风险和交易计划";
 
-// consecutive tool calls form one step group
-type Group = { k: "text"; v: string } | { k: "tools"; items: ToolPart[] };
+// consecutive thinking and tool calls form one stage
+type Group = { k: "text"; v: string } | { k: "tools"; items: StepItem[] };
 function groups(m: Msg): Group[] {
   const out: Group[] = [];
   for (const p of m.parts) {
@@ -38,10 +38,11 @@ function groups(m: Msg): Group[] {
   return out;
 }
 
-function phaseOf(m: Msg, now: number): "thinking" | "typing" | "tool" | null {
+function phaseOf(m: Msg, now: number): "thinking" | "typing" | "tool" | "reasoning" | null {
   if (!m.live) return null;
   const p = m.parts[m.parts.length - 1];
   if (p?.t === "tool" && p.ok == null) return "tool";
+  if (p?.t === "think" && p.live) return "reasoning"; // the stage card streams it
   if (p?.t === "text" && now - ai.lastDelta < 1500) return "typing";
   return "thinking";
 }
@@ -322,7 +323,7 @@ function Answer({ m, now }: { m: Msg; now: number }) {
     <View style={{ marginTop: 8, marginBottom: 4 }}>
       {gs.map((g, gi) =>
         g.k === "tools" ? (
-          <AiSteps key={gi} items={g.items} live={live} />
+          <AiSteps key={gi} items={g.items} live={live} tail={gi === gs.length - 1} />
         ) : (
           <View key={gi}>
             {(() => {

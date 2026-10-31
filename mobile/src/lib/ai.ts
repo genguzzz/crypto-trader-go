@@ -15,7 +15,9 @@ import { track } from "./track";
 const log = logger("ai");
 
 export type ToolPart = { t: "tool"; id: string; name: string; label: string; input: string; ok: boolean | null; sub?: boolean; args?: string; output?: string };
-export type Part = { t: "text"; v: string } | ToolPart;
+/** The model's (summarized) reasoning; t0 = when it started streaming here, ms = its length once ended. */
+export type ThinkPart = { t: "think"; v: string; ms?: number; t0?: number; live?: boolean };
+export type Part = { t: "text"; v: string } | ThinkPart | ToolPart;
 export interface Msg { id?: number; role: "user" | "assistant"; parts: Part[]; error?: string; costUsd?: number; latencyMs?: number; live?: boolean }
 export interface ChatSummary { id: number; title: string; instId?: string; updated: number; costUsd: number; running: boolean }
 export interface Note { id: number; ts: number; text: string; by: "ai" | "owner" }
@@ -170,6 +172,29 @@ function apply(ev: any) {
     case "text_start":
       last().parts.push({ t: "text", v: "" });
       return emit();
+    case "think_start":
+      last().parts.push({ t: "think", v: "", t0: Date.now(), live: true });
+      return emit();
+    case "think": {
+      ai.lastDelta = Date.now();
+      const m = last();
+      const p = m.parts[m.parts.length - 1];
+      if (p && p.t === "think") p.v += ev.delta;
+      else m.parts.push({ t: "think", v: ev.delta, t0: Date.now(), live: true });
+      return emitSoon();
+    }
+    case "think_end": {
+      const m = last();
+      for (let i = m.parts.length - 1; i >= 0; i--) {
+        const p = m.parts[i];
+        if (p.t === "think" && p.live) {
+          p.live = false;
+          p.ms = ev.ms;
+          break;
+        }
+      }
+      return emit();
+    }
     case "tool": {
       const m = last();
       if (!m.parts.some((p) => p.t === "tool" && p.id === ev.id)) m.parts.push({ t: "tool", id: ev.id, name: ev.name, label: ev.label, input: "", ok: null, sub: ev.sub });
@@ -196,6 +221,7 @@ function apply(ev: any) {
       m.latencyMs = ev.latencyMs;
       m.parts.forEach((p) => {
         if (p.t === "tool" && p.ok == null) p.ok = true;
+        if (p.t === "think") p.live = false;
       });
       return emit();
     }
@@ -203,6 +229,9 @@ function apply(ev: any) {
       const m = last();
       m.live = false;
       m.error = ev.error;
+      m.parts.forEach((p) => {
+        if (p.t === "think") p.live = false;
+      });
       return emit();
     }
   }
@@ -381,7 +410,7 @@ export async function stop() {
 interface StoredMsg { id: number; role: "user" | "assistant"; content: string; steps: any[]; costUsd?: number; latencyMs?: number; error?: string }
 function fromStored(m: StoredMsg): Msg {
   const parts: Part[] =
-    Array.isArray(m.steps) && m.steps.length ? m.steps.map((s: any) => (s.t === "text" ? { t: "text", v: s.v } : { ...s, t: "tool" })) : m.content ? [{ t: "text", v: m.content }] : [];
+    Array.isArray(m.steps) && m.steps.length ? m.steps.map((s: any) => (s.t === "text" ? { t: "text", v: s.v } : s.t === "think" ? { t: "think", v: s.v, ms: s.ms } : { ...s, t: "tool" })) : m.content ? [{ t: "text", v: m.content }] : [];
   return { id: m.id, role: m.role, parts, error: m.error, costUsd: m.costUsd, latencyMs: m.latencyMs };
 }
 
