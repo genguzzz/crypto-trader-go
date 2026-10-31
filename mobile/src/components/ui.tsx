@@ -238,18 +238,27 @@ export function Row({ label, value, onPress, right }: { label: string; value?: s
 // ---------- bottom sheet ----------
 
 export function Sheet({ visible, onClose, title, children, scroll, footer }: { visible: boolean; onClose: () => void; title?: string; children?: ReactNode; scroll?: boolean; footer?: ReactNode }) {
+  // The native iOS page sheet (like the AI panel): swipe down to close (the content hands the drag to
+  // the sheet once it is scrolled to the top), rounded glass edge, the screen behind scales back.
+  // Content always scrolls, so tall details are never cut off; `scroll` is kept for callers.
+  void scroll;
   const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      {/* forms in sheets: the keyboard pushes the sheet up instead of covering its inputs */}
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-      <Pressable style={{ flex: 1, backgroundColor: colors.backdrop }} onPress={onClose} />
-      <View style={{ maxHeight: "86%", backgroundColor: colors.sheet, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: insets.bottom + 14, borderTopWidth: 1, borderColor: colors.borderStrong }}>
-        <View style={{ alignSelf: "center", width: 38, height: 5, borderRadius: 3, backgroundColor: colors.borderStrong, marginBottom: 12 }} />
-        {title ? <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text, marginBottom: 10 }}>{title}</Text> : null}
-        {scroll ? <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">{children}</ScrollView> : children}
-        {footer ? <View style={{ paddingTop: 10 }}>{footer}</View> : null}
-      </View>
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" allowSwipeDismissal onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, backgroundColor: colors.sheet }}>
+        <View style={{ paddingTop: 8, paddingHorizontal: 16, paddingBottom: 6 }}>
+          <View style={{ alignSelf: "center", width: 38, height: 5, borderRadius: 3, backgroundColor: colors.borderStrong, marginBottom: 10 }} />
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, minHeight: 32 }}>
+            <Text style={{ flex: 1, fontSize: 17, fontWeight: "700", color: colors.text }} numberOfLines={1}>{title ?? ""}</Text>
+            <Pressable hitSlop={10} accessibilityLabel="关闭" onPress={() => { tap(); onClose(); }} style={({ pressed }) => ({ width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.cardMuted, opacity: pressed ? 0.7 : 1 })}>
+              <Ionicons name="close" size={17} color={colors.textSoft} />
+            </Pressable>
+          </View>
+        </View>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: footer ? 12 : insets.bottom + 20 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
+          {children}
+        </ScrollView>
+        {footer ? <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: insets.bottom + 12, borderTopWidth: 1, borderColor: colors.border }}>{footer}</View> : null}
       </KeyboardAvoidingView>
     </Modal>
   );
