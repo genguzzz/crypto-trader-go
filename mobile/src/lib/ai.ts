@@ -559,17 +559,32 @@ export async function deleteChat(id: number) {
   emit();
 }
 
-/** Upload a recording (m4a on iOS) to Groq Whisper through the server. */
+/** Upload a recording (m4a on iOS) to Groq Whisper through the server. The global fetch is expo/fetch,
+ *  whose FormData rejects React Native's {uri, name, type} file parts ("Unsupported FormDataPart
+ *  implementation"), so on device the multipart body is built by hand from the file's bytes. */
 export async function transcribe(uri: string): Promise<string> {
-  const fd = new FormData();
+  let body: FormData | Uint8Array;
+  let headers: Record<string, string> = {};
   if (Platform.OS === "web") {
+    const fd = new FormData();
     const blob = await (await fetch(uri)).blob();
     fd.append("audio", blob, blob.type.includes("mp4") ? "voice.m4a" : "voice.webm");
+    body = fd;
   } else {
-    fd.append("audio", { uri, name: "voice.m4a", type: "audio/mp4" } as unknown as Blob);
+    const { File } = await import("expo-file-system");
+    const audio = await new File(uri).bytes();
+    const boundary = "ctg" + Math.random().toString(36).slice(2);
+    const enc = new TextEncoder();
+    const head = enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="audio"; filename="voice.m4a"\r\nContent-Type: audio/mp4\r\n\r\n`);
+    const tail = enc.encode(`\r\n--${boundary}--\r\n`);
+    body = new Uint8Array(head.length + audio.length + tail.length);
+    body.set(head);
+    body.set(audio, head.length);
+    body.set(tail, head.length + audio.length);
+    headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
   }
   const t0 = Date.now();
-  const r = await kfetch("/api/v1/ai/transcribe", { method: "POST", body: fd });
+  const r = await kfetch("/api/v1/ai/transcribe", { method: "POST", body: body as BodyInit, headers });
   if (!r.ok) throw await errorOf(r);
   const text = ((await r.json()) as { text?: string }).text || "";
   track("ai.transcribe", { ms: Date.now() - t0, len: text.length });

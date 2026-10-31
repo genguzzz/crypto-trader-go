@@ -17,6 +17,7 @@ import { AiBlock } from "@/components/ai/AiBlock";
 import { AiSteps } from "@/components/ai/AiSteps";
 import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
+import { VoiceWave } from "@/components/ai/VoiceWave";
 import { segments } from "@/components/ai/blocks";
 
 const ONE_CLICK = "一键分析当前合约：完整的多空分析、风险和交易计划";
@@ -166,7 +167,7 @@ export default function AiScreen() {
               </View>
               {hold.phase === "rec" || hold.phase === "busy" ? (
                 <View style={{ alignItems: "center", gap: 6, paddingVertical: 4 }}>
-                  {hold.phase === "rec" ? <Wave levels={hold.levels} height={30} danger={hold.cancelZone} /> : null}
+                  {hold.phase === "rec" ? <VoiceWave level={hold.level} height={34} danger={hold.cancelZone} /> : null}
                   <Text style={{ fontSize: fs.sm, color: hold.cancelZone ? "#ff8aa5" : colors.textSoft }}>{hold.phase === "busy" ? "识别中…" : hold.cancelZone ? "松开取消" : "松开发送 · 上滑取消"}</Text>
                 </View>
               ) : (
@@ -256,7 +257,7 @@ export default function AiScreen() {
           </View>
           {talk.phase === "rec" ? (
             <View style={{ alignItems: "center", marginTop: 6 }}>
-              <Wave levels={talk.levels} height={22} />
+              <VoiceWave level={talk.level} height={26} bars={33} barWidth={3} />
             </View>
           ) : null}
         </View>
@@ -290,16 +291,6 @@ function Spinner() {
     return () => l.stop();
   }, [a]);
   return <Animated.View style={{ width: 13, height: 13, borderRadius: 7, borderWidth: 2, borderColor: colors.borderStrong, borderTopColor: colors.primary, transform: [{ rotate: a.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] }) }] }} />;
-}
-
-function Wave({ levels, height, danger }: { levels: number[]; height: number; danger?: boolean }) {
-  return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 3, height: height + 4 }}>
-      {levels.map((v, i) => (
-        <View key={i} style={{ width: 3, height: 3 + v * height, borderRadius: 2, backgroundColor: danger ? colors.down : i % 2 ? "#2fe0ff" : colors.primary }} />
-      ))}
-    </View>
-  );
 }
 
 const UserBubble = memo(function UserBubble({ text }: { text: string }) {

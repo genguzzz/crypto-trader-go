@@ -40,6 +40,7 @@ async function audioOff() {
 export function useRecorder() {
   const [levels, setLevels] = useState<number[]>(() => Array(BARS).fill(0));
   const [level, setLevel] = useState(0);
+  const [secs, setSecs] = useState(0);
   const rec = useRef<Recorder | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAt = useRef(0);
@@ -50,6 +51,7 @@ export function useRecorder() {
     timer.current = null;
     lv.current = 0;
     setLevel(0);
+    setSecs(0);
     setLevels(Array(BARS).fill(0));
   }, []);
 
@@ -63,12 +65,15 @@ export function useRecorder() {
     rec.current = r;
     startedAt.current = Date.now();
     timer.current = setInterval(() => {
+      // metering is dBFS (≈ -160 silence … 0 clipping): gate room noise below -50, speech ≈ -35…-10,
+      // curved so normal talking fills most of the range; fast attack, slower release
       const db = r.getStatus().metering;
-      const x = db == null ? 0 : Math.max(0, Math.min(1, (db + 55) / 50));
-      lv.current = Math.min(1, lv.current * 0.5 + x * 0.5);
+      const x = db == null ? 0 : Math.pow(Math.max(0, Math.min(1, (db + 50) / 42)), 1.3);
+      lv.current = x > lv.current ? lv.current * 0.35 + x * 0.65 : lv.current * 0.82 + x * 0.18;
       setLevel(lv.current);
       setLevels((a) => [...a.slice(1), lv.current]);
-    }, 80);
+      setSecs(Math.floor((Date.now() - startedAt.current) / 1000));
+    }, 60);
   }, []);
 
   /** Stop and return the file (null when shorter than 0.5 s). */
@@ -101,7 +106,7 @@ export function useRecorder() {
   }, [cleanup]);
 
   useEffect(() => () => cancel(), [cancel]);
-  return { level, levels, start, stop, cancel };
+  return { level, levels, secs, start, stop, cancel };
 }
 
 async function toText(uri: string | null, onText: (t: string) => void, onError: (m: string) => void) {
@@ -151,7 +156,7 @@ export function useTapToTalk(opts: { onText: (text: string) => void; onError: (m
     if (phase !== "busy") setPhase("idle");
   };
 
-  return { phase, levels: rec.levels, toggle, cancel };
+  return { phase, levels: rec.levels, level: rec.level, secs: rec.secs, toggle, cancel };
 }
 
 const HOLD_MS = 260;
@@ -243,5 +248,5 @@ export function useHoldToTalk(opts: { onTap?: () => void; onText: (text: string)
     },
   };
 
-  return { phase, cancelZone, levels: rec.levels, level: rec.level, handlers };
+  return { phase, cancelZone, levels: rec.levels, level: rec.level, secs: rec.secs, handlers };
 }

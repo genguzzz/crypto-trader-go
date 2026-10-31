@@ -9,7 +9,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Orb } from "@/components/ai/Orb";
 import { toast } from "@/components/ui";
 import { send, setContext, useAiSelect } from "@/lib/ai";
-import { colors, fs } from "@/lib/theme";
+import { colors, fs, tnum } from "@/lib/theme";
+import { VoiceWave } from "@/components/ai/VoiceWave";
 import { useHoldToTalk } from "@/lib/voice";
 
 const SIZE = 54; // web .orb
@@ -33,7 +34,7 @@ export function FloatingOrb() {
       open(pathname);
       void send(t);
     },
-    onError: (msg) => toast(msg),
+    onError: (msg) => toast("语音没发出去", msg, undefined, true),
   });
   const rec = talk.phase === "rec";
   const busy = talk.phase === "busy";
@@ -76,14 +77,14 @@ export function FloatingOrb() {
     <>
       {rec || busy ? (
         <View pointerEvents="none" style={{ position: "absolute", left: 0, right: 0, bottom: capsuleBottom, alignItems: "center", zIndex: 40 }}>
-          <View style={{ minWidth: 210, paddingHorizontal: 20, paddingTop: 14, paddingBottom: 12, borderRadius: 22, alignItems: "center", gap: 8, backgroundColor: "rgba(16,18,14,0.94)", borderWidth: 1, borderColor: talk.cancelZone ? "rgba(202,63,100,0.55)" : "rgba(188,255,47,0.25)", shadowColor: talk.cancelZone ? "#ca3f64" : "#bcff2f", shadowOpacity: 0.18, shadowRadius: 24, shadowOffset: { width: 0, height: 6 } }}>
+          <View style={{ minWidth: 240, paddingHorizontal: 22, paddingTop: 12, paddingBottom: 12, borderRadius: 22, alignItems: "center", gap: 8, backgroundColor: "rgba(16,18,14,0.94)", borderWidth: 1, borderColor: talk.cancelZone ? "rgba(202,63,100,0.55)" : "rgba(188,255,47,0.25)", shadowColor: talk.cancelZone ? "#ca3f64" : "#bcff2f", shadowOpacity: 0.18, shadowRadius: 24, shadowOffset: { width: 0, height: 6 } }}>
             {rec ? (
               <>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 3, height: 36 }}>
-                  {talk.levels.map((v, i) => (
-                    <View key={i} style={{ width: 4, height: 4 + v * 30, borderRadius: 2, backgroundColor: talk.cancelZone ? colors.down : i % 2 ? "#2fe0ff" : colors.primary }} />
-                  ))}
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: talk.cancelZone ? colors.down : "#ff4d5e" }} />
+                  <Text style={[{ fontSize: fs.sm, color: colors.textSoft, minWidth: 30 }, tnum]}>{`${Math.floor(talk.secs / 60)}:${String(talk.secs % 60).padStart(2, "0")}`}</Text>
                 </View>
+                <VoiceWave level={talk.level} danger={talk.cancelZone} height={40} />
                 <Text style={{ fontSize: fs.sm, color: talk.cancelZone ? "#ff8aa5" : colors.textSoft }}>{talk.cancelZone ? "松开取消" : "松开发送 · 上滑取消"}</Text>
               </>
             ) : (
