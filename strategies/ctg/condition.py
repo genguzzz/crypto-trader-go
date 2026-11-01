@@ -105,7 +105,7 @@ class Condition:
     def meta(cls) -> dict:
         doc = (cls.__doc__ or "").strip().splitlines()
         desc = (cls.description or (doc[0] if doc else "")).strip()
-        return {"class": cls.__name__, "name": cls.name or cls.__name__, "description": desc[:120],
+        return {"class": cls.__name__, "name": cls.name or cls.__name__, "desc": desc[:120],
                 "instIds": [str(x) for x in cls.instruments], "timeframe": str(cls.timeframe),
                 "lookback": int(cls.lookback)}
 
@@ -267,7 +267,7 @@ def declaration_problems(cls: type[Condition]) -> list[str]:
         out.append(f"lookback 需为 {MIN_LOOKBACK}–{MAX_LOOKBACK} 的整数")
     if cls.check is Condition.check:
         out.append("没有实现 check(self, ctx, bars)")
-    if len(cls.meta()["description"]) == 0:
+    if len(cls.meta()["desc"]) == 0:
         out.append("写一行说明：类的 docstring 或 description，如 \"AAVE 15m RSI 跌破 30\"")
     return out
 

@@ -59,7 +59,7 @@ class ConditionClassTest(unittest.TestCase):
     def test_meta_and_check(self):
         cls = load(RSI)
         self.assertTrue(issubclass(cls, Condition))
-        self.assertEqual(cls.meta(), {"class": "AaveRsi", "name": "AaveRsi", "description": "AAVE 15m RSI 跌破 30",
+        self.assertEqual(cls.meta(), {"class": "AaveRsi", "name": "AaveRsi", "desc": "AAVE 15m RSI 跌破 30",
                                       "instIds": [AAVE], "timeframe": "15m", "lookback": 50})
         res = check_source(RSI)
         self.assertTrue(res["ok"])
