@@ -69,8 +69,6 @@ export default function RootLayout() {
             <Stack.Screen name="settings" options={{ presentation: "modal" }} />
             {/* the AI chat is a native sheet over any screen, opened from the floating orb */}
             <Stack.Screen name="ai" options={{ presentation: "formSheet", sheetAllowedDetents: [0.6, 1], sheetInitialDetentIndex: "last", sheetGrabberVisible: true, sheetCornerRadius: 22, sheetExpandsWhenScrolledToEdge: false }} />
-            <Stack.Screen name="ai-history" options={{ presentation: "modal" }} />
-            <Stack.Screen name="ai-notes" options={{ presentation: "modal" }} />
             <Stack.Screen name="chart/[id]" options={{ presentation: "fullScreenModal", animation: "fade", orientation: "landscape", gestureEnabled: false }} />
           </Stack>
         ) : (

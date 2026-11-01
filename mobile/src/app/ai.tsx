@@ -3,7 +3,7 @@
 // (pushed screens); one-click analysis of the instrument opened from its page; tap-to-talk mic in
 // the composer and hold-to-talk on the orb. State and the connection live in lib/ai.ts.
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View, type ScrollViewInstance, type TextInputInstance } from "react-native";
+import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View, type ScrollViewInstance, type TextInputInstance } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -17,6 +17,7 @@ import { AiBlock } from "@/components/ai/AiBlock";
 import { AiSteps, type StepItem } from "@/components/ai/AiSteps";
 import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
+import { HistoryPane, NotesPane } from "@/components/ai/AiPanes";
 import { VoiceWave } from "@/components/ai/VoiceWave";
 import { segments } from "@/components/ai/blocks";
 
@@ -50,10 +51,23 @@ function phaseOf(m: Msg, now: number): "thinking" | "typing" | "tool" | "reasoni
 const flash = (m: string) => toast(m, undefined, undefined, true);
 
 export default function AiScreen() {
+  const { width } = useWindowDimensions();
   const s = useAi();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [input, setInput] = useState("");
+  // history / memory slide over the chat inside this sheet (a modal pushed from the sheet took no touches)
+  const [pane, setPane] = useState<"history" | "notes" | null>(null);
+  const [slide] = useState(() => new Animated.Value(0));
+  const showPane = (p: "history" | "notes" | null) => {
+    if (p) {
+      setPane(p);
+      slide.setValue(0);
+      Animated.spring(slide, { toValue: 1, useNativeDriver: true, damping: 22, stiffness: 240 }).start();
+    } else {
+      Animated.timing(slide, { toValue: 0, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => setPane(null));
+    }
+  };
   const [kb, setKb] = useState(false);
   const scroller = useRef<ScrollViewInstance>(null);
   const inputRef = useRef<TextInputInstance>(null);
@@ -146,8 +160,8 @@ export default function AiScreen() {
             <Ionicons name="swap-horizontal" size={11} color={colors.textFaint} />
           </Pressable>
         </View>
-        <HeadButton icon="bulb-outline" label="偏好与记忆" onPress={() => router.push("/ai-notes")} />
-        <HeadButton icon="time-outline" label="历史对话" onPress={() => router.push("/ai-history")} />
+        <HeadButton icon="bulb-outline" label="偏好与记忆" onPress={() => showPane("notes")} />
+        <HeadButton icon="time-outline" label="历史对话" onPress={() => showPane("history")} />
         <HeadButton icon="create-outline" label="新对话" onPress={fresh} />
       </View>
       </GestureDetector>
@@ -271,6 +285,12 @@ export default function AiScreen() {
         </View>
       </KeyboardAvoidingView>
     </Screen>
+      {pane ? (
+        <Animated.View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 10, backgroundColor: colors.bg,
+          transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [width, 0] }) }] }}>
+          {pane === "history" ? <HistoryPane onClose={() => showPane(null)} /> : <NotesPane onClose={() => showPane(null)} />}
+        </Animated.View>
+      ) : null}
     </GestureHandlerRootView>
   );
 }
