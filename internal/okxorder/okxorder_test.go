@@ -223,3 +223,18 @@ func TestLeverageRange(t *testing.T) {
 		t.Fatalf("a floor above the cap is ignored: %+v", l)
 	}
 }
+
+func TestMarginRange(t *testing.T) {
+	lim := Limits{MinMarginUSDT: 50, MaxMarginUSDT: 200, MaxLeverage: 8}
+	for m, ok := range map[float64]bool{40: false, 50: true, 120: true, 200: true, 201: false} {
+		in := intent()
+		in.MarginUSDT = m
+		_, err := Build(in, btc, 100000, LongShortMode, lim)
+		if (err == nil) != ok {
+			t.Errorf("%g U: %v", m, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "50–200 USDT") {
+			t.Errorf("%g U: message %v", m, err)
+		}
+	}
+}

@@ -51,6 +51,7 @@ type Spec struct {
 type Limits struct {
 	MinLeverage   int     `json:"minLeverage"` // the owner's floor (0 = 1×)
 	MaxLeverage   int     `json:"maxLeverage"`
+	MinMarginUSDT float64 `json:"minMarginUsdt"` // the owner's floor per trade (0 = none)
 	MaxMarginUSDT float64 `json:"maxMarginUsdt"` // isolated margin per trade
 	MinStopPct    float64 `json:"minStopPct"`    // stop distance from the mark, % (noise floor)
 	MaxStopPct    float64 `json:"maxStopPct"`
@@ -71,6 +72,9 @@ func (l Limits) WithDefaults() Limits {
 	}
 	if l.MaxMarginUSDT <= 0 {
 		l.MaxMarginUSDT = d.MaxMarginUSDT
+	}
+	if l.MinMarginUSDT < 0 || l.MinMarginUSDT > l.MaxMarginUSDT {
+		l.MinMarginUSDT = 0
 	}
 	if l.MinStopPct <= 0 {
 		l.MinStopPct = d.MinStopPct
@@ -135,7 +139,10 @@ func Check(in Intent, mark float64, lim Limits) (Sizing, error) {
 	if in.Leverage < max(lim.MinLeverage, 1) || in.Leverage > lim.MaxLeverage {
 		return z, fmt.Errorf("leverage must be %d–%d×", max(lim.MinLeverage, 1), lim.MaxLeverage)
 	}
-	if !(in.MarginUSDT > 0) || in.MarginUSDT > lim.MaxMarginUSDT {
+	if !(in.MarginUSDT > 0) || in.MarginUSDT < lim.MinMarginUSDT || in.MarginUSDT > lim.MaxMarginUSDT {
+		if lim.MinMarginUSDT > 0 {
+			return z, fmt.Errorf("margin must be %g–%g USDT", lim.MinMarginUSDT, lim.MaxMarginUSDT)
+		}
 		return z, fmt.Errorf("margin must be above 0 and at most %g USDT", lim.MaxMarginUSDT)
 	}
 	if !(mark > 0) || math.IsInf(mark, 0) {

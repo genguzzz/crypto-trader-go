@@ -49,6 +49,7 @@ func LimitsFromEnv() Limits {
 	}
 	i("CTG_TRADE_MIN_LEVERAGE", &l.MinLeverage)
 	i("CTG_TRADE_MAX_LEVERAGE", &l.MaxLeverage)
+	f("CTG_TRADE_MIN_MARGIN", &l.MinMarginUSDT)
 	f("CTG_TRADE_MAX_MARGIN", &l.MaxMarginUSDT)
 	f("CTG_TRADE_MIN_RR", &l.MinRR)
 	i("CTG_TRADE_MAX_OPEN", &l.MaxOpen)
