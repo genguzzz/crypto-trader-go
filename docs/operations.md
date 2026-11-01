@@ -76,8 +76,14 @@ Parallel development in several worktrees (separate ports and database copies) i
 | `-web` | true | false serves the API only |
 | `CTG_PROXY` / `-doh` | — / off | networks without direct OKX access: outbound HTTP proxy (credentials allowed), DNS-over-HTTPS |
 | `CTG_RUN_DIR` | `data/run` (`/data/run` in compose) | Unix sockets `strategy.sock` / `ai.sock` shared with the sidecars |
-| `CTG_ADMIN_KEY` | — | owner key required (header `X-CTG-Admin`) for writes under `/api/v1/trade|interact|ai`; unset = only direct loopback requests may write. Lives in `ctg.env` |
-| `OKX_API_KEY` / `OKX_API_SECRET` / `OKX_API_PASSPHRASE` / `OKX_PRIVATE_PROXY` | — | the owner's **read-only** OKX API key and the HTTP or SOCKS5 proxy its IP is bound to: open swap positions with TP/SL on the K-line, in the app and for the chat agent (`get_positions`), `GET /api/v1/account/positions` (owner key required even for reads). Signed GETs only, always through the proxy; any variable missing = disabled, never a direct connection. Lives in `ctg.env` |
+| `CTG_ADMIN_KEY` | — | owner key required (header `X-CTG-Admin`) for writes under `/api/v1/trade|interact|ai` and for any request under `/api/v1/account/` and `/api/v1/realtrade/`; unset = only direct loopback requests may pass. Lives in `ctg.env` |
+| `OKX_API_KEY` / `OKX_API_SECRET` / `OKX_API_PASSPHRASE` / `OKX_PRIVATE_PROXY` | — | the owner's OKX API key and the HTTP or SOCKS5 proxy its IP is bound to: open swap positions with TP/SL on the K-line, in the app and for the chat agent (`get_positions`), `GET /api/v1/account/positions` (owner key required even for reads). `internal/okxacct` sends signed GETs only; the same key signs approved trade proposals in live mode (needs trade permission on the key). Always through the proxy; any variable missing = disabled, never a direct connection. Lives in `ctg.env` |
+| `CTG_TRADE_MODE` | dryrun | `live` (exactly) sends approved trade proposals to OKX; anything else builds, validates and records them only ([trading design §7](trading-design.md#7-real-trades-via-approved-proposals-2026-11-01)). Live without the OKX variables above fails at start. Lives in `ctg.env` |
+| `CTG_TRADE_TG_TOKEN` / `CTG_TRADE_TG_CHAT` | — | the dedicated Telegram trade bot and the owner's user id (only he can approve); either missing = no trade bot (web / app approval only). Lives in `ctg.env` |
+| `CTG_TRADE_MAX_LEVERAGE` / `CTG_TRADE_MAX_MARGIN` / `CTG_TRADE_MIN_RR` | 5 / 50 / 1 | per-trade caps: isolated leverage, margin in USDT, reward:risk |
+| `CTG_TRADE_MAX_OPEN` / `CTG_TRADE_DAILY_LOSS` / `CTG_TRADE_MAX_DRIFT_PCT` / `CTG_TRADE_EXPIRY_MIN` | 2 / 50 / 1 / 15 | AI positions open at once, daily (UTC+8) realised loss in USDT that stops new trades, price move % allowed between proposal and approval, minutes to approve |
+| `CTG_TRADE_MAX_RUNS_DAY` | 12 | signal / schedule agent runs per 24 h (triggers are off until enabled on the proposals panel) |
+| `CTG_PUBLIC_URL` | `https://ctg.gugenzzz.top` | origin of the trade bot's 🔍 查看 links |
 | `CTG_SECRET_KEY` | — | at-rest key for the AI credential (else stored plain, noted on the AI page). Lives in `ctg.env` |
 | `GOMEMLIMIT` | 1536MiB in compose | resident heap is ~180 MB (with the full perpetual catalog and caches); container `mem_limit: 2g`. The limit must stay above the resident heap or the GC spins: 180MiB once caused ~20 GCs per second and 1.4 cores of constant CPU |
 
@@ -92,7 +98,7 @@ Paper trading adds two containers next to `ctg` (see [trading design](trading-de
 | `ctg-strategy` | `strategies/Dockerfile` (python + numpy) | none | supervisor + one process per strategy instance; `strategies/` is bind-mounted read-only, so a new strategy file only needs `POST /api/v1/trade/strategies/reload` |
 | `ctg-ai` | `ai/Dockerfile` (python + Claude Agent SDK) | host | AI review worker; `CTG_AI_PROXY=http://127.0.0.1:10809` (the host's residential-exit llm-proxy) is mandatory and the worker never connects directly. The proxy is a local HTTP inbound on the server routed to the owner's Claude exit (set up outside this repo) |
 
-`deploy/deploy.sh` uploads `strategies/` and `ai/` with the compose file and rebuilds an image only when its Dockerfile or requirements change. Telegram (dedicated bot, owner allowlist) and the AI credential are configured in Settings, not in env.
+`deploy/deploy.sh` uploads `strategies/` and `ai/` with the compose file and rebuilds an image only when its Dockerfile or requirements change. The paper-trading Telegram bot (owner allowlist) and the AI credential are configured in Settings, not in env; the real-trade bot is env only (`CTG_TRADE_TG_*`).
 
 ## Troubleshooting
 

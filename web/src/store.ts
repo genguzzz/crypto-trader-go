@@ -24,6 +24,7 @@ export const store = reactive({
   tradeAccount: 0, // account id of the latest trade event (0 = unknown / all)
   interactSeq: 0,
   openPrompts: 0, // open confirmation prompts (navigation badge)
+  realtradeSeq: 0, // bumped by SSE `realtrade`: an AI trade proposal changed (composables/realtrade.ts refetches)
 })
 
 export function setRule(id: string) {
@@ -87,6 +88,7 @@ export function startStream() {
     store.tradeSeq++
   })
   es.addEventListener('interact', () => { store.interactSeq++; refreshPrompts() })
+  es.addEventListener('realtrade', () => { store.realtradeSeq++ })
   es.onerror = () => { store.connected = false }
   refreshPrompts()
   setInterval(() => { if (!document.hidden) refreshPrompts() }, 30_000)

@@ -27,6 +27,9 @@ func TestAdminGate(t *testing.T) {
 		{"account read wrong key", "k", "GET", "/api/v1/account/positions", "x", "1.2.3.4:5", "", 401},
 		{"account read right key", "k", "GET", "/api/v1/account/positions", "k", "1.2.3.4:5", "", 204},
 		{"account read no key loopback", "", "GET", "/api/v1/account/positions", "", "127.0.0.1:9", "", 204},
+		{"proposals read needs key", "k", "GET", "/api/v1/realtrade/proposals", "", "1.2.3.4:5", "", 401},
+		{"proposal approve needs key", "k", "POST", "/api/v1/realtrade/proposals/1/approve", "", "1.2.3.4:5", "", 401},
+		{"proposal approve right key", "k", "POST", "/api/v1/realtrade/proposals/1/approve", "k", "1.2.3.4:5", "", 204},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest(c.method, c.path, nil)

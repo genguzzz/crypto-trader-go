@@ -117,9 +117,18 @@ type Service struct {
 	now    func() time.Time
 	eps    []*Endpoint // set by Mount
 
-	positions  func(ctx context.Context, instID string) (any, error)          // the owner's OKX positions (optional)
-	okxRead    func(ctx context.Context, path, query string) (any, error)     // generic read of his OKX account (optional)
-	okxHistory func(ctx context.Context, args map[string]string) (any, error) // paged + totalled history (optional)
+	positions  func(ctx context.Context, instID string) (any, error)                      // the owner's OKX positions (optional)
+	okxRead    func(ctx context.Context, path, query string) (any, error)                 // generic read of his OKX account (optional)
+	okxHistory func(ctx context.Context, args map[string]string) (any, error)             // paged + totalled history (optional)
+	propose    func(ctx context.Context, chat int64, args map[string]string) (any, error) // trade proposal for the owner's approval (optional)
+	proposals  func(ctx context.Context, args map[string]string) (any, error)             // the proposals and where they stand (optional)
+}
+
+// SetTradeProposals enables the owner-only propose_trade and get_trade_proposals tools (call before Mount).
+// propose creates a pending proposal that only the owner can approve; nothing here can execute one.
+func (s *Service) SetTradeProposals(propose func(ctx context.Context, chat int64, args map[string]string) (any, error),
+	list func(ctx context.Context, args map[string]string) (any, error)) {
+	s.propose, s.proposals = propose, list
 }
 
 // SetOKXRead enables the owner-only okx_api tool: one GET of an allowed private OKX endpoint.
@@ -414,6 +423,9 @@ type Caller struct {
 	Burst      int    `json:"burst"`
 	ExpiresAt  int64  `json:"expiresAt"`
 	Owner      bool   `json:"-"`
+	// Chat is the owner agent's conversation (MCP header X-Ctg-Chat; owner keys only), so a proposal
+	// made by the agent is linked to the chat that made it.
+	Chat int64 `json:"-"`
 }
 
 // Quota describes the bucket after a request, for X-RateLimit-* headers and 429 bodies.

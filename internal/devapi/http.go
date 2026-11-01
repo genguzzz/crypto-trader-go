@@ -331,6 +331,9 @@ func (s *Service) mcp(w http.ResponseWriter, r *http.Request) {
 	// authenticate once per HTTP request (protocol messages are free; tool calls pay per call)
 	c, quota, den := s.Authorize(r, 0)
 	setQuota(w, quota, 0)
+	if den == nil && c.Owner {
+		c.Chat, _ = strconv.ParseInt(r.Header.Get("X-Ctg-Chat"), 10, 64)
+	}
 	if den != nil {
 		if den.Status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="okx-helper"`)
@@ -405,7 +408,7 @@ func (s *Service) mcpOne(w http.ResponseWriter, r *http.Request, c *Caller, q rp
 			tools = append(tools, map[string]any{
 				"name": ep.Name, "title": ep.Summary, "description": ep.Summary + ". " + ep.Desc + " Rate-limit cost: " + cost + ".",
 				"inputSchema": map[string]any{"type": "object", "properties": props, "required": req, "additionalProperties": false},
-				"annotations": map[string]any{"title": ep.Summary, "readOnlyHint": true, "openWorldHint": false},
+				"annotations": map[string]any{"title": ep.Summary, "readOnlyHint": !ep.write, "openWorldHint": false},
 			})
 		}
 		resp.Result = map[string]any{"tools": tools}

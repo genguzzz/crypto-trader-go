@@ -157,6 +157,8 @@ type ChatInput struct {
 	// Retry re-runs the chat's last question (after an error or an interrupted turn) instead of
 	// adding a new one; Message is ignored.
 	Retry bool `json:"retry"`
+	// Title names a new chat instead of its first words (server-started runs: "信号 · …").
+	Title string `json:"-"`
 }
 
 // ChatModels the app may pick per turn.
@@ -198,6 +200,9 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		title := []rune(in.Message)
 		if len(title) > 40 {
 			title = append(title[:40], '…')
+		}
+		if in.Title != "" {
+			title = []rune(in.Title)
 		}
 		res, err := g.st.DB.Exec(`INSERT INTO ai_chats(created, updated, title, inst_id) VALUES(?,?,?,?)`, now, now, string(title), in.InstID)
 		if err != nil {

@@ -2,7 +2,7 @@
 
 Implements [#3](https://github.com/genguzzz/crypto-trader-go/issues/3). Owner-approved proposal (Chinese): Claude Docs artifact "crypto-trader-go 策略与模拟盘重构方案" (2026-10-02). Shared Go types: `internal/trade/contract.go`.
 
-Scope of this release: strategy SDK + runtime, order layer with a simulated broker, live paper accounts and backtest accounts, a two-way interaction layer (Telegram first), an optional AI review layer, and the web UI. **No real orders, no OKX account access**: `ModeReal` is rejected.
+Scope of this release: strategy SDK + runtime, order layer with a simulated broker, live paper accounts and backtest accounts, a two-way interaction layer (Telegram first), an optional AI review layer, and the web UI. **No real orders, no OKX account access**: `ModeReal` is rejected. Real orders exist only as AI trade proposals the owner approves (§7, approved 2026-11-01); paper trading is unaffected.
 
 ## 1. Layers and packages
 
@@ -128,3 +128,27 @@ The worker uses `claude_agent_sdk.query` with no built-in tools (`tools=[]`, no 
 ## 6. Deployment (ctg-prod)
 
 `/opt/ctg/docker-compose.yml` adds two services built from `strategies/Dockerfile` and `ai/Dockerfile` (`python:3.12-slim`), sharing a `run` volume for the sockets with `ctg`. `ctg-strategy`: `network_mode: none`, read-only rootfs, `mem_limit: 768m`, strategies dir bind-mounted read-only. `ctg-ai`: `network_mode: host` (Anthropic API only through `CTG_AI_PROXY`, a tunnel on the host loopback), `mem_limit: 512m`. `deploy/deploy.sh` uploads `strategies/` and `ai/` and runs `docker compose build` only when their content hash changed.
+
+## 7. Real trades via approved proposals (2026-11-01)
+
+The owner approved real orders on his OKX account under one rule: the agent proposes, the owner approves every trade, and only one order shape exists. Dry run until he sets `CTG_TRADE_MODE=live`.
+
+| Piece | Owns |
+|---|---|
+| `internal/okxorder` | the only order code: set isolated leverage (`POST /api/v5/account/set-leverage`, `mgnMode=isolated`, `posSide` in long/short mode) then one market open (`POST /api/v5/trade/order`: `SWAP`, `tdMode=isolated`, `ordType=market`, `sz` in contracts, `attachAlgoOrds` with both `tpTriggerPx` and `slTriggerPx`, `tpOrdPx`/`slOrdPx` = −1, trigger type `last`, `clOrdId=ctgp<id>`). `Order` has unexported fields and only `Build` makes one (validation: SL on the losing side of the price and TP on the winning side, stop 0.3–10%, target ≤ 40%, reward:risk ≥ `MinRR`, leverage ≤ cap and the contract's max, stop inside ~80% of the isolated liquidation distance, margin ≤ cap, size ≥ `minSz` after rounding down to `lotSz`). The dry-run client has no fields and no HTTP client; the live client signs through `okxacct.Config` (same key, same `OKX_PRIVATE_PROXY` transport) and can POST only those two paths. No limit, cancel, amend, close, transfer or withdrawal code exists |
+| `internal/realtrade` | proposals (`trade_proposals` + `trade_proposal_events` audit trail), approval, re-validation, execution, close detection, triggers (`trade_trigger_runs`), the Telegram trade bot (`trade_tg_msgs`), REST `/api/v1/realtrade/*` |
+| `internal/devapi` | owner-only MCP tools `propose_trade` (creates a pending proposal; returns `proposalId`) and `get_trade_proposals`; the agent's MCP header `X-Ctg-Chat` links a proposal to its chat (owner key only) |
+| `ai/` | `chat_v2.md` `<real_trades>`: market + TP/SL + isolated only, sizing within the caps, rationale and invalidation, never claim a trade was made |
+
+Lifecycle: `pending → approved → executing → executed (dryrun | live) → closed (tp | sl | other)`; `executing → failed` (OKX or network error, request and response kept); `approved/executing → invalidated` (re-validation failed, nothing sent); `pending → rejected | expired`. Every transition is a conditional `UPDATE … WHERE status IN (…)`, so the first answer from any channel wins and later ones get 409 / "已结束" with the final state. Expiry (default 15 min, 3–60) never approves. A restart invalidates `approved` and fails `executing` proposals (never retried: the owner checks OKX).
+
+Checks at creation and again at approval: a fresh last price (≤ 90 s), drift since the proposal ≤ `maxDriftPct`, the order rules above (re-sized at the live price), no other open proposal or AI position in the instrument, no position of the owner's in it (OKX snapshot), at most `maxOpen` AI positions open or executing, today's (UTC+8) realised P&L of AI positions above −`dailyLossUsdt`, and at creation at most `maxPending` waiting proposals. Position mode comes from `GET /api/v5/account/config` (cached 10 min; dry run without an account assumes long/short mode).
+
+Close detection (every 20 s): dry run — the last price crossing SL or TP closes the record with an estimated P&L before fees; live — the position gone from the account snapshot, P&L and close price from `/api/v5/account/positions-history` (TP or SL by the nearer level; liquidation / ADL = other).
+
+Sources: `chat` (the owner's conversation), `signal` (an event trigger) and `schedule` (a time trigger). A trigger (`TriggerDef`: id, kind, label, enabled, `everyMin`, `ruleIds`, `cooldownMin`, prompt template with `{{time}}`, `{{instId}}`, `{{rule}}`, `{{message}}`, `{{value}}`) starts a headless agent run through `aigate.StartChat` titled "信号 · <label>", so it is an ordinary chat with all its steps in the history; a `propose_trade` call from it carries the trigger as source. Built in, disabled by default: `scan` (every 240 min) and `alerts` (any alert rule, or `ruleIds`; fed by `alerts.SetOnFired` → `Service.Publish`). Each trigger has a cooldown (default 60 min) and all together at most `CTG_TRADE_MAX_RUNS_DAY` runs per 24 h (default 12). A new trigger type is one `Kind` (`Due` for time, `Match` for events) plus a default entry.
+
+Approval channels (all update on every change; SSE event `realtrade`):
+- Telegram trade bot (`CTG_TRADE_TG_TOKEN`, `CTG_TRADE_TG_CHAT` = the owner's user id; separate from the paper-trading bot): one card per proposal (coin, side, leverage, margin and contracts, reference entry, SL/TP with % and reward:risk, rationale, invalidation, source, expiry, `[DRY RUN]`/`[实盘]`), buttons ✅ 同意 (asks ✅ 确认同意 / ↩️ 返回 first) and ❌ 拒绝 plus a 🔍 查看 link to `<CTG_PUBLIC_URL>/instrument/<instId>?proposal=<id>`. The card is edited as the proposal moves on and every event (approved, rejected, expired, invalidated, executed, failed, closed) is also pushed as a short message. Only callbacks from that user id count. Unset = disabled.
+- Web and app: a proposal card under the `propose_trade` step in the chat (also in signal chats), the pending list with a badge on the AI orb, and the K-line with entry, SL and TP drawn (`?proposal=<id>`; the app's embed chart takes the same parameter). Approving needs an explicit confirm step.
+- REST (owner key required for every method): `GET realtrade/proposals?status=pending|open|all&chatId&limit` · `GET realtrade/proposals/{id}` (with `events`) · `POST realtrade/proposals/{id}/approve` {confirm: true, via} → final state, 409 {error, proposal} when no longer pending · `POST realtrade/proposals/{id}/reject` {via} · `GET realtrade/config` (mode, limits, bot status, triggers, account) · `PUT realtrade/triggers`. No API, agent or UI path changes the mode or the caps.

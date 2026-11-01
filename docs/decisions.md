@@ -4,7 +4,8 @@ The principles and measured facts that the implementation relies on. Earlier pla
 
 ## Principles
 
-- **Research tool, not a trading bot.** Public OKX market data only; no real orders without a separate explicitly approved project. Simulated paper trading on recorded and live public data was approved on 2026-10-02 ([trading design](trading-design.md)). Account access, if added, is read-only and needs the owner's approval.
+- **Research tool, not a trading bot.** Public OKX market data; simulated paper trading on recorded and live public data was approved on 2026-10-02 ([trading design](trading-design.md)). Account reads need the owner's approval (positions and read-only history approved 2026-11-01).
+- **Real orders only through approved proposals (2026-11-01).** The owner opened trading on his key: the agent (in a chat, or a signal / schedule trigger's headless run recorded as a chat) may only *propose*; every trade needs his explicit approval from Telegram, the web or the app, first answer wins, expiry never approves. One order shape: a market open in isolated margin with both TP and SL attached, within server-side caps (leverage, margin, reward:risk, open positions, daily loss). Every trade event is pushed through a dedicated Telegram trade bot. Dry run (build, validate, record, never send) until he sets `CTG_TRADE_MODE=live`; no API, agent or UI path can switch it ([trading design §7](trading-design.md#7-real-trades-via-approved-proposals-2026-11-01)).
 - **Facts, rules, track record.** The fact panel is direction-free. A score is a user-defined rule's rank within the pool — not a probability or advice — and only the out-of-sample track record can show a rule is useful. Every rule is labeled "unvalidated" until it earns that.
 - **Long and short are independent.** They are not complements of 100, and a weak long score is not a short signal.
 - **Unknown is not zero.** Missing inputs leave a score unrated; missing data shows "—" or `unknown`, never 0 or "safe".
@@ -43,4 +44,4 @@ Reproducible with the probes in [`research/poc/`](../research/poc/README.md).
 | I0–I3 | recorder, per-minute pool, fact panel, rules and track record, web UI | live |
 | I0 exit | 72h continuous run, ≥ 99.9% minute coverage, 0 unrepaired gaps | open (see roadmap) |
 | I4 | read-only positions and exit assessment, news/unlock/on-chain sources | positions approved 2026-11-01 (owner's read-only key, IP-bound proxy; `internal/okxacct`); the rest needs approval |
-| Trading | automated orders | out of scope |
+| Trading | real orders as owner-approved proposals (market + TP/SL, isolated) | approved 2026-11-01; dry run until `CTG_TRADE_MODE=live` |

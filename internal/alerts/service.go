@@ -79,7 +79,12 @@ type Service struct {
 	ch   ChannelConfig
 
 	queue chan job
+
+	onFired func([]store.AlertEvent) // optional observer (signal triggers); must not block
 }
+
+// SetOnFired registers an observer of every recorded alert (call before the engine runs).
+func (s *Service) SetOnFired(f func([]store.AlertEvent)) { s.onFired = f }
 
 // New loads rules, channel config and recent fire times. client is used for deliveries.
 func New(st *store.Store, env Env, client *http.Client) (*Service, error) {
@@ -365,6 +370,9 @@ func (s *Service) OnSnapshot(snap *market.Snapshot) {
 			log.Printf("alerts: record: %v", err)
 		}
 		evs[i].ID = id
+	}
+	if s.onFired != nil {
+		s.onFired(evs)
 	}
 	select {
 	case s.queue <- job{events: evs, chans: chans}:

@@ -324,6 +324,63 @@ func TestOwnerEndpoint(t *testing.T) {
 	}
 }
 
+// propose_trade is owner-only, linked to the agent's chat (X-Ctg-Chat, honoured for owner keys only),
+// validates numbers and is not marked read-only.
+func TestProposeTradeTool(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.DB.Close() })
+	s, err := New(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	var gotChat int64
+	var gotArgs map[string]string
+	s.SetTradeProposals(func(_ context.Context, chat int64, a map[string]string) (any, error) {
+		calls++
+		gotChat, gotArgs = chat, a
+		return map[string]any{"proposalId": 5, "status": "pending"}, nil
+	}, func(context.Context, map[string]string) (any, error) { return []any{}, nil })
+	mux := http.NewServeMux()
+	s.Mount(mux, nil, nil)
+	ext, _ := s.Create(CreateInput{Name: "ext", RatePerMin: 60, Burst: 10})
+	args := `{"instId":"BTC-USDT-SWAP","side":"long","marginUsdt":20,"leverage":3,"sl":98000.5,"tp":104000,"rationale":"r","invalidation":"i"}`
+	call := func(key, a string) string {
+		r := httptest.NewRequest("POST", MCPPath, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"propose_trade","arguments":`+a+`}}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+key)
+		r.Header.Set("X-Ctg-Chat", "12")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w.Body.String()
+	}
+	for _, key := range []string{ext.Secret, s.InternalKey("sandbox", 60, 10)} {
+		if out := call(key, args); !strings.Contains(out, "unknown tool") {
+			t.Fatalf("propose_trade served to a non-owner key: %s", out)
+		}
+		if strings.Contains(mcpPost(mux, key, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`).Body.String(), "propose_trade") {
+			t.Fatal("propose_trade listed to a non-owner key")
+		}
+	}
+	if calls != 0 {
+		t.Fatal("non-owner reached the proposal service")
+	}
+	owner := s.OwnerKey("ai-agent", 60, 10)
+	list := mcpPost(mux, owner, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`).Body.String()
+	if !strings.Contains(list, `"name":"propose_trade"`) || !strings.Contains(list, `"readOnlyHint":false`) {
+		t.Fatalf("owner tools: %s", list)
+	}
+	if out := call(owner, args); !strings.Contains(out, `proposalId`) || gotChat != 12 || gotArgs["sl"] != "98000.5" || gotArgs["expiresMin"] != "15" {
+		t.Fatalf("owner call: %d %v %s", gotChat, gotArgs, out)
+	}
+	if out := call(owner, strings.Replace(args, `"sl":98000.5`, `"sl":"abc"`, 1)); !strings.Contains(out, "must be a number") || calls != 1 {
+		t.Fatalf("bad number: %s", out)
+	}
+}
+
 func TestOpenAPI(t *testing.T) {
 	_, mux, _ := newTestService(t)
 	w := get(mux, OpenPrefix+"openapi.json", "")

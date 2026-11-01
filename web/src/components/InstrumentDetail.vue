@@ -15,8 +15,8 @@ import OrderBookView from './market/OrderBookView.vue'
 import { detailIcon } from './details/registry'
 import InfoTip from './InfoTip.vue'
 
-/** Stacked detail page (phones and narrow windows); PC uses InstrumentWorkbench. */
-const props = defineProps<{ id: string }>()
+/** Stacked detail page (phones and narrow windows); PC uses InstrumentWorkbench. proposal: AI trade proposal to draw on the chart. */
+const props = defineProps<{ id: string; proposal?: number }>()
 const detailKey = ref<string | null>(null)
 const openDetail = (k: string) => (detailKey.value = k)
 const { info, err, row, base, live, chartPx, score, ruleName, spread, countdown, toggleWatch } = useInstrument(() => props.id)
@@ -100,7 +100,7 @@ const scoreTone = (side: 'long' | 'short') => ((score.value?.[side].score ?? 0) 
           </StatCard>
         </div>
       </div>
-      <PriceChart :id="id" :has-spot="!!info.spotId" :has-oi="info.oiUsd > 0" @live="p => (chartPx = p)" />
+      <PriceChart :id="id" :has-spot="!!info.spotId" :has-oi="info.oiUsd > 0" :proposal="proposal" @live="p => (chartPx = p)" />
       <div class="panel">
         <h3>实时盘口 <InfoTip>OKX 永续盘口（books-full，每侧最多 5000 档——OKX 公开的最深盘口；BTC 约覆盖 ±1%，小币可达几十 %；每秒刷新；前 400 档逐档，更深的按价格合并），金额为 USDT。深度图上悬浮/拖动查看把价格推到某个偏离需要多少资金；点击上方“买一 / 卖一”可放大查看。</InfoTip></h3>
         <OrderBookView :id="id" compact />

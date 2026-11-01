@@ -88,7 +88,7 @@ func (f *fakeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.paths = append(f.paths, r.Method+" "+r.URL.RequestURI())
 	f.mu.Unlock()
 	rp := r.URL.RequestURI()
-	ok := r.Method == http.MethodGet && r.URL.IsAbs() && r.Header.Get("User-Agent") == userAgent &&
+	ok := r.Method == http.MethodGet && r.URL.IsAbs() && r.Header.Get("User-Agent") == UserAgent &&
 		r.Header.Get("Content-Type") == "application/json" && r.Header.Get("OK-ACCESS-KEY") == "k" && r.Header.Get("OK-ACCESS-PASSPHRASE") == "p" &&
 		r.Header.Get("OK-ACCESS-SIGN") == sign("s", r.Header.Get("OK-ACCESS-TIMESTAMP"), "GET", rp, "")
 	if _, err := time.Parse("2006-01-02T15:04:05.000Z", r.Header.Get("OK-ACCESS-TIMESTAMP")); err != nil {

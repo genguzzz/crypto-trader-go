@@ -1,6 +1,7 @@
 // Package okxacct reads the owner's own OKX account (open swap positions, pending TP/SL, equity) for
 // display in the web, the app and the chat agent. Strictly read-only: the only request it can make is
-// a signed GET to an allow-listed path, and there is no order, cancel or transfer code. Every request
+// a signed GET to an allow-listed path, and there is no order, cancel or transfer code (the one order
+// the owner approved, a market open with TP/SL, lives in internal/okxorder and signs through Config). Every request
 // goes through OKX_PRIVATE_PROXY (the API key is bound to that exit IP); without the proxy or any key
 // variable the feature is disabled, never served over a direct connection.
 package okxacct
@@ -26,7 +27,7 @@ import (
 const (
 	DefaultBaseURL = "https://www.okx.com"
 	// OKX's Cloudflare rejects the default Go / Python user agents (403, error 1010).
-	userAgent = "Mozilla/5.0 (compatible; okx-helper/1; read-only)"
+	UserAgent = "Mozilla/5.0 (compatible; okx-helper/1)"
 )
 
 // readPaths are the only endpoints the client will call (all GET, all read-only).
@@ -37,8 +38,7 @@ var readPaths = map[string]bool{
 }
 
 // readPrefixes is what the agent's generic okx_api tool may read: any GET under these is a read (every
-// OKX write — order, cancel, transfer, withdraw — is a POST, and this client only sends GET; the key
-// itself is read-only too).
+// OKX write — order, cancel, transfer, withdraw — is a POST, and this client only sends GET).
 var readPrefixes = []string{"/api/v5/account/", "/api/v5/asset/", "/api/v5/trade/", "/api/v5/finance/",
 	"/api/v5/tradingBot/", "/api/v5/copytrading/", "/api/v5/users/"}
 
@@ -65,7 +65,7 @@ func ReadAllowed(path string) bool {
 	return false
 }
 
-// Config is the read-only API key and the proxy its IP is bound to. Never logged.
+// Config is the OKX API key and the proxy its IP is bound to. Never logged.
 type Config struct {
 	Key, Secret, Passphrase string
 	Proxy                   *url.URL
@@ -99,9 +99,14 @@ type Client struct {
 }
 
 func NewClient(cfg Config) *Client {
-	proxy := cfg.Proxy
+	return &Client{BaseURL: DefaultBaseURL, cfg: cfg, http: cfg.HTTPClient(), now: time.Now}
+}
+
+// HTTPClient returns a client bound to the private proxy (not the environment's): with no proxy every
+// request fails instead of going direct. Shared with internal/okxorder.
+func (c Config) HTTPClient() *http.Client {
+	proxy := c.Proxy
 	tr := &http.Transport{
-		// fixed proxy (not the environment's): with no proxy every request fails instead of going direct
 		Proxy: func(*http.Request) (*url.URL, error) {
 			if proxy == nil {
 				return nil, errors.New("no private proxy configured")
@@ -114,7 +119,20 @@ func NewClient(cfg Config) *Client {
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,
 	}
-	return &Client{BaseURL: DefaultBaseURL, cfg: cfg, http: &http.Client{Timeout: 10 * time.Second, Transport: tr}, now: time.Now}
+	return &http.Client{Timeout: 10 * time.Second, Transport: tr}
+}
+
+// Sign sets OKX's authentication headers on req; requestPath includes the query and body is the exact
+// request body ("" for GET). The key stays in this Config: internal/okxorder signs through it too.
+func (c Config) Sign(req *http.Request, requestPath, body string, now time.Time) {
+	ts := now.UTC().Format("2006-01-02T15:04:05.000Z")
+	req.Header.Set("OK-ACCESS-KEY", c.Key)
+	req.Header.Set("OK-ACCESS-SIGN", sign(c.Secret, ts, req.Method, requestPath, body))
+	req.Header.Set("OK-ACCESS-TIMESTAMP", ts)
+	req.Header.Set("OK-ACCESS-PASSPHRASE", c.Passphrase)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
 }
 
 // sign is OKX's request signature: base64(HMAC-SHA256(secret, timestamp + method + requestPath + body)).
@@ -145,14 +163,7 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 	if err != nil {
 		return err
 	}
-	ts := c.now().UTC().Format("2006-01-02T15:04:05.000Z")
-	req.Header.Set("OK-ACCESS-KEY", c.cfg.Key)
-	req.Header.Set("OK-ACCESS-SIGN", sign(c.cfg.Secret, ts, http.MethodGet, rp, ""))
-	req.Header.Set("OK-ACCESS-TIMESTAMP", ts)
-	req.Header.Set("OK-ACCESS-PASSPHRASE", c.cfg.Passphrase)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", userAgent)
+	c.cfg.Sign(req, rp, "", c.now())
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("okx %s: %w", path, err)

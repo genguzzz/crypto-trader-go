@@ -1,6 +1,6 @@
 // Command server runs the recorder + scanner: OKX public data → SQLite → fact panel, rules,
-// track records → HTTP/SSE + embedded web UI, plus simulated (paper) trading. Public data only;
-// never places real orders.
+// track records → HTTP/SSE + embedded web UI, plus simulated (paper) trading. Real orders only as
+// trade proposals the owner approves (internal/realtrade), dry run unless CTG_TRADE_MODE=live.
 package main
 
 import (
@@ -28,6 +28,8 @@ import (
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/okx"
 	"crypto-trader-go/internal/okxacct"
+	"crypto-trader-go/internal/okxorder"
+	"crypto-trader-go/internal/realtrade"
 	"crypto-trader-go/internal/refdata"
 	"crypto-trader-go/internal/store"
 	"crypto-trader-go/internal/strategyhost"
@@ -136,6 +138,39 @@ func main() {
 		log.Printf("okx account: disabled (needs OKX_API_KEY, OKX_API_SECRET, OKX_API_PASSPHRASE and OKX_PRIVATE_PROXY)")
 	}
 
+	// Real trades: only proposals the owner approves (market + TP/SL, isolated margin), sent only when
+	// CTG_TRADE_MODE is exactly "live"; otherwise built, validated and recorded (dry run).
+	orders, err := okxorder.New(okxorder.ModeFromEnv(), acctCfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	rt, err := realtrade.New(st, orders, realtrade.Options{Limits: realtrade.LimitsFromEnv(), PublicURL: envOr("CTG_PUBLIC_URL", "https://ctg.gugenzzz.top"),
+		Quote: func(id string) (float64, int64, bool) { q, ok := eng.TradeQuote(id); return q.Last, q.Ts, ok },
+		Spec: func(id string) (okxorder.Spec, bool) {
+			i, ok := eng.InstrumentMeta(id)
+			return okxorder.Spec{CtVal: i.CtVal, LotSz: i.LotSz, MinSz: i.MinSz, TickSz: i.TickSz, MaxLever: i.MaxLever}, ok
+		}})
+	if err != nil {
+		log.Fatal(err)
+	}
+	rt.SetAccount(acct)
+	rt.SetOnChange(func() { eng.Publish("realtrade", struct{}{}) })
+	dev.SetTradeProposals(rt.ProposeTool, rt.ListTool)
+	al.SetOnFired(func(evs []store.AlertEvent) {
+		for _, ev := range evs {
+			rt.Publish(realtrade.Signal{Type: "alert", InstID: ev.InstID, Vars: map[string]string{"rule": ev.RuleName, "ruleId": strconv.FormatInt(ev.RuleID, 10),
+				"message": ev.Message, "value": strconv.FormatFloat(ev.Value, 'f', -1, 64)}})
+		}
+	})
+	tradeBot, err := realtrade.BotFromEnv(rt, okx.HTTPClient())
+	if err != nil {
+		log.Fatal(err)
+	}
+	if tradeBot != nil {
+		go tradeBot.Run(ctx)
+	}
+	log.Printf("real trading: %s (proposals need the owner's approval), trade bot %v", orders.Mode(), tradeBot != nil)
+
 	// Paper trading: order layer + strategy runtime + interaction layer + optional AI review.
 	tsvc, err := trade.New(st, mdlive.New(eng), trade.Options{})
 	if err != nil {
@@ -183,6 +218,10 @@ func main() {
 		hub.Notify(trade.Event{Kind: "ai", AccountID: p.AccountID, Title: "AI 调参申请（需批准）",
 			Lines: []string{p.Strategy + "：" + p.Rationale}, Ts: time.Now().UnixMilli()})
 	})
+	rt.SetRunner(func(title, prompt, instID string) (int64, error) { // signal / schedule triggers: a headless chat
+		return gate.StartChat(aigate.ChatInput{Message: prompt, InstID: instID, Title: title})
+	})
+	go rt.Run(ctx)
 	go func() {
 		if err := gate.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("ai gate: %v", err)
@@ -204,7 +243,7 @@ func main() {
 	}
 	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al, Dev: dev,
 		Icons:    &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()},
-		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, acct.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
+		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, acct.Register, rt.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
 		AdminKey: os.Getenv("CTG_ADMIN_KEY")}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

@@ -5,7 +5,7 @@ description: Full analysis of one OKX USDT perpetual and a trade plan — market
 
 # Perpetual analysis
 
-The research flow follows TradingAgents (TauricResearch, Apache-2.0) — analysts → bull/bear debate → a decisive manager — done by you in one pass: you argue both sides yourself, then decide. ctg places no orders; the owner executes.
+The research flow follows TradingAgents (TauricResearch, Apache-2.0) — analysts → bull/bear debate → a decisive manager — done by you in one pass: you argue both sides yourself, then decide. ctg places no orders on its own: the owner executes, or approves a `propose_trade` proposal when he asked you to trade.
 
 ## 1. Collect (one call first, then only what is missing)
 

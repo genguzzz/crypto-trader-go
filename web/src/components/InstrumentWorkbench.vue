@@ -23,7 +23,7 @@ import InfoTip from './InfoTip.vue'
  * the main area, and an IDE-like side bar on the right whose panels are switched from the activity
  * bar at the far right. Every divider drags (Reka UI Splitter); sizes and open panels are saved.
  */
-const props = defineProps<{ id: string; listOpen?: boolean; withList?: boolean }>()
+const props = defineProps<{ id: string; listOpen?: boolean; withList?: boolean; proposal?: number }>()
 const emit = defineEmits<{ 'toggle-list': [] }>()
 const { info, err, row, base, live, chartPx, score, ruleName, spread, countdown, toggleWatch } = useInstrument(() => props.id)
 const detailKey = ref<string | null>(null)
@@ -134,7 +134,7 @@ useLayoutEntry('ctg.wb', '工作台面板与比例', () => open.value.join() !==
     <div class="body">
       <SplitterGroup direction="horizontal" auto-save-id="ctg.wb.main" class="sg">
         <SplitterPanel id="wb-chart" :order="1" :min-size="35" class="sp">
-          <PriceChart :id="id" fill :has-spot="!!info.spotId" :has-oi="info.oiUsd > 0" @live="p => (chartPx = p)" />
+          <PriceChart :id="id" fill :has-spot="!!info.spotId" :has-oi="info.oiUsd > 0" :proposal="proposal" @live="p => (chartPx = p)" />
         </SplitterPanel>
         <template v-if="openSides.length">
           <SplitterResizeHandle class="rh col" />

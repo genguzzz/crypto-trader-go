@@ -21,7 +21,7 @@ import (
 type Param struct {
 	Name     string   `json:"name"`
 	In       string   `json:"in"`   // query | path
-	Type     string   `json:"type"` // string | integer | boolean
+	Type     string   `json:"type"` // string | integer | number | boolean
 	Desc     string   `json:"desc"`
 	Required bool     `json:"required,omitempty"`
 	Enum     []string `json:"enum,omitempty"`
@@ -48,6 +48,7 @@ type Endpoint struct {
 	cost    func(Args) int
 	run     func(context.Context, Args) (any, error)
 	owner   bool // the owner's private data: MCP only, listed and served to owner keys only (OwnerKey)
+	write   bool // changes state (propose_trade): not marked read-only to MCP clients
 }
 
 func (e *Endpoint) Cost(a Args) int {
@@ -73,6 +74,10 @@ func (e *Endpoint) bind(get func(string) (string, bool)) (Args, error) {
 			continue
 		}
 		switch p.Type {
+		case "number":
+			if f, err := strconv.ParseFloat(v, 64); err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+				return nil, fmt.Errorf("parameter %q must be a number", p.Name)
+			}
 		case "integer":
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -445,6 +450,57 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			owner: true,
 			run: func(ctx context.Context, a Args) (any, error) {
 				return s.okxHistory(ctx, a)
+			},
+		})
+	}
+	if s.propose != nil {
+		eps = append(eps, &Endpoint{
+			Name: "propose_trade", Path: "propose-trade", Summary: "Propose one real OKX trade for the owner to approve (never executes)",
+			Desc: "Creates a pending trade proposal on the owner's OKX account and returns its proposalId. Only one shape exists: a market " +
+				"open of a USDT perpetual in isolated margin with BOTH a stop-loss and a take-profit attached (triggered on the last price, " +
+				"closed at market). The owner approves or rejects it (Telegram, web, app); it expires unapproved after expiresMin (default 15) " +
+				"and is re-checked against the live price before it is placed. You cannot execute, change or cancel it, and nothing is traded " +
+				"until the owner approves — never say a trade was placed. Size: marginUsdt is the isolated margin in USDT, contracts = " +
+				"marginUsdt × leverage / (price × contract value), rounded down. The server rejects: sl / tp on the wrong side of the current " +
+				"price, stop closer than 0.3% or farther than 10%, take-profit farther than 40%, reward:risk below the minimum, leverage or " +
+				"margin above the caps, a stop beyond the liquidation distance, an open proposal or position in the same instrument, too many " +
+				"open AI positions, the daily loss stop. The error says which; fix the plan or don't trade. mode=dryrun means an approved " +
+				"trade is only recorded, not sent.",
+			Params: []Param{
+				instParam("query"),
+				{Name: "side", In: "query", Type: "string", Required: true, Enum: []string{"long", "short"}},
+				{Name: "marginUsdt", In: "query", Type: "number", Required: true, Desc: "isolated margin in USDT (cap in the error / get_trade_proposals limits)"},
+				{Name: "leverage", In: "query", Type: "integer", Required: true, Min: 1, Max: 125, Desc: "isolated leverage (capped by the server)"},
+				{Name: "sl", In: "query", Type: "number", Required: true, Desc: "stop-loss trigger price"},
+				{Name: "tp", In: "query", Type: "number", Required: true, Desc: "take-profit trigger price"},
+				{Name: "rationale", In: "query", Type: "string", Required: true, Desc: "why this trade and why now, in Chinese, 2–6 sentences: the evidence for and against"},
+				{Name: "invalidation", In: "query", Type: "string", Required: true, Desc: "what would prove the idea wrong before the stop, in Chinese, one sentence"},
+				{Name: "expiresMin", In: "query", Type: "integer", Default: 15, Min: 3, Max: 60, Desc: "minutes the owner has to approve"},
+			},
+			owner: true,
+			write: true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				var chat int64
+				if c := callerFrom(ctx); c != nil {
+					chat = c.Chat
+				}
+				return s.propose(ctx, chat, a)
+			},
+		})
+	}
+	if s.proposals != nil {
+		eps = append(eps, &Endpoint{
+			Name: "get_trade_proposals", Path: "trade-proposals", Summary: "The trade proposals and their status, plus the mode and caps",
+			Desc: "Recent proposals made with propose_trade, newest first: status pending (waiting for the owner) → executed (dryrun = recorded, " +
+				"not sent; live = placed on OKX) / failed / invalidated (re-check failed, nothing sent) / rejected / expired; closeKind tp / sl and " +
+				"pnlUsdt once a position closed. Also mode and limits (maxLeverage, maxMarginUsdt, minRR, maxOpen, dailyLossUsdt, maxDriftPct).",
+			Params: []Param{
+				{Name: "status", In: "query", Type: "string", Enum: []string{"all", "open", "pending", "executed"}, Default: "all"},
+				limitParam(10, 50, "number of proposals"),
+			},
+			owner: true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				return s.proposals(ctx, a)
 			},
 		})
 	}

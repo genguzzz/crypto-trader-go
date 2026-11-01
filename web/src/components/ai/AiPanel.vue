@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { X, History, Brain, Plus, SquarePen, ArrowUp, Square, Mic, CircleAlert, Copy, Trash2, Sparkles, ChartCandlestick, ChevronRight } from 'lucide-vue-next'
+import { X, History, Brain, ClipboardCheck, Plus, SquarePen, ArrowUp, Square, Mic, CircleAlert, Copy, Trash2, Sparkles, ChartCandlestick, ChevronRight } from 'lucide-vue-next'
 import { ai, send, retry, resume, stop, newChat, openChat, loadChats, deleteChat, textOf, setModel, AI_MODELS, notes, loadNotes, addNote, deleteNote, type Msg, type Part } from '../../composables/ai'
 import { useTapToTalk } from '../../composables/holdToTalk'
 import AiSteps from './AiSteps.vue'
 import AiBlock from './AiBlock.vue'
+import ProposalCard from '../realtrade/ProposalCard.vue'
+import ProposalList from '../realtrade/ProposalList.vue'
+import { rt, refreshPending } from '../../composables/realtrade'
 import { segments } from './blocks'
 import { useDesktop } from '../../composables/device'
 import { useRouter } from 'vue-router'
@@ -83,16 +86,24 @@ watch(() => ai.open, o => {
   if (!o) return
   ai.unread = false
   stick = true
+  refreshPending()
   resume() // reopen the chat left on screen / catch up with an answer that finished meanwhile
   nextTick(() => scroller.value?.scrollTo({ top: scroller.value!.scrollHeight }))
 })
 
 // ---- history ----
 const showNotes = ref(false)
+const showTrades = ref(false) // the AI's real-trade proposals (owner only)
+function toggleTrades() {
+  showTrades.value = !showTrades.value
+  showNotes.value = false
+  showHistory.value = false
+}
 const noteInput = ref('')
 async function toggleNotes() {
   showNotes.value = !showNotes.value
   showHistory.value = false
+  showTrades.value = false
   if (showNotes.value) await loadNotes().catch(e => flash(e.message))
 }
 async function saveNote() {
@@ -105,6 +116,7 @@ const noteAgo = (t: number) => new Date(t).toLocaleDateString('zh-CN', { month: 
 
 async function toggleHistory() {
   showNotes.value = false
+  showTrades.value = false
   showHistory.value = !showHistory.value
   if (showHistory.value) await loadChats().catch(e => flash(e.message))
 }
@@ -113,7 +125,7 @@ async function pick(id: number) {
   await openChat(id).catch(e => flash(e.message))
 }
 async function remove(id: number) { await deleteChat(id).catch(e => flash(e.message)) }
-function fresh() { newChat(); showHistory.value = false; showNotes.value = false; nextTick(() => ta.value?.focus()) }
+function fresh() { newChat(); showHistory.value = false; showNotes.value = false; showTrades.value = false; nextTick(() => ta.value?.focus()) }
 const ago = (t: number) => {
   const s = (Date.now() - t) / 1000
   return s < 60 ? '刚刚' : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : s < 86400 ? `${Math.floor(s / 3600)} 小时前` : `${Math.floor(s / 86400)} 天前`
@@ -132,6 +144,17 @@ function groups(m: Msg): Group[] {
     }
   }
   return out
+}
+/** Proposals created by a propose_trade step in this group (its output is JSON with proposalId). */
+function proposalsOf(items: Extract<Part, { t: 'tool' }>[]): number[] {
+  const ids: number[] = []
+  for (const s of items) {
+    if (!s.name?.endsWith('propose_trade') || !s.output || s.ok === false) continue
+    let id = 0
+    try { id = Number(JSON.parse(s.output)?.proposalId) || 0 } catch { id = Number(/proposalId\W{1,4}(\d+)/.exec(s.output)?.[1]) || 0 }
+    if (id > 0 && !ids.includes(id)) ids.push(id)
+  }
+  return ids
 }
 async function copy(m: Msg) {
   try { await navigator.clipboard.writeText(textOf(m)); flash('已复制') } catch { flash('复制失败') }
@@ -190,11 +213,14 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
       <section v-if="ai.open" class="ai-panel" :class="{ desk: desktop }" :style="dragY ? { transform: `translateY(${dragY}px)`, transition: 'none' } : undefined" aria-label="AI 研究助手">
         <header class="hd" @pointerdown="dragStart" @pointermove="dragMove" @pointerup="dragEnd" @pointercancel="dragEnd">
           <i v-if="!desktop" class="grab"></i>
-          <span class="ttl"><span class="mini-orb"></span>{{ showNotes ? '偏好与记忆' : showHistory ? '历史对话' : ai.title || 'AI 研究助手' }}</span>
-          <span v-if="!showHistory && !showNotes" class="models" role="radiogroup" aria-label="模型" @pointerdown.stop>
+          <span class="ttl"><span class="mini-orb"></span>{{ showTrades ? '交易提案' : showNotes ? '偏好与记忆' : showHistory ? '历史对话' : ai.title || 'AI 研究助手' }}</span>
+          <span v-if="!showHistory && !showNotes && !showTrades" class="models" role="radiogroup" aria-label="模型" @pointerdown.stop>
             <button v-for="o in AI_MODELS" :key="o.value" type="button" role="radio" :aria-checked="ai.model === o.value" :class="{ on: ai.model === o.value }" @click="setModel(o.value)">{{ o.label }}</button>
           </span>
           <span class="acts" @pointerdown.stop>
+            <button v-if="rt.owner" type="button" class="ib bdg" :class="{ on: showTrades }" title="交易提案" aria-label="交易提案" @click="toggleTrades">
+              <ClipboardCheck :size="17" /><span v-if="rt.pending.length" class="nbd tnum">{{ rt.pending.length }}</span>
+            </button>
             <button type="button" class="ib" :class="{ on: showNotes }" title="偏好与记忆" aria-label="偏好与记忆" @click="toggleNotes"><Brain :size="17" /></button>
             <button type="button" class="ib" :class="{ on: showHistory }" title="历史对话" aria-label="历史对话" @click="toggleHistory"><History :size="17" /></button>
             <button type="button" class="ib" title="新对话" aria-label="新对话" @click="fresh"><SquarePen :size="17" /></button>
@@ -202,7 +228,9 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
           </span>
         </header>
 
-        <div v-if="showNotes" class="body hist">
+        <div v-if="showTrades" class="body hist"><ProposalList /></div>
+
+        <div v-else-if="showNotes" class="body hist">
           <p class="muted note-tip">AI 每次回答都会参考这些偏好；在对话里说"记住…/我喜欢…"也会自动加到这里。</p>
           <div class="note-add">
             <input v-model="noteInput" placeholder="例如：杠杆偏好，多空都用 8 倍" maxlength="300" @keydown.enter="saveNote" />
@@ -239,7 +267,10 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
             <div v-if="m.role === 'user'" class="u"><div class="ubub">{{ textOf(m) }}</div></div>
             <div v-else class="a">
               <template v-for="(g, gi) in groups(m)" :key="gi">
-                <AiSteps v-if="g.k === 'tools'" :items="g.items" :live="!!m.live" />
+                <template v-if="g.k === 'tools'">
+                  <AiSteps :items="g.items" :live="!!m.live" />
+                  <ProposalCard v-for="pid in proposalsOf(g.items)" :id="pid" :key="'p' + pid" live />
+                </template>
                 <template v-else>
                   <template v-for="(sg, si) in segments(g.v, !!m.live)" :key="sg.key">
                     <div v-if="sg.k === 'md'" class="md" :class="{ typing: gi === groups(m).length - 1 && si === segments(g.v, !!m.live).length - 1 && phaseOf(m) === 'typing' }" @click="onMdClick" v-html="md.render(sg.text)"></div>
@@ -263,7 +294,7 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
           </div>
         </div>
 
-        <footer v-if="!showHistory && !showNotes" class="ft" @touchmove="e => (e.target as HTMLElement).tagName !== 'TEXTAREA' && e.preventDefault()">
+        <footer v-if="!showHistory && !showNotes && !showTrades" class="ft" @touchmove="e => (e.target as HTMLElement).tagName !== 'TEXTAREA' && e.preventDefault()">
           <button v-if="ai.instId && ai.msgs.length" type="button" class="ctx" :disabled="ai.running" @click="submit(ONE_CLICK)"><ChartCandlestick :size="13" /> 一键分析 {{ sym }}</button>
           <div class="composer">
             <textarea ref="ta" v-model="input" rows="1" :placeholder="talk.phase.value === 'rec' ? '正在听…点 ↑ 发送' : talk.phase.value === 'busy' ? '识别中…' : '问点什么…'" @input="autosize" @keydown="onKey"></textarea>
@@ -299,6 +330,8 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
 .models button.on { background: var(--bg-3); color: var(--text-1); box-shadow: inset 0 0 0 1px rgba(188, 255, 47, .35); }
 .ib { all: unset; box-sizing: border-box; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--text-2); cursor: pointer; }
 .ib.sm { width: 26px; height: 26px; }
+.ib.bdg { position: relative; }
+.nbd { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 4px; box-sizing: border-box; border-radius: 8px; background: var(--warn); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
 .ib.on { color: var(--accent); background: var(--accent-bg); }
 .ib:active { background: var(--bg-3); }
 @media (hover: hover) { .ib:hover { color: var(--text-1); background: var(--bg-2); } }

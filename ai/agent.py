@@ -31,7 +31,8 @@ SANDBOX_SOCKET = os.environ.get("CTG_SANDBOX_SOCKET", "/run/sbx/sbx.sock")
 # Raw series (candles, minute OI, liquidation map, compare, track records: 15k–95k characters) are only
 # reachable through the shell, where Python reduces them to the numbers the answer needs.
 CTG_DIRECT = ("get_instrument", "get_universe", "search_instruments", "get_orderbook", "get_orderflow", "get_liquidations",
-              "list_rules", "list_fields", "get_alert_events", "get_system_status", "get_positions", "okx_api", "okx_history")
+              "list_rules", "list_fields", "get_alert_events", "get_system_status", "get_positions", "okx_api", "okx_history",
+              "propose_trade", "get_trade_proposals")
 SHELL_MODEL_LIMIT = 8000  # characters of shell output the model sees; the rest stays in files
 CTG_HIDDEN = ("get_candles", "get_series", "get_liquidation_map", "compare_with_majors", "get_rule_track_record", "get_usage")
 MCP_OUTPUT_TOKENS = "6000"  # hard cap per data-tool result (Claude Code truncates beyond it)
@@ -44,7 +45,7 @@ TOOL_LABELS = {
     "get_orderbook": "盘口", "get_liquidations": "强平记录", "get_liquidation_map": "清算地图",
     "compare_with_majors": "对比 BTC/ETH", "get_universe": "监控池", "search_instruments": "搜索合约",
     "list_rules": "规则", "get_rule_track_record": "规则战绩", "get_alert_events": "告警", "get_system_status": "数据状态",
-    "list_fields": "字段定义", "get_usage": "接口额度", "get_positions": "我的仓位", "remember": "记住偏好", "okx_api": "查询 OKX 账户", "okx_history": "OKX 账户统计", "list_chats": "查看历史对话", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
+    "list_fields": "字段定义", "get_usage": "接口额度", "get_positions": "我的仓位", "remember": "记住偏好", "okx_api": "查询 OKX 账户", "okx_history": "OKX 账户统计", "propose_trade": "提交交易提议", "get_trade_proposals": "交易提议", "list_chats": "查看历史对话", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
 }
 # the analysis CLI's commands, as the owner would call them
 CA_LABELS = {
@@ -267,7 +268,8 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
         mcp["sessions"] = sessions_server(base, chat)
         allowed += ["mcp__sessions__list_chats", "mcp__sessions__read_chat"]
     if agent.get("mcpUrl") and agent.get("mcpToken"):
-        mcp["ctg"] = {"type": "http", "url": agent["mcpUrl"], "headers": {"Authorization": "Bearer " + agent["mcpToken"]}}
+        # X-Ctg-Chat links a propose_trade call to this conversation (honoured for the owner key only)
+        mcp["ctg"] = {"type": "http", "url": agent["mcpUrl"], "headers": {"Authorization": "Bearer " + agent["mcpToken"], "X-Ctg-Chat": chat}}
         ctg_tools = [f"mcp__ctg__{t}" for t in CTG_DIRECT]
         allowed += ctg_tools
     env["MAX_MCP_OUTPUT_TOKENS"] = MCP_OUTPUT_TOKENS

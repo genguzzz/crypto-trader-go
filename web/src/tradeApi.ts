@@ -221,7 +221,7 @@ const wreq = <T>(path: string, method: string, body?: unknown) =>
  * sends X-CTG-Admin from this browser's owner key. A 401 with code admin_required opens the key
  * dialog and retries once with the entered key.
  */
-async function mreq<T>(path: string, method: string, body?: unknown): Promise<T> {
+export async function mreq<T>(path: string, method: string, body?: unknown): Promise<T> {
   const send = (key: string) => fetch(path, {
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
