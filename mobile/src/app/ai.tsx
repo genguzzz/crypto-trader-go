@@ -20,6 +20,7 @@ import { AiBlock } from "@/components/ai/AiBlock";
 import { AiSteps, type StepItem } from "@/components/ai/AiSteps";
 import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
+import { ScrollLock } from "@/components/ai/InnerScroll";
 import { HistoryPane, NotesPane, ProposalsPane, SelectPane, onShowFullText, plainText } from "@/components/ai/AiPanes";
 import { ProposalById, ProposalChartHost, proposalIds } from "@/components/ai/ProposalCard";
 import { SignalBubble, SignalById, SignalHost, signalIds } from "@/components/ai/SignalCard";
@@ -100,6 +101,9 @@ export default function AiScreen() {
   const owner = useRealtrade((r) => r.owner);
   const pendingN = usePendingProposals().length;
   useActiveSignalCount(); // starts the signal store: a signal waking the chat on screen is followed live
+  // a finger in a step's scroll box (InnerScroll) stops the chat list so the box gets the drag
+  const [innerHeld, setInnerHeld] = useState(false);
+  const lockOuter = useCallback((on: boolean) => setInnerHeld(on), []);
   const [kb, setKb] = useState(false);
   const scroller = useRef<ScrollViewInstance>(null);
   const inputRef = useRef<TextInputInstance>(null);
@@ -206,8 +210,10 @@ export default function AiScreen() {
       </GestureDetector>
 
       <KeyboardAvoidingView style={{ flex: 1, overflow: "hidden" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollLock.Provider value={lockOuter}>
         <ScrollView
           ref={scroller}
+          scrollEnabled={!innerHeld}
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: 16 }}
           keyboardDismissMode="interactive"
@@ -276,6 +282,7 @@ export default function AiScreen() {
             </View>
           ) : null}
         </ScrollView>
+        </ScrollLock.Provider>
 
         {/* composer */}
         <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: bottomPad, borderTopWidth: 1, borderColor: colors.border, backgroundColor: "rgba(10,10,10,0.94)" }}>

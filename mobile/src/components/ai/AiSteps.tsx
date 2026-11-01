@@ -8,9 +8,9 @@ import { ActivityIndicator, Platform, Pressable, Text, View } from "react-native
 import { Ionicons } from "@expo/vector-icons";
 import type { ThinkPart, ToolPart } from "@/lib/ai";
 import { colors, fs, tnum } from "@/lib/theme";
-import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { tap } from "@/components/ui";
 import { showFullText } from "./AiPanes";
+import { InnerScroll } from "./InnerScroll";
 
 const mono = Platform.select({ ios: "Menlo", default: "monospace" });
 export type StepItem = ToolPart | ThinkPart;
@@ -74,8 +74,8 @@ function Status({ s, size = 14 }: { s: StepItem | "busy" | "ok" | "fail"; size?:
   );
 }
 
-// The full text scrolls inside its box (a gesture-handler ScrollView, so the inner pan wins over the
-// chat list while the box can still scroll that way); 全屏 opens it in a full-height pane.
+// The full text scrolls inside its box (InnerScroll locks the chat list while a finger is in it);
+// 全屏 opens it in a full-height pane.
 function Block({ k, text }: { k: string; text: string }) {
   const lines = text.split("\n").length;
   const long = lines > 14 || text.length > 1400;
@@ -90,9 +90,9 @@ function Block({ k, text }: { k: string; text: string }) {
           </Pressable>
         ) : null}
       </View>
-      <GHScrollView nestedScrollEnabled style={{ maxHeight: 300, borderRadius: 8, backgroundColor: "#0a0a0a", borderWidth: 1, borderColor: colors.border }} contentContainerStyle={{ paddingHorizontal: 10, paddingVertical: 8 }}>
+      <InnerScroll maxHeight={300} style={{ borderRadius: 8, backgroundColor: "#0a0a0a", borderWidth: 1, borderColor: colors.border }} contentStyle={{ paddingHorizontal: 10, paddingVertical: 8 }}>
         <Text style={{ fontFamily: mono, fontSize: 11, lineHeight: 16, color: colors.textSoft }}>{text}</Text>
-      </GHScrollView>
+      </InnerScroll>
     </View>
   );
 }
@@ -110,10 +110,22 @@ function Thought({ s, now }: { s: ThinkPart; now: number }) {
         <Text style={[{ fontSize: fs.sm, color: colors.text }, tnum]}>{s.live ? "思考中" : "思考"}<Text style={{ color: colors.textFaint }}>{`  ${secs(thinkMs(s, now))}`}</Text></Text>
       </View>
       {text ? (
-        <Pressable disabled={!long || !!s.live} onPress={() => { tap(); setFull(!full); }} style={{ marginLeft: 7, marginTop: 4, paddingLeft: 16, borderLeftWidth: 2, borderColor: "rgba(155,125,240,0.35)" }}>
-          <Text selectable={full} style={{ fontSize: fs.sm, lineHeight: 19, color: colors.textFaint }}>{shown}</Text>
-          {long && !s.live ? <Text style={{ fontSize: fs.xs, color: colors.textDim, marginTop: 3 }}>{full ? "收起" : "展开全部"}</Text> : null}
-        </Pressable>
+        <View style={{ marginLeft: 7, marginTop: 4, paddingLeft: 16, borderLeftWidth: 2, borderColor: "rgba(155,125,240,0.35)" }}>
+          {full ? (
+            <InnerScroll maxHeight={320}>
+              <Text style={{ fontSize: fs.sm, lineHeight: 19, color: colors.textFaint }}>{text}</Text>
+            </InnerScroll>
+          ) : (
+            <Pressable disabled={!long || !!s.live} onPress={() => { tap(); setFull(true); }}>
+              <Text style={{ fontSize: fs.sm, lineHeight: 19, color: colors.textFaint }}>{shown}</Text>
+            </Pressable>
+          )}
+          {long && !s.live ? (
+            <Pressable hitSlop={8} onPress={() => { tap(); setFull(!full); }}>
+              <Text style={{ fontSize: fs.xs, color: colors.textDim, marginTop: 3 }}>{full ? "收起" : "展开全部"}</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
