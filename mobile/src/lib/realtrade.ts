@@ -40,7 +40,7 @@ export interface RtTrigger {
 }
 export interface RtConfig {
   mode: RtMode;
-  limits: { maxLeverage: number; maxMarginUsdt: number; maxOpen: number; dailyLossUsdt: number; maxDriftPct: number; minRR: number; expiryMin: number };
+  limits: { minLeverage?: number; maxLeverage: number; maxMarginUsdt: number; maxOpen: number; dailyLossUsdt: number; maxDriftPct: number; minRR: number; expiryMin: number };
   telegram: { enabled: boolean; state: string; bot?: string; lastError?: string };
   triggers: RtTrigger[] | null;
 }
