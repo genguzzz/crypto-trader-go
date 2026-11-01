@@ -9,6 +9,7 @@ import { FloatingOrb } from "@/components/ai/FloatingOrb";
 import { KeyGate } from "@/components/KeyGate";
 import { ToastHost, toast } from "@/components/ui";
 import { loadAdminKey } from "@/lib/adminKey";
+import { dismissKeyboardOnOutsideTouch } from "@/lib/keyboard";
 import { initAi, useAiSelect } from "@/lib/ai";
 import { usePendingProposals } from "@/lib/realtrade";
 import { appVersion } from "@/lib/api";
@@ -70,7 +71,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }} onTouchStart={dismissKeyboardOnOutsideTouch}>
       <SafeAreaProvider>
         <StatusBar style="light" />
         {loaded ? (
