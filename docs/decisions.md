@@ -42,5 +42,5 @@ Reproducible with the probes in [`research/poc/`](../research/poc/README.md).
 |---|---|---|
 | I0–I3 | recorder, per-minute pool, fact panel, rules and track record, web UI | live |
 | I0 exit | 72h continuous run, ≥ 99.9% minute coverage, 0 unrepaired gaps | open (see roadmap) |
-| I4 | read-only positions and exit assessment, news/unlock/on-chain sources | needs approval |
+| I4 | read-only positions and exit assessment, news/unlock/on-chain sources | positions approved 2026-11-01 (owner's read-only key, IP-bound proxy; `internal/okxacct`); the rest needs approval |
 | Trading | automated orders | out of scope |

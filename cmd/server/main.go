@@ -25,6 +25,7 @@ import (
 	"crypto-trader-go/internal/interact"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/okx"
+	"crypto-trader-go/internal/okxacct"
 	"crypto-trader-go/internal/refdata"
 	"crypto-trader-go/internal/store"
 	"crypto-trader-go/internal/strategyhost"
@@ -96,6 +97,20 @@ func main() {
 	}
 	go dev.Run(ctx)
 
+	// The owner's own OKX positions, read-only, only through OKX_PRIVATE_PROXY (disabled without it or the key).
+	acctCfg, err := okxacct.ConfigFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	acct := okxacct.New(acctCfg)
+	acct.CtVal = func(id string) float64 { i, _ := eng.InstrumentMeta(id); return i.CtVal }
+	if acct.Enabled() {
+		log.Printf("okx account: read-only positions via private proxy %s", acctCfg.Proxy.Host)
+		dev.SetPositions(func(ctx context.Context, inst string) (any, error) { return acct.Snapshot(ctx, inst) })
+	} else if acctCfg.Key != "" || acctCfg.Proxy != nil {
+		log.Printf("okx account: disabled (needs OKX_API_KEY, OKX_API_SECRET, OKX_API_PASSPHRASE and OKX_PRIVATE_PROXY)")
+	}
+
 	// Paper trading: order layer + strategy runtime + interaction layer + optional AI review.
 	tsvc, err := trade.New(st, mdlive.New(eng), trade.Options{})
 	if err != nil {
@@ -124,7 +139,7 @@ func main() {
 	if strings.HasPrefix(mcpHost, ":") || strings.HasPrefix(mcpHost, "0.0.0.0:") {
 		mcpHost = "127.0.0.1:" + mcpHost[strings.LastIndex(mcpHost, ":")+1:]
 	}
-	gate.SetAgent(aigate.Agent{MCPURL: "http://" + mcpHost + devapi.MCPPath, MCPToken: dev.InternalKey("ai-agent", 600, 120),
+	gate.SetAgent(aigate.Agent{MCPURL: "http://" + mcpHost + devapi.MCPPath, MCPToken: dev.OwnerKey("ai-agent", 600, 120),
 		SandboxToken: dev.InternalKey("ai-sandbox", 120, 30)})
 	gate.SetCandles(func(inst string, limit int) ([]aigate.Bar, error) { // AI plans followed on 1m candles
 		cs, err := eng.Candles(inst, "1m", limit)
@@ -164,7 +179,7 @@ func main() {
 	}
 	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al, Dev: dev,
 		Icons:    &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()},
-		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
+		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, acct.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
 		AdminKey: os.Getenv("CTG_ADMIN_KEY")}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

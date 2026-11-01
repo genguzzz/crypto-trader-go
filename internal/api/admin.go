@@ -15,11 +15,15 @@ var adminPaths = []string{"/api/v1/interact/config", "/api/v1/interact/test", "/
 	"/api/v1/ai/test", "/api/v1/ai/memory/", "/api/v1/ai/chat", "/api/v1/ai/chats/", "/api/v1/ai/transcribe", "/api/v1/ai/notes", "/api/v1/ai/notes/", "/api/v1/ai/plans/", "/api/v1/trade/sources", "/api/v1/trade/sources/", "/api/v1/trade/check",
 	"/api/v1/trade/trial", "/api/v1/app/logs"}
 
-// adminGate requires header X-CTG-Admin == key for non-GET requests to adminPaths.
-// With no key configured, only direct loopback requests (no reverse proxy headers) may write.
+// ownerReadPaths need the owner key for every method, reads included: the owner's own OKX account.
+var ownerReadPaths = []string{"/api/v1/account/"}
+
+// adminGate requires header X-CTG-Admin == key for non-GET requests to adminPaths and for any request
+// to ownerReadPaths. With no key configured, only direct loopback requests (no reverse proxy headers) pass.
 func adminGate(key string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet || r.Method == http.MethodHead || !needsAdmin(r.URL.Path) {
+		read := r.Method == http.MethodGet || r.Method == http.MethodHead
+		if !matches(ownerReadPaths, r.URL.Path) && (read || !needsAdmin(r.URL.Path)) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -39,8 +43,10 @@ func adminGate(key string, next http.Handler) http.Handler {
 	})
 }
 
-func needsAdmin(path string) bool {
-	for _, p := range adminPaths {
+func needsAdmin(path string) bool { return matches(adminPaths, path) }
+
+func matches(paths []string, path string) bool {
+	for _, p := range paths {
 		if path == p || (strings.HasSuffix(p, "/") && strings.HasPrefix(path, p)) {
 			return true
 		}

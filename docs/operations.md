@@ -77,6 +77,7 @@ Parallel development in several worktrees (separate ports and database copies) i
 | `CTG_PROXY` / `-doh` | — / off | networks without direct OKX access: outbound HTTP proxy (credentials allowed), DNS-over-HTTPS |
 | `CTG_RUN_DIR` | `data/run` (`/data/run` in compose) | Unix sockets `strategy.sock` / `ai.sock` shared with the sidecars |
 | `CTG_ADMIN_KEY` | — | owner key required (header `X-CTG-Admin`) for writes under `/api/v1/trade|interact|ai`; unset = only direct loopback requests may write. Lives in `ctg.env` |
+| `OKX_API_KEY` / `OKX_API_SECRET` / `OKX_API_PASSPHRASE` / `OKX_PRIVATE_PROXY` | — | the owner's **read-only** OKX API key and the HTTP or SOCKS5 proxy its IP is bound to: open swap positions with TP/SL on the K-line, in the app and for the chat agent (`get_positions`), `GET /api/v1/account/positions` (owner key required even for reads). Signed GETs only, always through the proxy; any variable missing = disabled, never a direct connection. Lives in `ctg.env` |
 | `CTG_SECRET_KEY` | — | at-rest key for the AI credential (else stored plain, noted on the AI page). Lives in `ctg.env` |
 | `GOMEMLIMIT` | 1536MiB in compose | resident heap is ~180 MB (with the full perpetual catalog and caches); container `mem_limit: 2g`. The limit must stay above the resident heap or the GC spins: 180MiB once caused ~20 GCs per second and 1.4 cores of constant CPU |
 

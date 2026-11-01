@@ -23,6 +23,10 @@ func TestAdminGate(t *testing.T) {
 		{"no key loopback", "", "POST", "/api/v1/interact/test", "", "127.0.0.1:9", "", 204},
 		{"no key proxied", "", "POST", "/api/v1/interact/test", "", "127.0.0.1:9", "8.8.8.8", 401},
 		{"no key remote", "", "POST", "/api/v1/interact/test", "", "8.8.8.8:9", "", 401},
+		{"account read needs key", "k", "GET", "/api/v1/account/positions", "", "1.2.3.4:5", "", 401},
+		{"account read wrong key", "k", "GET", "/api/v1/account/positions", "x", "1.2.3.4:5", "", 401},
+		{"account read right key", "k", "GET", "/api/v1/account/positions", "k", "1.2.3.4:5", "", 204},
+		{"account read no key loopback", "", "GET", "/api/v1/account/positions", "", "127.0.0.1:9", "", 204},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest(c.method, c.path, nil)

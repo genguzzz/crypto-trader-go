@@ -87,6 +87,7 @@ type keyState struct {
 	store.APIKey
 	b     bucket
 	dirty bool
+	owner bool // in-memory key of the owner's own agent: may also call owner endpoints (get_positions)
 }
 
 // LogEntry is one external request (in-memory ring, newest first in Log()).
@@ -115,6 +116,13 @@ type Service struct {
 	logAt  int
 	now    func() time.Time
 	eps    []*Endpoint // set by Mount
+
+	positions func(ctx context.Context, instID string) (any, error) // the owner's OKX positions (optional)
+}
+
+// SetPositions enables the owner-only get_positions tool (call before Mount).
+func (s *Service) SetPositions(f func(ctx context.Context, instID string) (any, error)) {
+	s.positions = f
 }
 
 func New(st Store) (*Service, error) {
@@ -392,6 +400,7 @@ type Caller struct {
 	RatePerMin int    `json:"ratePerMin"`
 	Burst      int    `json:"burst"`
 	ExpiresAt  int64  `json:"expiresAt"`
+	Owner      bool   `json:"-"`
 }
 
 // Quota describes the bucket after a request, for X-RateLimit-* headers and 429 bodies.
@@ -417,11 +426,21 @@ func (d *Denial) Error() string { return d.Msg }
 // InternalKey mints an in-memory key for an in-process client (the AI agent): never stored, gone on
 // restart, and only reachable by whoever receives the secret. It still passes the global limit.
 func (s *Service) InternalKey(name string, ratePerMin, burst int) string {
+	return s.internalKey(name, ratePerMin, burst, false)
+}
+
+// OwnerKey is an InternalKey that may also call the owner endpoints (the owner's own OKX account):
+// only for the owner's chat agent, never for the sandbox or external clients.
+func (s *Service) OwnerKey(name string, ratePerMin, burst int) string {
+	return s.internalKey(name, ratePerMin, burst, true)
+}
+
+func (s *Service) internalKey(name string, ratePerMin, burst int, owner bool) string {
 	raw := make([]byte, 24)
 	rand.Read(raw)
 	secret := "ctg_in_" + base64.RawURLEncoding.EncodeToString(raw)
 	k := &keyState{APIKey: store.APIKey{ID: -1, Kind: KindKey, Name: name, Prefix: secret[:12], Hash: hashSecret(secret),
-		RatePerMin: ratePerMin, Burst: burst, CreatedAt: s.now().UnixMilli()}}
+		RatePerMin: ratePerMin, Burst: burst, CreatedAt: s.now().UnixMilli()}, owner: owner}
 	s.mu.Lock()
 	s.byHash[k.Hash] = k // not in s.keys: not listed, not persisted
 	s.mu.Unlock()
@@ -447,7 +466,7 @@ func (s *Service) Authorize(r *http.Request, cost int) (*Caller, *Quota, *Denial
 		return nil, nil, &Denial{Status: http.StatusUnauthorized, Msg: "API key " + st}
 	}
 	k.LastUsedAt, k.dirty = now.UnixMilli(), true
-	caller := &Caller{ID: k.ID, Kind: k.Kind, Name: k.Name, Prefix: k.Prefix, RatePerMin: k.RatePerMin, Burst: k.Burst, ExpiresAt: k.ExpiresAt}
+	caller := &Caller{ID: k.ID, Kind: k.Kind, Name: k.Name, Prefix: k.Prefix, RatePerMin: k.RatePerMin, Burst: k.Burst, ExpiresAt: k.ExpiresAt, Owner: k.owner}
 	if cost <= 0 { // free: MCP protocol messages, usage lookups
 		q := quotaOf(k, now)
 		return caller, &q, nil

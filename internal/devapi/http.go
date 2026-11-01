@@ -24,6 +24,9 @@ const (
 func (s *Service) Mount(mux *http.ServeMux, e *market.Engine, al *alerts.Service) {
 	s.eps = s.buildEndpoints(e, al)
 	for _, ep := range s.eps {
+		if ep.owner {
+			continue // MCP only (owner keys); not part of the open REST API
+		}
 		mux.Handle("GET "+OpenPrefix+ep.Path, cors(s.rest(ep)))
 	}
 	mux.Handle("GET "+OpenPrefix+"openapi.json", cors(http.HandlerFunc(s.openapi)))
@@ -82,7 +85,13 @@ func (s *Service) Mount(mux *http.ServeMux, e *market.Engine, al *alerts.Service
 	})
 	mux.HandleFunc("GET /api/v1/dev/log", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.Log()) })
 	mux.HandleFunc("GET /api/v1/dev/endpoints", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"restBase": strings.TrimSuffix(OpenPrefix, "/"), "mcpPath": MCPPath, "endpoints": s.eps,
+		var eps []*Endpoint // the open API only (owner endpoints are for the owner's agent)
+		for _, ep := range s.eps {
+			if !ep.owner {
+				eps = append(eps, ep)
+			}
+		}
+		writeJSON(w, 200, map[string]any{"restBase": strings.TrimSuffix(OpenPrefix, "/"), "mcpPath": MCPPath, "endpoints": eps,
 			"limits": map[string]int{"defaultRatePerMin": DefaultRatePerMin, "maxRatePerMin": MaxRatePerMin, "maxBurst": MaxBurst}})
 	})
 }
@@ -201,6 +210,9 @@ func (s *Service) rest(ep *Endpoint) http.Handler {
 func (s *Service) openapi(w http.ResponseWriter, r *http.Request) {
 	paths := map[string]any{}
 	for _, ep := range s.eps {
+		if ep.owner {
+			continue
+		}
 		var params []any
 		for _, p := range ep.Params {
 			params = append(params, map[string]any{"name": p.Name, "in": p.In, "required": p.Required || p.In == "path", "description": p.Desc, "schema": schemaOf(p)})
@@ -376,6 +388,9 @@ func (s *Service) mcpOne(w http.ResponseWriter, r *http.Request, c *Caller, q rp
 	case "tools/list":
 		tools := make([]any, 0, len(s.eps))
 		for _, ep := range s.eps {
+			if ep.owner && !c.Owner {
+				continue
+			}
 			props, req := map[string]any{}, []string{}
 			for _, p := range ep.Params {
 				props[p.Name] = schemaOf(p)
@@ -422,7 +437,7 @@ func (s *Service) mcpCall(w http.ResponseWriter, r *http.Request, c *Caller, raw
 	}
 	var ep *Endpoint
 	for _, x := range s.eps {
-		if x.Name == p.Name {
+		if x.Name == p.Name && (!x.owner || c.Owner) {
 			ep = x
 		}
 	}

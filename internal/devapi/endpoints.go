@@ -47,6 +47,7 @@ type Endpoint struct {
 	CostTxt string  `json:"cost"` // human description of the rate-limit cost
 	cost    func(Args) int
 	run     func(context.Context, Args) (any, error)
+	owner   bool // the owner's private data: MCP only, listed and served to owner keys only (OwnerKey)
 }
 
 func (e *Endpoint) Cost(a Args) int {
@@ -315,7 +316,7 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			Desc: "How close the latest move is to topping out or bottoming: extension from EMA20 in ATR, size of the run, volume climax, " +
 				"rejection wick or pullback, RSI and divergence, liquidation spike on the squeezed side, funding percentile, taker flow; " +
 				"gated by where the extreme sits in the last 30 bars. Same checklist as the agent's rev tool. Heuristic, not validated.",
-			Params: []Param{instParam("query"), {Name: "bar", In: "query", Type: "string", Enum: []string{"15m", "1H", "4H"}, Default: "1H", Desc: "bar size"}},
+			Params:  []Param{instParam("query"), {Name: "bar", In: "query", Type: "string", Enum: []string{"15m", "1H", "4H"}, Default: "1H", Desc: "bar size"}},
 			CostTxt: "2", cost: func(Args) int { return 2 },
 			run: func(ctx context.Context, a Args) (any, error) {
 				return e.Exhaustion(ctx, a.Str("instId"), a.Str("bar"))
@@ -390,6 +391,32 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 					evs[i].Delivery = nil
 				}
 				return evs, nil
+			},
+		})
+	}
+	if s.positions != nil {
+		eps = append(eps, &Endpoint{
+			Name: "get_positions", Path: "positions", Summary: "The owner's open OKX swap positions with TP/SL (read-only)",
+			Desc: "The owner's live OKX account, read-only (this server cannot place, change or cancel orders): per position side, contracts / coins / " +
+				"notionalUsd, avgPx (entry), markPx, liqPx, lever, upl (USDT), uplRatio (upl / margin), mgnRatio, and the resting tp / sl triggers " +
+				"(px, full = closes the whole position, else contracts), nearest first; equity = account totals in USD. enabled=false means no " +
+				"account is configured. Missing numbers are unknown. Cached ~3 s.",
+			Params: []Param{{Name: "instId", In: "query", Type: "string", Desc: "only this instrument, e.g. BTC-USDT-SWAP (default: all)"}},
+			owner:  true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				v, err := s.positions(ctx, strings.ToUpper(a.Str("instId")))
+				if err != nil {
+					return nil, err
+				}
+				b, err := json.Marshal(v)
+				if err != nil {
+					return nil, err
+				}
+				var m map[string]any
+				if err := json.Unmarshal(b, &m); err != nil {
+					return nil, err
+				}
+				return roundFloats(m), nil
 			},
 		})
 	}

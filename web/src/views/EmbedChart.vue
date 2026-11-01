@@ -3,14 +3,16 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import PriceChart from '../components/PriceChart.vue'
 import { api } from '../api'
+import { setAdminKey } from '../composables/adminKey'
 
 /**
  * Bare K-line chart for the native iOS app (mobile/ on branch ios), loaded in a WebView:
  * /embed/chart/BTC-USDT-SWAP?spot=1&oi=1&bar=15m&layer=k&full=0
  * spot / oi say whether the contract has a spot pair and open interest (fetched when absent);
  * bar / layer preset the chart's own choices (it remembers them in this web view afterwards);
- * full=1 is the app's landscape full-screen chart. Messages to the app (window.ReactNativeWebView):
- * {type:'live', price} for the forming bar, {type:'fullscreen'} / {type:'exitFullscreen'} from the
+ * full=1 is the app's landscape full-screen chart. The app injects its owner key as window.ctgAdminKey
+ * before the page loads (kept in memory only) so the chart can draw the owner's position.
+ * Messages to the app (window.ReactNativeWebView): {type:'live', price} for the forming bar, {type:'fullscreen'} / {type:'exitFullscreen'} from the
  * chart's full-screen button.
  */
 const props = defineProps<{ id: string }>()
@@ -23,6 +25,9 @@ for (const [k, key] of Object.entries(presets)) {
   const v = q(k)
   if (v) try { localStorage.setItem(key, v) } catch { /* storage unavailable */ }
 }
+
+const injected = (window as unknown as { ctgAdminKey?: string }).ctgAdminKey
+if (injected) setAdminKey(injected, false)
 
 const full = q('full') === '1'
 const hasSpot = ref<boolean | null>(q('spot') === undefined ? null : q('spot') === '1')

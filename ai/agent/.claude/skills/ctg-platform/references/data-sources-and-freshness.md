@@ -1,6 +1,6 @@
 # Data sources, freshness and retention
 
-Only OKX v5 **public** endpoints (no credentials, no orders), plus the CoinGecko free API (market cap, display only). Timestamps follow exchange time; missing minutes/data = unknown, never 0. To check freshness: MCP `get_system_status`, or [系统状态](/status).
+OKX v5 **public** endpoints (no credentials, no orders), plus the CoinGecko free API (market cap, display only). The one exception is the owner's own positions: when configured, signed read-only GETs of positions, pending TP/SL and equity (fetched on demand, cached ~3 s; never orders). Timestamps follow exchange time; missing minutes/data = unknown, never 0. To check freshness: MCP `get_system_status`, or [系统状态](/status).
 
 ## Recorded locally vs fetched on demand
 

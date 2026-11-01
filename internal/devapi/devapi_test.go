@@ -1,6 +1,7 @@
 package devapi
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -272,6 +273,54 @@ func TestMCP(t *testing.T) {
 	mux.ServeHTTP(gw, r)
 	if gw.Code != 405 {
 		t.Fatalf("GET /mcp: %d", gw.Code)
+	}
+}
+
+// Owner endpoints (the owner's OKX positions) are invisible to external keys and served to OwnerKey only.
+func TestOwnerEndpoint(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.DB.Close() })
+	s, err := New(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotInst string
+	s.SetPositions(func(_ context.Context, inst string) (any, error) {
+		gotInst = inst
+		return map[string]any{"enabled": true, "positions": []any{map[string]any{"instId": "BTC-USDT-SWAP", "avgPx": 1.23456789}}}, nil
+	})
+	mux := http.NewServeMux()
+	s.Mount(mux, nil, nil)
+	ext, _ := s.Create(CreateInput{Name: "ext", RatePerMin: 60, Burst: 10})
+	tools := func(key string) string {
+		return mcpPost(mux, key, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`).Body.String()
+	}
+	call := func(key string) string {
+		return mcpPost(mux, key, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_positions","arguments":{"instId":"btc-usdt-swap"}}}`).Body.String()
+	}
+	for _, key := range []string{ext.Secret, s.InternalKey("sandbox", 60, 10)} {
+		if strings.Contains(tools(key), "get_positions") {
+			t.Fatal("owner tool listed to a non-owner key")
+		}
+		if out := call(key); !strings.Contains(out, "unknown tool") || gotInst != "" {
+			t.Fatalf("owner tool served to a non-owner key: %s", out)
+		}
+	}
+	if w := get(mux, OpenPrefix+"positions", ext.Secret); w.Code == 200 {
+		t.Fatalf("owner endpoint on the open REST API: %d", w.Code)
+	}
+	if strings.Contains(get(mux, OpenPrefix+"openapi.json", "").Body.String(), "get_positions") {
+		t.Fatal("owner endpoint in the OpenAPI document")
+	}
+	owner := s.OwnerKey("ai-agent", 60, 10)
+	if !strings.Contains(tools(owner), "get_positions") {
+		t.Fatal("owner tool not listed to the owner key")
+	}
+	if out := call(owner); !strings.Contains(out, `\"avgPx\":1.23457`) || gotInst != "BTC-USDT-SWAP" {
+		t.Fatalf("owner call: %q %s", gotInst, out)
 	}
 }
 

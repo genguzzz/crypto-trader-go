@@ -32,7 +32,7 @@ Link: `[SOL](/instrument/SOL-USDT-SWAP)`. On mobile it's a standalone page; on P
 
 ## Price chart
 
-Toolbar: layers `K 线` (candles) / `Delta` / `足迹` (footprint); timeframes `1m` `5m` `15m` (default) `1H` `4H`; overlay toggles `现货` (spot) `OI Δ` (default on) `强平` (liquidations, default on) `清算图` (liquidation map, default off) `OI` (default off); fullscreen. Settings are remembered in this browser.
+Toolbar: layers `K 线` (candles) / `Delta` / `足迹` (footprint); timeframes `1m` `5m` `15m` (default) `1H` `4H`; overlay toggles `现货` (spot) `OI Δ` (default on) `强平` (liquidations, default on) `清算图` (liquidation map, default off) `AI 点位` (open AI plans, default on) `仓位` (the owner's open OKX position on this coin, default on: entry line with side, size and live PnL, liquidation price, each TP/SL; needs the owner key, refreshed every 10 s, gone once closed) `OI` (default off); fullscreen. Settings are remembered in this browser.
 
 - **Data**: perp 1m candles recorded locally; 5m/15m/4H aggregated server-side aligned to UTC (4H at 0/4/8/12/16/20 in UTC+8). Lookback on the chart roughly: 1m 1 day, 5m/15m 7 days, 1H/4H 30 days. Missing minutes show as gaps; the last candle is still open.
 - **Crosshair**: top-left shows OHLC, change (vs previous close), range, turnover; the right price label shows % from last price. On mobile, long-press then drag. Bottom-right ◎ or double-click returns to latest.

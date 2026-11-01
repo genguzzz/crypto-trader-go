@@ -19,6 +19,18 @@ export interface AiPlan {
 
 export const planStatusText: Record<string, string> = { pending: '等待入场', active: '已入场', tp1: '已到 TP1' }
 
+/** Keep drawn levels (AI plans, the owner's position) in view: the price scale spans them too. */
+export function spanLevels(s: ISeriesApi<'Candlestick'>, levels: () => number[]) {
+  s.applyOptions({
+    autoscaleInfoProvider: (orig: () => AutoscaleInfo | null) => {
+      const r = orig()
+      const lv = levels().filter(v => v > 0)
+      if (!r || !r.priceRange || !lv.length) return r
+      return { ...r, priceRange: { minValue: Math.min(r.priceRange.minValue, ...lv), maxValue: Math.max(r.priceRange.maxValue, ...lv) } }
+    },
+  })
+}
+
 const HIDE_KEY = 'ctg.aiPlansHidden'
 const hidden = (): number[] => { try { return JSON.parse(localStorage.getItem(HIDE_KEY) || '[]') } catch { return [] } }
 
@@ -48,16 +60,6 @@ export function useAiPlans(series: () => ISeriesApi<'Candlestick'> | undefined, 
     if (markersOf !== s) {
       markers = createSeriesMarkers(s, [])
       markersOf = s
-      // keep the plan in view: the price scale also spans the entry zone, stop and TP1 (TP2 is often far
-      // enough away to squash the candles, so it only shows when the candles reach it)
-      s.applyOptions({
-        autoscaleInfoProvider: (orig: () => AutoscaleInfo | null) => {
-          const r = orig()
-          const lv = plans.value.flatMap(p => [p.entryLo, p.entryHi, p.stop, p.status === 'tp1' && p.tp2 ? p.tp2 : p.tp1])
-          if (!r || !r.priceRange || !lv.length) return r
-          return { ...r, priceRange: { minValue: Math.min(r.priceRange.minValue, ...lv), maxValue: Math.max(r.priceRange.maxValue, ...lv) } }
-        },
-      })
     }
     const ms: { time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowDown' | 'arrowUp'; text: string }[] = []
     for (const p of plans.value) {
@@ -79,6 +81,10 @@ export function useAiPlans(series: () => ISeriesApi<'Candlestick'> | undefined, 
     markers?.setMarkers(ms.sort((a, b) => (a.time as number) - (b.time as number)))
   }
 
+  /** Levels the price scale should span (spanLevels): the entry zone, stop and TP1 (TP2 is often far
+   *  enough away to squash the candles, so it only shows when the candles reach it). */
+  const levels = () => plans.value.flatMap(p => [p.entryLo, p.entryHi, p.stop, p.status === 'tp1' && p.tp2 ? p.tp2 : p.tp1])
+
   /** Hide a plan here (and close it on the server when the owner key is at hand). */
   async function dismiss(p: AiPlan, key?: string) {
     localStorage.setItem(HIDE_KEY, JSON.stringify([...hidden(), p.id].slice(-200)))
@@ -88,5 +94,5 @@ export function useAiPlans(series: () => ISeriesApi<'Candlestick'> | undefined, 
   }
 
   watch(on, v => { localStorage.setItem('ctg.chartAiPlans', v ? '1' : '0'); refresh() })
-  return { plans, refresh, draw, dismiss }
+  return { plans, refresh, draw, dismiss, levels }
 }
