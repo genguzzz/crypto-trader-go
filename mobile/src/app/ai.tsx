@@ -5,7 +5,7 @@
 // the 交易提议 pane, `?pane=trades` opens it); signal subscriptions (a card under each subscribe_signal
 // step, the ⚡ message a fired signal adds, `?chat=<id>` from the trade bot's link opens that chat).
 // State and the connection live in lib/ai.ts.
-import { Fragment, memo, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View, type ScrollViewInstance, type TextInputInstance } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
@@ -21,6 +21,7 @@ import { AiSteps, type StepItem } from "@/components/ai/AiSteps";
 import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
 import { ScrollLock } from "@/components/ai/InnerScroll";
+import { ChatRail, railLabel, type RailMark } from "@/components/ai/ChatRail";
 import { HistoryPane, NotesPane, ProposalsPane, SelectPane, onShowFullText, plainText } from "@/components/ai/AiPanes";
 import { ProposalById, ProposalChartHost, TradeBubble, proposalIds } from "@/components/ai/ProposalCard";
 import { SignalBubble, SignalById, SignalHost, signalIds } from "@/components/ai/SignalCard";
@@ -107,6 +108,18 @@ export default function AiScreen() {
   const owner = useRealtrade((r) => r.owner);
   const pendingN = usePendingProposals().length;
   useActiveSignalCount(); // starts the signal store: a signal waking the chat on screen is followed live
+  // the conversation's ruler: where each delivered message (question, ⚡ signal, trade outcome) sits
+  const [railY, setRailY] = useState<Record<string, number>>({});
+  const [railContent, setRailContent] = useState(0);
+  const [railView, setRailView] = useState(0);
+  const [railScroll] = useState(() => new Animated.Value(0));
+  const railAt = useCallback((k: string, y: number) => setRailY((m) => (m[k] === y ? m : { ...m, [k]: y })), []);
+  const railMarks = useMemo<RailMark[]>(() => s.msgs.flatMap((m, mi) => {
+    const k = String(m.id ?? "m" + mi);
+    const y = railY[k];
+    if (y == null || (m.role !== "user" && m.role !== "signal" && m.role !== "trade")) return [];
+    return [{ key: k, y, kind: m.role, label: railLabel(textOf(m)) }];
+  }), [s.msgs, railY]);
   // a finger in a step's scroll box (InnerScroll) stops the chat list so the box gets the drag
   const [innerHeld, setInnerHeld] = useState(false);
   const lockOuter = useCallback((on: boolean) => setInnerHeld(on), []);
@@ -206,8 +219,10 @@ export default function AiScreen() {
 
       <KeyboardAvoidingView style={{ flex: 1, overflow: "hidden" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollLock.Provider value={lockOuter}>
+        <View style={{ flex: 1 }}>
         <ScrollView
           ref={scroller}
+          onLayout={(e) => setRailView(e.nativeEvent.layout.height)}
           scrollEnabled={!innerHeld}
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: 16 }}
@@ -217,8 +232,9 @@ export default function AiScreen() {
           onScroll={(e) => {
             const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
             stick.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 80;
+            railScroll.setValue(contentOffset.y);
           }}
-          onContentSizeChange={() => { if (stick.current) scroller.current?.scrollToEnd({ animated: false }); }}
+          onContentSizeChange={(_, h) => { setRailContent(h); if (stick.current) scroller.current?.scrollToEnd({ animated: false }); }}
         >
           {!s.msgs.length ? (
             <View style={{ alignItems: "center", gap: 10, paddingTop: 26, paddingHorizontal: 4, paddingBottom: 8 }}>
@@ -256,12 +272,14 @@ export default function AiScreen() {
             </View>
           ) : null}
 
-          {s.msgs.map((m, mi) =>
-            m.role === "user" ? <UserBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} />
-              : m.role === "signal" ? <SignalBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} />
-              : m.role === "trade" ? <TradeBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} />
-              : <Answer key={m.id ?? "m" + mi} m={m} now={now} onSelect={selectText} />,
-          )}
+          {s.msgs.map((m, mi) => {
+            const k = String(m.id ?? "m" + mi);
+            const at = (e: { nativeEvent: { layout: { y: number } } }) => railAt(k, e.nativeEvent.layout.y);
+            return m.role === "user" ? <View key={k} onLayout={at}><UserBubble text={textOf(m)} onSelect={selectText} /></View>
+              : m.role === "signal" ? <View key={k} onLayout={at}><SignalBubble text={textOf(m)} onSelect={selectText} /></View>
+              : m.role === "trade" ? <View key={k} onLayout={at}><TradeBubble text={textOf(m)} onSelect={selectText} /></View>
+              : <Answer key={k} m={m} now={now} onSelect={selectText} />;
+          })}
 
           {s.running && lastMsg && lastMsg.role !== "assistant" ? <Thinking label="思考中" /> : null}
           {s.reconnecting ? (
@@ -278,6 +296,8 @@ export default function AiScreen() {
             </View>
           ) : null}
         </ScrollView>
+        <ChatRail marks={railMarks} contentH={railContent} viewH={railView} scrollY={railScroll} onJump={(y) => { stick.current = false; scroller.current?.scrollTo({ y, animated: true }); }} />
+        </View>
         </ScrollLock.Provider>
 
         {/* composer */}
