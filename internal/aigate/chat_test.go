@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -238,5 +239,21 @@ func TestSteerChat(t *testing.T) {
 	}
 	if strings.Join(roles, ",") != "user,trade,assistant,signal,assistant" || c.Interrupted {
 		t.Fatalf("messages %v", roles)
+	}
+}
+
+// The app's model menu renders the options as given: 默认 ("") first, then the levels a turn may send.
+func TestChatOptions(t *testing.T) {
+	g := &Gate{model: "claude-sonnet-5"}
+	o := g.ChatOptions()
+	efforts := o["efforts"].([]ChatOption)
+	if efforts[0].Value != "" || efforts[1].Value != "off" {
+		t.Fatalf("efforts start with 默认, then 关: %+v", efforts[:2])
+	}
+	if slices.Contains(ChatEfforts, "") || !slices.Contains(ChatEfforts, "off") || !slices.Contains(ChatModels, "claude-opus-5-5") {
+		t.Fatalf("allowed: %v %v", ChatEfforts, ChatModels)
+	}
+	if o["defaults"].(map[string]any)["model"] != "claude-sonnet-5" {
+		t.Fatalf("defaults: %v", o["defaults"])
 	}
 }
