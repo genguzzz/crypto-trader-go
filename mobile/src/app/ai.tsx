@@ -2,14 +2,16 @@
 // Claude-style step lists, generative-UI blocks and Markdown; model switch; history and memory
 // (pushed screens); one-click analysis of the instrument opened from its page; tap-to-talk mic in
 // the composer and hold-to-talk on the orb; AI trade proposals (cards under their propose_trade step,
-// the 交易提议 pane, `?pane=trades` opens it). State and the connection live in lib/ai.ts.
+// the 交易提议 pane, `?pane=trades` opens it); signal subscriptions (a card under each subscribe_signal
+// step, the ⚡ message a fired signal adds, `?chat=<id>` from the trade bot's link opens that chat).
+// State and the connection live in lib/ai.ts.
 import { Fragment, memo, useCallback, useEffect, useRef, useState } from "react";
 import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View, type ScrollViewInstance, type TextInputInstance } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AI_MODELS, ai, clearContext, newChat, retry, send, setModel, setOpen, stop, textOf, useAi, type Msg } from "@/lib/ai";
+import { AI_MODELS, ai, clearContext, newChat, openChat, retry, send, setModel, setOpen, stop, textOf, useAi, type Msg } from "@/lib/ai";
 import { copy, haptic } from "@/lib/device";
 import { useHoldToTalk, useTapToTalk } from "@/lib/voice";
 import { colors, fs } from "@/lib/theme";
@@ -20,7 +22,9 @@ import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
 import { HistoryPane, NotesPane, ProposalsPane, SelectPane, plainText } from "@/components/ai/AiPanes";
 import { ProposalById, ProposalChartHost, proposalIds } from "@/components/ai/ProposalCard";
+import { SignalBubble, SignalById, SignalHost, signalIds } from "@/components/ai/SignalCard";
 import { usePendingProposals, useRealtrade } from "@/lib/realtrade";
+import { useActiveSignalCount } from "@/lib/signals";
 import { VoiceWave } from "@/components/ai/VoiceWave";
 import { segments } from "@/components/ai/blocks";
 
@@ -62,7 +66,7 @@ export default function AiScreen() {
   const [input, setInput] = useState("");
   // history / memory slide over the chat inside this sheet (a modal pushed from the sheet took no touches)
   // ?pane=trades (the 「AI 提议了一笔交易」 toast) opens with the proposals pane in place
-  const { pane: paneParam } = useLocalSearchParams<{ pane?: string }>();
+  const { pane: paneParam, chat: chatParam } = useLocalSearchParams<{ pane?: string; chat?: string }>();
   const [pane, setPane] = useState<Pane | null>(paneParam === "trades" ? "trades" : null);
   const [selText, setSelText] = useState("");
   const [slide] = useState(() => new Animated.Value(paneParam === "trades" ? 1 : 0));
@@ -86,6 +90,7 @@ export default function AiScreen() {
   // owner only: pending trade proposals → badge on the header button
   const owner = useRealtrade((r) => r.owner);
   const pendingN = usePendingProposals().length;
+  useActiveSignalCount(); // starts the signal store: a signal waking the chat on screen is followed live
   const [kb, setKb] = useState(false);
   const scroller = useRef<ScrollViewInstance>(null);
   const inputRef = useRef<TextInputInstance>(null);
@@ -116,6 +121,12 @@ export default function AiScreen() {
   }, [s.running]);
 
   useEffect(() => { stick.current = true; }, [s.chatId]);
+
+  // ?chat=<id>: the trade bot's 打开对话 (a signal woke that chat)
+  useEffect(() => {
+    const id = Number(chatParam);
+    if (id > 0 && id !== ai.chatId) void openChat(id).catch((e) => toastError("未能打开对话", e));
+  }, [chatParam]);
 
   const submit = (text = input) => {
     if (!text.trim() || ai.running) return;
@@ -235,9 +246,13 @@ export default function AiScreen() {
             </View>
           ) : null}
 
-          {s.msgs.map((m, mi) => (m.role === "user" ? <UserBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} /> : <Answer key={m.id ?? "m" + mi} m={m} now={now} onSelect={selectText} />))}
+          {s.msgs.map((m, mi) =>
+            m.role === "user" ? <UserBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} />
+              : m.role === "signal" ? <SignalBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} />
+              : <Answer key={m.id ?? "m" + mi} m={m} now={now} onSelect={selectText} />,
+          )}
 
-          {s.running && lastMsg?.role === "user" ? <Thinking label="思考中" /> : null}
+          {s.running && lastMsg && lastMsg.role !== "assistant" ? <Thinking label="思考中" /> : null}
           {s.reconnecting ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 10, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.raised }}>
               <Spinner />
@@ -314,6 +329,7 @@ export default function AiScreen() {
         </Animated.View>
       ) : null}
       <ProposalChartHost />
+      <SignalHost />
     </GestureHandlerRootView>
   );
 }
@@ -374,6 +390,7 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
           <Fragment key={gi}>
             <AiSteps items={g.items} live={live} tail={gi === gs.length - 1} />
             {proposalIds(g.items).map((id) => <ProposalById key={id} id={id} />)}
+            {signalIds(g.items).map((id) => <SignalById key={"s" + id} id={id} />)}
           </Fragment>
         ) : (
           <View key={gi}>

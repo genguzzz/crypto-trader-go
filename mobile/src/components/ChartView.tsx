@@ -5,7 +5,7 @@
 // (onTouchActive), so pans and pinches belong to the chart; the page scrolls everywhere else.
 // The owner key is injected before the page loads (window.ctgAdminKey, memory only there): every API
 // request the page makes needs it; a new key reloads the page. `proposal` makes the page draw that AI trade proposal's
-// entry / stop / target (query `proposal=<id>`).
+// entry / stop / target (query `proposal=<id>`); `signal` a signal subscription's levels (query `signal=<id>`).
 import { useMemo, useState, type ComponentType } from "react";
 import { ActivityIndicator, Platform, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { WebView as RNWebView, type WebViewMessageEvent, type WebViewProps } from "react-native-webview";
@@ -22,12 +22,13 @@ const WebView = RNWebView as unknown as ComponentType<WebViewProps>;
 
 export interface ChartMsg { type: "live"; price: number }
 
-export function ChartView({ id, hasSpot, hasOi, full, proposal, style, onLive, onFullscreen, onTouchActive }: {
+export function ChartView({ id, hasSpot, hasOi, full, proposal, signal, style, onLive, onFullscreen, onTouchActive }: {
   id: string;
   hasSpot?: boolean;
   hasOi?: boolean;
   full?: boolean;
   proposal?: number;
+  signal?: number;
   style?: StyleProp<ViewStyle>;
   onLive?: (price: number) => void;
   onFullscreen?: (enter: boolean) => void;
@@ -43,8 +44,9 @@ export function ChartView({ id, hasSpot, hasOi, full, proposal, style, onLive, o
     if (hasOi !== undefined) p.set("oi", hasOi ? "1" : "0");
     if (full) p.set("full", "1");
     if (proposal) p.set("proposal", String(proposal));
+    if (signal) p.set("signal", String(signal));
     return `${WEB_ORIGIN}/embed/chart/${encodeURIComponent(id)}?${p.toString()}`;
-  }, [id, hasSpot, hasOi, full, proposal]);
+  }, [id, hasSpot, hasOi, full, proposal, signal]);
 
   const onMessage = (e: WebViewMessageEvent) => {
     try {
