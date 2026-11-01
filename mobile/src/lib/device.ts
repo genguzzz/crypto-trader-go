@@ -79,6 +79,14 @@ export async function copy(text: string) {
   return true;
 }
 
+/** Clipboard text, or null without the module (iOS may show its paste permission prompt). */
+export async function paste(): Promise<string | null> {
+  if (!has("clipboard")) return null;
+  const m = await import("expo-clipboard");
+  track("device.paste");
+  return m.getStringAsync();
+}
+
 export async function shareText(text: string) {
   track("device.share");
   await Share.share({ message: text });

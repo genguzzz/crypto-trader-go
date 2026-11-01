@@ -1,8 +1,8 @@
 // Client for the ctg REST API (same routes and types as web/src/api.ts). Every call carries a request
-// id and the app version; writes that need the owner key retry once after AdminKeySheet asks for it.
+// id, the app version and the owner key; a 401 admin_required waits for KeyGate's new key and retries once.
 import { Platform } from "react-native";
 import * as Application from "expo-application";
-import { askAdminKey, getAdminKey } from "./adminKey";
+import { getAdminKey, keyRejected, loadAdminKey } from "./adminKey";
 import { logger } from "./log";
 import { runningLabel } from "./updates";
 
@@ -26,10 +26,11 @@ export class ApiError extends Error {
 
 const rid = () => Math.random().toString(36).slice(2, 10);
 
-// noPrompt: a 401 admin_required fails quietly instead of asking for the key (owner-only reads in the background)
-type ReqOpts = { method?: string; body?: unknown; timeoutMs?: number; quiet?: boolean; noPrompt?: boolean };
+type ReqOpts = { method?: string; body?: unknown; timeoutMs?: number; quiet?: boolean };
 
 export async function req<T>(path: string, opts: ReqOpts = {}, retried = false): Promise<T> {
+  await loadAdminKey();
+  if (!getAdminKey()) await keyRejected(""); // no key yet: wait for KeyGate instead of sending a 401
   const id = rid();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 20_000);
@@ -66,11 +67,11 @@ export async function req<T>(path: string, opts: ReqOpts = {}, retried = false):
   if (!opts.quiet || !res.ok) log.info("call", { path: path.split("?")[0], status: res.status, ms: Date.now() - t0, rid: id });
   if (!res.ok) {
     const body = (data && typeof data === "object" ? data : {}) as { error?: string; code?: string };
-    if (res.status === 401 && body.code === "admin_required" && !retried && !opts.noPrompt) {
-      const k = await askAdminKey(admin ? "密钥不正确，请重新输入" : "");
-      if (k) return req<T>(path, opts, true);
-      throw new ApiError("需要所有者密钥", 401, body.code);
+    if (res.status === 401 && body.code === "admin_required" && !retried) {
+      await keyRejected(admin);
+      return req<T>(path, opts, true);
     }
+    if (res.status === 429 && body.code === "rate_limited") throw new ApiError("密钥错误次数过多，请稍后再试", 429, body.code);
     throw new ApiError(body.error || `服务器返回 ${res.status}`, res.status, body.code);
   }
   return data as T;
@@ -171,9 +172,24 @@ export const api = {
     req<Liquidations>(`/api/v1/liquidations?instId=${enc(id)}&bar=${bar}&limit=${limit}&recent=${recent}`),
   watch: (id: string, on: boolean) => req<{ ok: boolean }>(`/api/v1/watchlist/${enc(id)}`, { method: on ? "PUT" : "DELETE" }),
   status: () => req<Record<string, unknown>>("/api/v1/status"),
-  // owner only (key required even to read); never prompts for the key
-  positions: (id?: string) => req<AccountPositions>(`/api/v1/account/positions${id ? `?instId=${enc(id)}` : ""}`, { quiet: true, noPrompt: true }),
+  // the owner's OKX positions (read-only)
+  positions: (id?: string) => req<AccountPositions>(`/api/v1/account/positions${id ? `?instId=${enc(id)}` : ""}`, { quiet: true }),
   // native app plumbing (internal/api/mobile.go)
   events: (events: unknown[]) => req<{ ok: boolean }>("/api/v1/app/events", { ...json("POST", { events }), quiet: true }),
   uploadLog: (log: string, meta: Record<string, unknown>) => req<{ id: string }>("/api/v1/app/logs", { ...json("POST", { log, meta }), timeoutMs: 60_000 }),
 };
+
+/** Checks a key against a cheap authenticated endpoint (KeyGate). Not through req: no retry, no gate. */
+export async function verifyKey(k: string): Promise<"ok" | "bad" | "limited" | string> {
+  try {
+    const r = await fetch(API_ORIGIN + "/api/v1/settings", { headers: { "x-ctg-admin": k, "x-request-id": rid() } });
+    log.info("verify key", { status: r.status });
+    if (r.ok) return "ok";
+    if (r.status === 401) return "bad";
+    if (r.status === 429) return "limited";
+    return `服务器返回 ${r.status}`;
+  } catch (e) {
+    log.warn("verify key failed", e);
+    return "无法连接服务器";
+  }
+}

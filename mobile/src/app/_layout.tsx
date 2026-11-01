@@ -5,8 +5,8 @@ import { StatusBar } from "expo-status-bar";
 import * as Device from "expo-device";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { AdminKeySheet } from "@/components/AdminKeySheet";
 import { FloatingOrb } from "@/components/ai/FloatingOrb";
+import { KeyGate } from "@/components/KeyGate";
 import { ToastHost, toast } from "@/components/ui";
 import { loadAdminKey } from "@/lib/adminKey";
 import { initAi, useAiSelect } from "@/lib/ai";
@@ -87,8 +87,9 @@ export default function RootLayout() {
           </View>
         )}
         {loaded ? <FloatingOrb /> : null}
-        {loaded ? <AdminKeySheet /> : null}
         {loaded ? <ToastHost /> : null}
+        {/* access key: full screen over everything when missing or rejected */}
+        {loaded ? <KeyGate /> : null}
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -1,6 +1,6 @@
 // AI 授权 (web components/settings/AiAuthSection.vue, server internal/aigate/http.go): the Claude
 // credential for AI review (subscription token or API key), worker/proxy state, model, test, revoke.
-// Writes need the owner key (api.ts asks for it).
+// Like every call, these need the owner key (api.ts sends it).
 import { useState, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { useRouter } from "expo-router";

@@ -54,7 +54,7 @@ export const statusLabel = (p: Proposal) => (p.status === "executed" && p.mode =
 export const statusTone = (s: ProposalStatus): "good" | "bad" | "warn" | "info" | undefined =>
   s === "pending" ? "warn" : s === "approved" || s === "executing" ? "info" : s === "executed" ? "good" : s === "failed" ? "bad" : undefined;
 
-const quiet = { quiet: true, noPrompt: true };
+const quiet = { quiet: true };
 const base = "/api/v1/realtrade";
 export const rtApi = {
   list: (status: "pending" | "open" | "all", limit = 0) => req<ProposalList>(`${base}/proposals?status=${status}${limit ? `&limit=${limit}` : ""}`, quiet),

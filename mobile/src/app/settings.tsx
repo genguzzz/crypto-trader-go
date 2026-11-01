@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as Updates from "expo-updates";
 import { Card, PickerSheet, PillButton, Row, Screen, Segmented, TopBar, confirm, tap, toast, toastError, styles } from "@/components/ui";
-import { clearAdminKey, askAdminKey, useAdminKeySet } from "@/lib/adminKey";
+import { changeKey, clearAdminKey } from "@/lib/adminKey";
 import { api, appVersion } from "@/lib/api";
 import { capabilities } from "@/lib/device";
 import { oiFrac, tzOptions, usd } from "@/lib/fmt";
@@ -27,7 +27,6 @@ const OI_SAMPLES = [5e5, 5e6, 5e7, 5e8, 5e9];
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const keySet = useAdminKeySet();
   const tz = useSettings((s) => s.tz);
   const oiHalf = useSettings((s) => s.oiHalf);
   const tall = useSettings((s) => s.chartTall);
@@ -101,11 +100,11 @@ export default function SettingsScreen() {
         <AiAuthSection />
 
         <Card>
-          <Text style={[styles.title, { marginBottom: 4 }]}>所有者密钥</Text>
-          <Text style={styles.note}>修改交易、AI、策略等受保护内容时需要。只保存在本机钥匙串。</Text>
+          <Text style={[styles.title, { marginBottom: 4 }]}>访问密钥</Text>
+          <Text style={styles.note}>App 的所有数据都需要所有者密钥。只保存在本机钥匙串。</Text>
           <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
-            <PillButton small variant="soft" label={keySet ? "更换密钥" : "填写密钥"} onPress={() => void askAdminKey()} style={{ flex: 1 }} />
-            {keySet ? <PillButton small variant="ghost" label="清除" onPress={() => confirm("清除所有者密钥", "清除后，下次受保护的操作会再次询问。", "清除", clearAdminKey, true)} style={{ flex: 1 }} /> : null}
+            <PillButton small variant="soft" label="更换密钥" onPress={changeKey} style={{ flex: 1 }} />
+            <PillButton small variant="ghost" label="清除" onPress={() => confirm("清除访问密钥", "清除后需要重新输入密钥才能继续使用。", "清除", clearAdminKey, true)} style={{ flex: 1 }} />
           </View>
         </Card>
 
@@ -129,7 +128,7 @@ export default function SettingsScreen() {
             <PillButton small variant="soft" icon="cloud-upload-outline" label="上传日志" loading={uploading} onPress={() => void upload()} style={{ flex: 1 }} />
             <PillButton small variant="soft" icon="hardware-chip-outline" label="能力自检" onPress={() => router.push("/diagnostics")} style={{ flex: 1 }} />
           </View>
-          <Text style={[styles.note, { marginTop: 8 }]}>上传日志需要所有者密钥；日志不含密钥。</Text>
+          <Text style={[styles.note, { marginTop: 8 }]}>日志不含密钥。</Text>
         </Card>
 
         <Pressable onPress={() => { tap(); }}>

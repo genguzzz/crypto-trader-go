@@ -6,7 +6,7 @@
 import { useSyncExternalStore } from "react";
 import { AppState, Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
-import { askAdminKey, clearAdminKey, getAdminKey } from "./adminKey";
+import { getAdminKey, keyRejected, loadAdminKey } from "./adminKey";
 import { API_ORIGIN, appVersion } from "./api";
 import { has, notify } from "./device";
 import { logger } from "./log";
@@ -121,21 +121,18 @@ function streamFetch(): Promise<Fetch> {
 
 const ascii = appVersion.replace(/[^\x20-\x7e]/g, "?"); // header values must be ASCII
 
-/** fetch with the owner key; a 401 admin_required asks for the key once and retries. */
+/** fetch with the owner key; a 401 admin_required waits for KeyGate's new key and retries once. */
 async function kfetch(path: string, init: RequestInit = {}, f: Fetch = plainFetch): Promise<Response> {
   const send = (key: string) =>
-    f(API_ORIGIN + path, { ...init, headers: { ...((init.headers as Record<string, string>) || {}), "x-app-version": ascii, ...(key ? { "X-CTG-Admin": key } : {}) } });
-  let r = await send(getAdminKey());
+    f(API_ORIGIN + path, { ...init, headers: { ...((init.headers as Record<string, string>) || {}), "x-app-version": ascii, "X-CTG-Admin": key } });
+  await loadAdminKey();
+  let key = getAdminKey() || (await keyRejected(""));
+  let r = await send(key);
   if (r.status === 401) {
     const out = (await r.json().catch(() => ({}))) as { code?: string; error?: string };
     if (out?.code !== "admin_required") throw new Error(out?.error || "HTTP 401");
-    const key = await askAdminKey(getAdminKey() ? "密钥不正确，请重新输入" : "");
-    if (!key) throw new Error("需要所有者密钥");
+    key = await keyRejected(key);
     r = await send(key);
-    if (r.status === 401) {
-      clearAdminKey();
-      throw new Error("所有者密钥不正确");
-    }
   }
   return r;
 }

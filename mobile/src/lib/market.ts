@@ -6,6 +6,7 @@
 import { useSyncExternalStore } from "react";
 import { AppState, Platform } from "react-native";
 import { api, API_ORIGIN, type Meta, type Row, type Score, type Snapshot } from "./api";
+import { getAdminKey, keyRejected, loadAdminKey } from "./adminKey";
 import { load, mutate, useQuery } from "./query";
 import { getSettings, setSettings, useSettings } from "./settings";
 import { logger } from "./log";
@@ -109,7 +110,13 @@ function decodeUtf8(bytes: Uint8Array): string {
 
 async function readStream(signal: AbortSignal) {
   const { fetch: streamFetch } = await import("expo/fetch");
-  const res = await streamFetch(API_ORIGIN + "/api/v1/stream", { headers: { accept: "text/event-stream" }, signal });
+  await loadAdminKey();
+  const key = getAdminKey() || (await keyRejected(""));
+  const res = await streamFetch(API_ORIGIN + "/api/v1/stream", { headers: { accept: "text/event-stream", "x-ctg-admin": key }, signal });
+  if (res.status === 401) {
+    await keyRejected(key); // reconnect once KeyGate has a new key
+    return;
+  }
   if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
   setConnected(true);
   const reader = res.body.getReader();
@@ -141,7 +148,8 @@ async function readStream(signal: AbortSignal) {
 
 function connect(): () => void {
   if (Platform.OS === "web") {
-    const es = new EventSource(API_ORIGIN + "/api/v1/stream");
+    // web preview: EventSource cannot send headers; the server takes the key as ?key= on this path only
+    const es = new EventSource(`${API_ORIGIN}/api/v1/stream?key=${encodeURIComponent(getAdminKey())}`);
     es.addEventListener("hello", (e) => { setConnected(true); onEvent("hello", (e as MessageEvent).data); });
     es.addEventListener("universe", (e) => onEvent("universe", (e as MessageEvent).data));
     es.addEventListener("prices", (e) => onEvent("prices", (e as MessageEvent).data));

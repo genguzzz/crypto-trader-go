@@ -1,10 +1,12 @@
 // 币对视角: one instrument's candles with the account's trades marked — the web TradeCandleChart in a
 // WebView (route /embed/trades/:accountId?inst=&trade=, web views/EmbedTrades.vue). The app selects a
 // trade with window.ctgSelect(id); the page posts {type:'pick', ids} for taps on marks. While a finger
-// is on it the page scroll is locked (onTouchActive), like ChartView. Key it by instrument.
+// is on it the page scroll is locked (onTouchActive), like ChartView. Key it by instrument. The owner
+// key is injected before load, as in ChartView.
 import { useEffect, useRef, useState, type ComponentType, type Ref } from "react";
 import { ActivityIndicator, Platform, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { WebView as RNWebView, type WebViewMessageEvent, type WebViewProps } from "react-native-webview";
+import { keyScript, useAdminKey } from "@/lib/adminKey";
 import { WEB_ORIGIN } from "@/lib/api";
 import { openPage } from "@/lib/device";
 import { logger } from "@/lib/log";
@@ -20,6 +22,7 @@ export function TradeCandleView({ accountId, instId, tradeId, onPick, onTouchAct
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [nonce, setNonce] = useState(0);
+  const key = useAdminKey();
   const web = useRef<{ injectJavaScript: (s: string) => void } | null>(null);
   const loaded = useRef(false);
   // The trade only seeds the first load; later selections go through ctgSelect without a reload.
@@ -54,9 +57,10 @@ export function TradeCandleView({ accountId, instId, tradeId, onPick, onTouchAct
   return (
     <View style={[{ backgroundColor: colors.card, overflow: "hidden" }, style]} onTouchStart={() => lock(true)} onTouchEnd={() => lock(false)} onTouchCancel={() => lock(false)}>
       <WebView
-        key={`${uri}#${nonce}`}
+        key={`${uri}#${nonce}|${key}`}
         ref={web}
         source={{ uri }}
+        injectedJavaScriptBeforeContentLoaded={keyScript(key)}
         style={{ flex: 1, backgroundColor: colors.card }}
         containerStyle={{ backgroundColor: colors.card }}
         originWhitelist={["https://*"]}

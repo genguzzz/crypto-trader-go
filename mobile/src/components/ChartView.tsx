@@ -3,14 +3,14 @@
 // The page posts {type:'live', price} for the forming bar and {type:'fullscreen'|'exitFullscreen'}
 // from its full-screen button. While a finger is on the chart the parent's scroll is locked
 // (onTouchActive), so pans and pinches belong to the chart; the page scrolls everywhere else.
-// The owner key is injected before the page loads (window.ctgAdminKey, memory only there) so the
-// chart can draw the owner's OKX position. `proposal` makes the page draw that AI trade proposal's
+// The owner key is injected before the page loads (window.ctgAdminKey, memory only there): every API
+// request the page makes needs it; a new key reloads the page. `proposal` makes the page draw that AI trade proposal's
 // entry / stop / target (query `proposal=<id>`).
 import { useMemo, useState, type ComponentType } from "react";
 import { ActivityIndicator, Platform, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { WebView as RNWebView, type WebViewMessageEvent, type WebViewProps } from "react-native-webview";
 import { WEB_ORIGIN } from "@/lib/api";
-import { getAdminKey, useAdminKeySet } from "@/lib/adminKey";
+import { keyScript, useAdminKey } from "@/lib/adminKey";
 import { logger } from "@/lib/log";
 import { openPage } from "@/lib/device";
 import { colors, fs } from "@/lib/theme";
@@ -36,8 +36,7 @@ export function ChartView({ id, hasSpot, hasOi, full, proposal, style, onLive, o
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [nonce, setNonce] = useState(0);
-  const keySet = useAdminKeySet();
-  const inject = useMemo(() => (keySet ? `window.ctgAdminKey = ${JSON.stringify(getAdminKey())}; true;` : "true;"), [keySet]);
+  const key = useAdminKey();
   const uri = useMemo(() => {
     const p = new URLSearchParams();
     if (hasSpot !== undefined) p.set("spot", hasSpot ? "1" : "0");
@@ -76,9 +75,9 @@ export function ChartView({ id, hasSpot, hasOi, full, proposal, style, onLive, o
       onTouchCancel={() => lock(false)}
     >
       <WebView
-        key={nonce}
+        key={`${nonce}|${key}`}
         source={{ uri }}
-        injectedJavaScriptBeforeContentLoaded={inject}
+        injectedJavaScriptBeforeContentLoaded={keyScript(key)}
         style={{ flex: 1, backgroundColor: colors.card }}
         containerStyle={{ backgroundColor: colors.card }}
         originWhitelist={["https://*"]}

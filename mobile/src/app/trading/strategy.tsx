@@ -3,7 +3,7 @@
 // draft autosaves 1.2 s and checks 1.5 s after typing stops, like the web) · 问题/说明 (diagnostics,
 // declared meta and params, published versions) · 试运行 (days, universe, params) · 结果 (KPIs,
 // trade-marked candles, signals / log / trades). Saving, checking, trials and publishing use the
-// owner key through req's AdminKeySheet retry. Leaving the page or the app saves a pending draft.
+// owner key (req, like every call). Leaving the page or the app saves a pending draft.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";

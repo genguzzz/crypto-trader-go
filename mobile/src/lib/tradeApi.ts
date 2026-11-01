@@ -1,6 +1,6 @@
 // Paper trading, confirmations and AI review endpoints (web/src/tradeApi.ts; types mirror
 // internal/trade/contract.go). Writes that run code or spend money (user strategies, check, trial,
-// AI memory reflect) need the owner key: `req` asks for it through AdminKeySheet on a 401.
+// AI memory reflect) need the owner key, like every call (`req` sends it; KeyGate on a 401).
 import { req } from "./api";
 
 // ---------- enums ----------
