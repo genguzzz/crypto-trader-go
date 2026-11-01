@@ -32,6 +32,7 @@ const KINDS: { value: Kind; label: string }[] = [
   { value: "time", label: "定时复查" },
   { value: "script", label: "脚本" },
 ];
+const SLOW: string[] = ["5m", "15m", "1H"]; // BTC / ETH only
 const EVERY: { value: "" | "tick" | "1m" | "5m" | "15m" | "1H"; label: string }[] = [
   { value: "", label: "默认" }, { value: "tick", label: "实时" }, { value: "1m", label: "1 分" }, { value: "5m", label: "5 分" }, { value: "15m", label: "15 分" }, { value: "1H", label: "1 时" },
 ];
@@ -96,6 +97,7 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
   const [maxFires, setMaxFires] = useState(1);
   // how often the server checks it ("" = its default: real time for last-price levels / zones / times, else each minute)
   const [every, setEvery] = useState<"" | "tick" | "1m" | "5m" | "15m" | "1H">("");
+  const slowOk = !inst || inst === "BTC-USDT-SWAP" || inst === "ETH-USDT-SWAP"; // the server checks alts at least every minute
   const [intent, setIntent] = useState("");
   const [intentEdited, setIntentEdited] = useState(false);
   const [err, setErr] = useState("");
@@ -217,7 +219,8 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
     setErr("");
     setBusy(true);
     try {
-      const r = await createSignal({ spec: s, intent: intentText.trim(), expiresHours: hours, maxFires, ...(every ? { every } : {}), ...(kind === "script" ? { code } : {}) });
+      const ev = !slowOk && kind !== "script" && SLOW.includes(every) ? "1m" : every;
+      const r = await createSignal({ spec: s, intent: intentText.trim(), expiresHours: hours, maxFires, ...(ev ? { every: ev } : {}), ...(kind === "script" ? { code } : {}) });
       toast("信号已订阅", r.desc);
       reset();
       onClose();
@@ -361,8 +364,11 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
       </View>
       <View style={{ gap: 4, paddingBottom: 8 }}>
         {lbl("检查间隔")}
-        <Segmented small value={kind === "script" && every === "tick" ? "" : every} onChange={setEvery} options={kind === "script" ? EVERY.filter((o) => o.value !== "tick") : EVERY} />
-        <Muted>{kind === "script" ? "脚本在它的 K 线收盘时运行；这里设的是最短间隔（比如 5m 周期选 15 分，就只在每个 15 分钟整点运行）。" : "越慢越省资源；不需要第一时间响应的条件选 5 分或更慢，两次检查之间的短暂插针可能错过。"}</Muted>
+        <Segmented small value={kind === "script" && every === "tick" ? "" : !slowOk && kind !== "script" && SLOW.includes(every) ? "1m" : every} onChange={setEvery}
+          options={kind === "script" ? EVERY.filter((o) => o.value !== "tick") : slowOk ? EVERY : EVERY.filter((o) => !SLOW.includes(o.value))} />
+        <Muted>{kind === "script" ? "脚本在它的 K 线收盘时运行；这里设的是最短间隔（比如 5m 周期选 15 分，就只在每个 15 分钟整点运行）。"
+          : slowOk ? "BTC / ETH 不需要第一时间响应的条件可选 5 分或更慢，更省资源；两次检查之间的短暂插针可能错过。"
+          : "山寨币最慢每分钟检查一次（只有 BTC / ETH 可以更慢）。"}</Muted>
       </View>
       {caps ? <Muted>活跃 {caps.active}/{caps.maxActive} · 今天已唤醒 AI {caps.wakesToday}/{caps.wakesPerDay} 次{caps.scripts ? ` · 脚本 ${caps.scripts.activeScripts}/${caps.scripts.maxActive}` : ""}</Muted> : null}
       <ScriptEditorSheet visible={editing} code={code} onChange={setCode} diagnostics={tested?.diagnostics ?? []} testing={testing} result={tested}
