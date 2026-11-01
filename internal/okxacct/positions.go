@@ -7,6 +7,7 @@ package okxacct
 
 import (
 	"context"
+	"errors"
 	"log"
 	"math"
 	"net/url"
@@ -226,6 +227,19 @@ func New(cfg Config) *Service {
 }
 
 func (s *Service) Enabled() bool { return s != nil && s.c != nil }
+
+// Read is one uncached GET of any allowed private endpoint (deposits, withdrawals, bills, fills, order
+// history …) for the agent: the response's data, decoded generically.
+func (s *Service) Read(ctx context.Context, path string, q url.Values) (any, error) {
+	if !s.Enabled() {
+		return nil, errors.New("okx account not configured")
+	}
+	var out any
+	if err := s.c.get(ctx, path, q, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 // Snapshot returns the open positions (all, or one instrument's) with TP/SL and equity.
 func (s *Service) Snapshot(ctx context.Context, instID string) (Snapshot, error) {

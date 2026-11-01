@@ -420,7 +420,96 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			},
 		})
 	}
+	if s.okxRead != nil {
+		eps = append(eps, &Endpoint{
+			Name: "okx_api", Path: "okx", Summary: "Read any private OKX API endpoint of the owner's account (GET only, read-only key)",
+			Desc: "One signed GET to OKX's v5 REST API for the owner's own account, for questions the other tools don't cover. Read-only: " +
+				"GET under /api/v5/account/, asset/, trade/, finance/, tradingBot/, copytrading/, users/; nothing can be placed, moved or withdrawn. " +
+				"Common paths (params; times are ms; pages via after/before = the last row's id or ts; limit ≤ 100): " +
+				"deposits /api/v5/asset/deposit-history (ccy, state 2=credited, after, before, limit) · withdrawals /api/v5/asset/withdrawal-history " +
+				"(ccy, state 2=done, after, before, limit) · funding-account bills /api/v5/asset/bills (ccy, type, after, before, limit) · " +
+				"trading-account bills /api/v5/account/bills (7 days) and /api/v5/account/bills-archive (3 months) (instType, ccy, type 2=trade 8=funding fee, " +
+				"after/before = billId, begin/end ms) · fills /api/v5/trade/fills-history (instType=SWAP required, 3 months) · orders " +
+				"/api/v5/trade/orders-history (7 days) and orders-history-archive (3 months) (instType=SWAP required) · closed positions " +
+				"/api/v5/account/positions-history (instType, instId, limit) · funding balances /api/v5/asset/balances · account valuation " +
+				"/api/v5/asset/asset-valuation (ccy) · fee tier /api/v5/account/trade-fee (instType=SWAP) · account config /api/v5/account/config. " +
+				"Output: data rows with empty fields dropped and ms times (ts, cTime, uTime, fillTime …) also given in Beijing time; " +
+				"use fields to keep only the columns you need. Sum or count from the rows yourself and say which period they cover.",
+			Params: []Param{
+				{Name: "path", In: "query", Type: "string", Required: true, Desc: "the endpoint path, e.g. /api/v5/asset/deposit-history"},
+				{Name: "query", In: "query", Type: "string", Desc: "OKX query parameters as k=v&k=v, e.g. ccy=USDT&limit=100"},
+				{Name: "fields", In: "query", Type: "string", Desc: "comma-separated columns to keep, e.g. ts,ccy,amt,state (default all)"},
+				{Name: "limit", In: "query", Type: "integer", Default: 100, Min: 1, Max: 300, Desc: "rows returned at most"},
+			},
+			owner: true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				path := a.Str("path")
+				if !strings.HasPrefix(path, "/") {
+					path = "/" + path
+				}
+				v, err := s.okxRead(ctx, path, a.Str("query"))
+				if err != nil {
+					return nil, err
+				}
+				return okxRows(v, a.Str("fields"), a.Int("limit")), nil
+			},
+		})
+	}
 	return eps
+}
+
+var tz8 = time.FixedZone("UTC+8", 8*3600)
+
+// okxRows trims an OKX data array for the model: chosen columns, no empty values, ms times also as
+// Beijing time, at most limit rows.
+func okxRows(v any, fields string, limit int) any {
+	rows, ok := v.([]any)
+	if !ok {
+		return v
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	keep := map[string]bool{}
+	for _, f := range strings.Split(fields, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			keep[f] = true
+		}
+	}
+	out := make([]any, 0, min(len(rows), limit))
+	for _, r := range rows[:min(len(rows), limit)] {
+		m, ok := r.(map[string]any)
+		if !ok {
+			out = append(out, r)
+			continue
+		}
+		c := map[string]any{}
+		for k, x := range m {
+			if len(keep) > 0 && !keep[k] {
+				continue
+			}
+			if str, ok := x.(string); ok {
+				if str == "" {
+					continue
+				}
+				if (k == "ts" || strings.HasSuffix(k, "Time")) && len(str) == 13 {
+					if ms, err := strconv.ParseInt(str, 10, 64); err == nil {
+						c[k+"_bj"] = time.UnixMilli(ms).In(tz8).Format("2006-01-02 15:04:05")
+					}
+				}
+			}
+			if arr, ok := x.([]any); ok && len(arr) == 0 {
+				continue
+			}
+			c[k] = x
+		}
+		out = append(out, c)
+	}
+	res := map[string]any{"rows": len(rows), "data": out}
+	if len(rows) > limit {
+		res["truncated"] = fmt.Sprintf("showing %d of %d rows", limit, len(rows))
+	}
+	return res
 }
 
 // tail keeps the newest n items (the engine pads short requests to at least 10 bars).

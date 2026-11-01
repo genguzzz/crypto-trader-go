@@ -359,3 +359,18 @@ func TestRebaseAfterTail(t *testing.T) {
 		t.Fatal("input mutated")
 	}
 }
+
+func TestOKXRows(t *testing.T) {
+	v := []any{
+		map[string]any{"ts": "1793500000000", "ccy": "USDT", "amt": "100", "txId": "", "state": "2"},
+		map[string]any{"ts": "1793400000000", "ccy": "USDT", "amt": "50", "state": "2"},
+	}
+	r := okxRows(v, "ts,amt", 1).(map[string]any)
+	if r["rows"] != 2 || r["truncated"] == nil {
+		t.Fatalf("got %v", r)
+	}
+	row := r["data"].([]any)[0].(map[string]any)
+	if row["amt"] != "100" || row["ccy"] != nil || row["ts_bj"] != "2026-11-01 10:26:40" {
+		t.Fatalf("row %v", row)
+	}
+}

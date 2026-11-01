@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -107,6 +108,13 @@ func main() {
 	if acct.Enabled() {
 		log.Printf("okx account: read-only positions via private proxy %s", acctCfg.Proxy.Host)
 		dev.SetPositions(func(ctx context.Context, inst string) (any, error) { return acct.Snapshot(ctx, inst) })
+		dev.SetOKXRead(func(ctx context.Context, path, query string) (any, error) {
+			q, err := url.ParseQuery(query)
+			if err != nil {
+				return nil, fmt.Errorf("query: %w", err)
+			}
+			return acct.Read(ctx, path, q)
+		})
 	} else if acctCfg.Key != "" || acctCfg.Proxy != nil {
 		log.Printf("okx account: disabled (needs OKX_API_KEY, OKX_API_SECRET, OKX_API_PASSPHRASE and OKX_PRIVATE_PROXY)")
 	}

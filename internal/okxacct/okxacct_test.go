@@ -196,3 +196,21 @@ func TestRoute(t *testing.T) {
 		t.Fatalf("disabled route: %d %s", w.Code, w.Body)
 	}
 }
+
+func TestReadAllowed(t *testing.T) {
+	for p, want := range map[string]bool{
+		"/api/v5/asset/deposit-history":    true,
+		"/api/v5/account/bills-archive":    true,
+		"/api/v5/trade/fills-history":      true,
+		"/api/v5/asset/":                   false,
+		"/api/v5/market/tickers":           false,
+		"/api/v5/asset/../trade/order":     false,
+		"/api/v5/asset/bills?x=1":          false,
+		"/api/v5/asset/bills%2F..%2Fother": false,
+		"/api/v5/account/positions":        true,
+	} {
+		if ReadAllowed(p) != want {
+			t.Errorf("ReadAllowed(%q) = %v", p, !want)
+		}
+	}
+}

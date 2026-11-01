@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -32,6 +34,35 @@ var readPaths = map[string]bool{
 	"/api/v5/account/positions":         true,
 	"/api/v5/account/balance":           true,
 	"/api/v5/trade/orders-algo-pending": true,
+}
+
+// readPrefixes is what the agent's generic okx_api tool may read: any GET under these is a read (every
+// OKX write — order, cancel, transfer, withdraw — is a POST, and this client only sends GET; the key
+// itself is read-only too).
+var readPrefixes = []string{"/api/v5/account/", "/api/v5/asset/", "/api/v5/trade/", "/api/v5/finance/",
+	"/api/v5/tradingBot/", "/api/v5/copytrading/", "/api/v5/users/"}
+
+// writeName matches the last path segment of OKX's write endpoints (order, cancel, amend, transfer, withdraw, set …).
+var writeName = regexp.MustCompile(`^(order|batch-orders|order-algo|close-position|transfer|withdrawal|purchase|redeem|convert-dust|` +
+	`(cancel|amend|mass-cancel|set|move|apply|activate|place|adjust|borrow|repay)(-.*)?)$`)
+
+// ReadAllowed reports whether path may be read through the generic tool.
+func ReadAllowed(path string) bool {
+	if readPaths[path] {
+		return true
+	}
+	if strings.ContainsAny(path, "?#%\\ ") || strings.Contains(path, "..") {
+		return false
+	}
+	if writeName.MatchString(path[strings.LastIndex(path, "/")+1:]) {
+		return false // belt and braces: never even GET a path named like a write endpoint
+	}
+	for _, p := range readPrefixes {
+		if strings.HasPrefix(path, p) && len(path) > len(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // Config is the read-only API key and the proxy its IP is bound to. Never logged.
@@ -100,7 +131,7 @@ func (e *APIError) Error() string { return "okx " + e.Path + ": " + e.Code + " "
 
 // get calls one allow-listed read endpoint and decodes its data array into out.
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
-	if !readPaths[path] {
+	if !ReadAllowed(path) {
 		return fmt.Errorf("okxacct: %s is not an allowed read endpoint", path)
 	}
 	if c.cfg.Proxy == nil {

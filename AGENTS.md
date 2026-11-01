@@ -4,7 +4,7 @@ Rules for every AI agent (Claude Code, Codex, …) working in this repository. R
 
 ## Product constraints (don't change without the owner)
 
-- Public OKX market data only. **Never place real orders**; never read the OKX account without explicit approval (approved 2026-11-01: the owner's open positions and TP/SL, read-only key, `internal/okxacct`). Simulated (paper) trading is approved (2026-10-02, [trading design](docs/trading-design.md)); `ModeReal` stays rejected until a separate approval.
+- Public OKX market data only. **Never place real orders**; never read the OKX account without explicit approval (approved 2026-11-01: the owner's open positions and TP/SL, and read-only queries of his account for the agent (`okx_api`: deposits, withdrawals, bills, history); read-only key, `internal/okxacct`). Simulated (paper) trading is approved (2026-10-02, [trading design](docs/trading-design.md)); `ModeReal` stays rejected until a separate approval.
 - Pool definition: 12h turnover = `volCcyQuote` over 720 consecutive confirmed 1m candles, strictly above the threshold (default 5M USDT), top N. A missing minute is a gap, not zero. `volCcy24h` is not USDT turnover.
 - Scores come only from user rules over pool percentiles, are always labeled unvalidated, and only the track record (out-of-sample Rank IC, net-of-cost returns) can support them. Long/short are independent; missing input means unscored, never 0.
 - Live and replay share `features.Compute`; hourly snapshots are immutable; preview values never enter the track record.
