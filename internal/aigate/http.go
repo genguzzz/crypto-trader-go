@@ -103,6 +103,8 @@ func (g *Gate) Register(mux *http.ServeMux) {
 		writeJSON(w, 200, map[string]string{"text": text})
 	})
 	mux.HandleFunc("GET /api/v1/ai/status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, g.Status()) })
+	// the app's model menu: models, thinking levels, web search default
+	mux.HandleFunc("GET /api/v1/ai/options", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, g.ChatOptions()) })
 	mux.HandleFunc("PUT /api/v1/ai/credential", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{ Kind, Value string }
 		if !decode(w, r, &in) {

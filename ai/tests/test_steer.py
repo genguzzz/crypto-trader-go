@@ -120,3 +120,8 @@ class TurnOptions(unittest.TestCase):
         self.assertNotIn("WebSearch", off.tools)
         self.assertNotIn("WebFetch", off.allowed_tools)
         self.assertEqual(off.effort, "low")
+
+    def test_effort_off_disables_thinking(self):
+        o = agent.build_chat_options({**CHAT_CONFIG, "effort": "off"}, "http://127.0.0.1:9", "1", "")
+        self.assertEqual(o.thinking, {"type": "disabled"})
+        self.assertFalse(hasattr(o, "effort"))

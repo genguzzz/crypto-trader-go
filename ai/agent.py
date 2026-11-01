@@ -31,7 +31,7 @@ AGENT_DIR = Path(__file__).resolve().parent / "agent"  # cwd: holds .claude/skil
 CHAT_PROMPT = "chat_v2"
 CHAT_MAX_TURNS = 60
 CHAT_MODELS = ("claude-sonnet-5", "claude-opus-5-5")  # chosen per turn in the app
-CHAT_EFFORTS = ("low", "medium", "high")
+CHAT_EFFORTS = ("off", "low", "medium", "high")  # "off" turns thinking off
 SANDBOX_SOCKET = os.environ.get("CTG_SANDBOX_SOCKET", "/run/sbx/sbx.sock")
 # ctg data tools the agent may call directly: small, parameterised answers (a few thousand characters).
 # Raw series (candles, minute OI, liquidation map, compare, track records: 15k–95k characters) are only
@@ -435,7 +435,9 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
     )
     if session:
         kw["resume"] = session
-    if config.get("effort"):
+    if config.get("effort") == "off":
+        kw["thinking"] = {"type": "disabled"}
+    elif config.get("effort"):
         kw["effort"] = config["effort"]
     return ClaudeAgentOptions(**kw)
 

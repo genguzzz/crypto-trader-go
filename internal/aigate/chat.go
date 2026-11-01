@@ -181,9 +181,48 @@ const (
 	RoleTrade     = "trade"
 )
 
-// ChatModels and ChatEfforts the app may pick per turn.
-var ChatModels = []string{"claude-sonnet-5", "claude-opus-5-5"}
-var ChatEfforts = []string{"low", "medium", "high"}
+// ChatOption is one choice in the app's model menu.
+type ChatOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Hint  string `json:"hint"`
+}
+
+// The app's model menu comes from here (GET /api/v1/ai/options), so every app shows the same choices.
+// Effort "" (默认) sends nothing: the agent's configured effort applies; "off" turns thinking off.
+var (
+	chatModelOptions = []ChatOption{
+		{"claude-sonnet-5", "Sonnet", "快，日常分析够用"},
+		{"claude-opus-5-5", "Opus", "最强，慢一些、更费 token"},
+	}
+	chatEffortOptions = []ChatOption{
+		{"", "默认", "不指定，用服务器的设置"},
+		{"off", "关", "不思考，最快最省，适合查数据"},
+		{"low", "低", "想得少，省 token，适合简单问答"},
+		{"medium", "中", "平衡，大多数行情分析"},
+		{"high", "高", "想得最久，复杂的多空研判和复盘"},
+	}
+	ChatModels  = values(chatModelOptions)
+	ChatEfforts = values(chatEffortOptions[1:])
+)
+
+func values(o []ChatOption) []string {
+	out := make([]string, len(o))
+	for i, x := range o {
+		out[i] = x.Value
+	}
+	return out
+}
+
+// ChatOptions is what the app's model menu shows.
+func (g *Gate) ChatOptions() map[string]any {
+	return map[string]any{
+		"models":    chatModelOptions,
+		"efforts":   chatEffortOptions,
+		"webSearch": map[string]any{"default": true, "hint": "查新闻、公告时搜网页；关掉更省"},
+		"defaults":  map[string]any{"model": g.currentModel(), "effort": ""},
+	}
+}
 
 // ErrChatBusy: the chat is answering; a new turn has to wait until it ends.
 var ErrChatBusy = errors.New("这个对话还在回答中")
