@@ -17,7 +17,7 @@ import { AiBlock } from "@/components/ai/AiBlock";
 import { AiSteps, type StepItem } from "@/components/ai/AiSteps";
 import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
-import { HistoryPane, NotesPane } from "@/components/ai/AiPanes";
+import { HistoryPane, NotesPane, SelectPane, plainText } from "@/components/ai/AiPanes";
 import { VoiceWave } from "@/components/ai/VoiceWave";
 import { segments } from "@/components/ai/blocks";
 
@@ -57,9 +57,10 @@ export default function AiScreen() {
   const insets = useSafeAreaInsets();
   const [input, setInput] = useState("");
   // history / memory slide over the chat inside this sheet (a modal pushed from the sheet took no touches)
-  const [pane, setPane] = useState<"history" | "notes" | null>(null);
+  const [pane, setPane] = useState<"history" | "notes" | "select" | null>(null);
+  const [selText, setSelText] = useState("");
   const [slide] = useState(() => new Animated.Value(0));
-  const showPane = (p: "history" | "notes" | null) => {
+  const showPane = (p: "history" | "notes" | "select" | null) => {
     if (p) {
       setPane(p);
       slide.setValue(0);
@@ -68,6 +69,14 @@ export default function AiScreen() {
       Animated.timing(slide, { toValue: 0, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => setPane(null));
     }
   };
+  // long-press a message → its text in a native selectable view (RN Text can only copy whole runs)
+  const selectText = useCallback((t: string) => {
+    void haptic("medium");
+    Keyboard.dismiss();
+    setSelText(plainText(t));
+    showPane("select");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [kb, setKb] = useState(false);
   const scroller = useRef<ScrollViewInstance>(null);
   const inputRef = useRef<TextInputInstance>(null);
@@ -216,7 +225,7 @@ export default function AiScreen() {
             </View>
           ) : null}
 
-          {s.msgs.map((m, mi) => (m.role === "user" ? <UserBubble key={m.id ?? "m" + mi} text={textOf(m)} /> : <Answer key={m.id ?? "m" + mi} m={m} now={now} />))}
+          {s.msgs.map((m, mi) => (m.role === "user" ? <UserBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} /> : <Answer key={m.id ?? "m" + mi} m={m} now={now} onSelect={selectText} />))}
 
           {s.running && lastMsg?.role === "user" ? <Thinking label="思考中" /> : null}
           {s.reconnecting ? (
@@ -288,7 +297,7 @@ export default function AiScreen() {
       {pane ? (
         <Animated.View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 10, backgroundColor: colors.bg,
           transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [width, 0] }) }] }}>
-          {pane === "history" ? <HistoryPane onClose={() => showPane(null)} /> : <NotesPane onClose={() => showPane(null)} />}
+          {pane === "history" ? <HistoryPane onClose={() => showPane(null)} /> : pane === "select" ? <SelectPane text={selText} onClose={() => showPane(null)} /> : <NotesPane onClose={() => showPane(null)} />}
         </Animated.View>
       ) : null}
     </GestureHandlerRootView>
@@ -321,11 +330,11 @@ function Spinner() {
   return <Animated.View style={{ width: 13, height: 13, borderRadius: 7, borderWidth: 2, borderColor: colors.borderStrong, borderTopColor: colors.primary, transform: [{ rotate: a.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] }) }] }} />;
 }
 
-const UserBubble = memo(function UserBubble({ text }: { text: string }) {
+const UserBubble = memo(function UserBubble({ text, onSelect }: { text: string; onSelect: (t: string) => void }) {
   return (
     <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 14, marginBottom: 6 }}>
       <Pressable
-        onLongPress={() => { void haptic("medium"); void copy(text).then((ok) => ok && toast("已复制")); }}
+        onLongPress={() => onSelect(text)}
         style={{ maxWidth: "84%", paddingHorizontal: 13, paddingVertical: 9, borderTopLeftRadius: 16, borderTopRightRadius: 16, borderBottomLeftRadius: 16, borderBottomRightRadius: 4, backgroundColor: "#22281a", borderWidth: 1, borderColor: "rgba(188,255,47,0.18)" }}
       >
         <Text selectable style={{ fontSize: fs.lg, lineHeight: 21, color: colors.text }}>{text}</Text>
@@ -334,13 +343,13 @@ const UserBubble = memo(function UserBubble({ text }: { text: string }) {
   );
 });
 
-function Answer({ m, now }: { m: Msg; now: number }) {
+function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: string) => void }) {
   const gs = groups(m);
   const phase = phaseOf(m, now);
   const live = !!m.live;
   const text = textOf(m);
   return (
-    <View style={{ marginTop: 8, marginBottom: 4 }}>
+    <Pressable onLongPress={!live && text ? () => onSelect(text) : undefined} delayLongPress={350} style={{ marginTop: 8, marginBottom: 4 }}>
       {gs.map((g, gi) =>
         g.k === "tools" ? (
           <AiSteps key={gi} items={g.items} live={live} tail={gi === gs.length - 1} />
@@ -371,11 +380,14 @@ function Answer({ m, now }: { m: Msg; now: number }) {
           <Pressable hitSlop={8} accessibilityLabel="复制" onPress={() => { tap(); void copy(text).then((ok) => toast(ok ? "已复制" : "复制失败")); }} style={({ pressed }) => ({ width: 26, height: 26, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.cardMuted : undefined })}>
             <Ionicons name="copy-outline" size={13} color={colors.textSoft} />
           </Pressable>
+          <Pressable hitSlop={8} accessibilityLabel="选择文本" onPress={() => { tap(); onSelect(text); }} style={({ pressed }) => ({ width: 26, height: 26, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.cardMuted : undefined })}>
+            <Ionicons name="text-outline" size={14} color={colors.textSoft} />
+          </Pressable>
           {m.latencyMs ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{(m.latencyMs / 1000).toFixed(0)}s</Text> : null}
           {m.costUsd ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>· ${m.costUsd.toFixed(3)}</Text> : null}
         </View>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 

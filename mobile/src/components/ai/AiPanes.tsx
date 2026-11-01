@@ -5,7 +5,9 @@ import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput,
 import { Ionicons } from "@expo/vector-icons";
 import { addNote, deleteChat, deleteNote, loadChats, loadNotes, openChat, useAi } from "@/lib/ai";
 import { colors, fs, radius } from "@/lib/theme";
-import { EmptyState, ErrorBox, Loading, Pull, confirm, tap, toastError, styles } from "@/components/ui";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { copy } from "@/lib/device";
+import { EmptyState, ErrorBox, Loading, Pull, confirm, tap, toast, toastError, styles } from "@/components/ui";
 
 function PaneHeader({ title, onClose }: { title: string; onClose: () => void }) {
   return (
@@ -144,6 +146,44 @@ export function NotesPane({ onClose }: { onClose: () => void }) {
           ))}
         </ScrollView>
       </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+/** Markdown → plain text for selecting: links, emphasis and code marks dropped, structure kept. */
+export function plainText(md: string) {
+  return md
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** The answer as native iOS text: drag the handles to select any span, then copy / look up / share. */
+export function SelectPane({ text, onClose }: { text: string; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={{ flex: 1 }}>
+      <PaneHeader title="选择文本" onClose={onClose} />
+      <TextInput
+        value={text}
+        editable={false}
+        multiline
+        scrollEnabled
+        style={{ flex: 1, paddingHorizontal: 16, paddingTop: 12, paddingBottom: insets.bottom + 24, fontSize: fs.lg, lineHeight: 24, color: colors.text, textAlignVertical: "top" }}
+      />
+      <View style={{ position: "absolute", right: 12, top: Platform.OS === "web" ? 10 : 16 }}>
+        <Pressable
+          hitSlop={8}
+          onPress={() => { tap(); void copy(text).then((ok) => toast(ok ? "已复制全文" : "复制失败")); }}
+          style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 11, height: 32, borderRadius: 16, backgroundColor: pressed ? colors.raised : colors.cardMuted })}
+        >
+          <Ionicons name="copy-outline" size={14} color={colors.text} />
+          <Text style={{ fontSize: fs.sm, color: colors.text }}>全部复制</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
