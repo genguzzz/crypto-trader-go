@@ -1,8 +1,9 @@
 """rev — move risk after an extended move, for OKX perpetuals (ctg sandbox tool).
 
-  rev X [-b 1H|15m|4H]   for one coin: the validated move-risk probabilities (1H), the squeeze veto, and
+  rev X [Y …] [-b 1H|15m|4H]  per coin: the validated move-risk probabilities (1H), the squeeze veto, and
                          the exhaustion checklist as a description of the move, with a fade reference
-  rev scan [-n 6]        the pool's biggest 4h movers: which are in an extended state and how risky a fade is
+  rev scan [-n 6]        the pool's biggest 4h movers (-n up to 30): which are in an extended state and how risky
+                         a fade is. A ranking of 20–30 coins is `rev scan -n 30`; never import this file.
 
 What is and is not supported (2-year OKX 1H study, 19-month walk-forward out of sample):
   · No exhaustion sign or model predicts direction (AUC 0.47–0.53), the checklist included (0.49/0.50).
@@ -108,7 +109,7 @@ def scan(n: int) -> str:
     rows = [r for r in rows if r.get("v", {}).get("ret_4h") is not None]
     rows.sort(key=lambda r: abs(r["v"]["ret_4h"]) * (1 + max(0, r["v"].get("vol_surprise_4h") or 0)), reverse=True)
     picks = [r["instId"] for r in rows[:n]]
-    with ThreadPoolExecutor(3) as ex:
+    with ThreadPoolExecutor(4) as ex:
         res = [x for x in ex.map(_safe, picks) if isinstance(x, dict)]
 
     def key(d):
@@ -133,11 +134,15 @@ def main(argv):
         print(__doc__)
         return
     if argv[0] == "scan":
-        n = int(argv[argv.index("-n") + 1]) if "-n" in argv else 6
-        print(scan(min(max(n, 1), 10)))
+        flag = next((f for f in ("-n", "--limit", "--top") if f in argv), None)
+        n = int(argv[argv.index(flag) + 1]) if flag else 6
+        print(scan(min(max(n, 1), 30)))
         return
     bar = argv[argv.index("-b") + 1] if "-b" in argv else "1H"
-    print(report(get("exhaustion", instId=inst_id(argv[0]), bar=bar)))
+    coins = [a for i, a in enumerate(argv) if not a.startswith("-") and (i == 0 or argv[i - 1] != "-b")][:12]
+    with ThreadPoolExecutor(4) as ex:
+        res = list(ex.map(lambda c: get("exhaustion", instId=inst_id(c), bar=bar), coins))
+    print("\n\n".join(report(d) for d in res))
 
 
 if __name__ == "__main__":

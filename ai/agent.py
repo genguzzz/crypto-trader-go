@@ -55,39 +55,36 @@ CA_LABELS = {
 }
 
 def label_for(name: str, inp: Any = None) -> str:
-    """Owner-facing label: what the step does, never how (no "sandbox" / tool ids)."""
+    """Owner-facing label: what the step does, never how (no "sandbox" / tool ids). Shell steps are named
+    after the command (the command line itself is the subject, see brief_input)."""
     short = name.split("__")[-1]
-    if short == "shell" and isinstance(inp, dict):
-        cmd = str(inp.get("cmd", "")).strip()
-        first = cmd.split()[:3]
-        if first and first[0] == "ca" and len(first) > 1:
-            if first[1] == "news" and "--read" in cmd:
-                return "读新闻正文"
-            return CA_LABELS.get(first[1], "数据分析")
-        if first and first[0] == "rev":
-            return "反转扫描" if len(first) > 1 and first[1] == "scan" else "反转评分"
-        if "python" in cmd[:40]:
-            return "Python 计算"
-        return "计算"
     if short == "shell":
-        return "计算"
+        words = str(inp.get("cmd", "")).split()[:3] if isinstance(inp, dict) else []
+        if len(words) > 1 and words[0] == "ca":
+            if words[1] == "news" and "--read" in inp.get("cmd", ""):
+                return "读新闻正文"
+            return CA_LABELS.get(words[1], f"ca {words[1]}")
+        if words and words[0] == "rev":
+            return "反转扫描" if len(words) > 1 and words[1] == "scan" else "反转评分"
+        return "命令"
     return TOOL_LABELS.get(short, short)
 
 
+def shell_line(cmd: str, limit: int = 90) -> str:
+    """A shell command on one line for the step chip: noise (stderr redirects, `| head`) dropped."""
+    s = re.sub(r"\s*2>&1", "", cmd)
+    s = re.sub(r"\s*\|\s*head(\s+-n?\s*\d+)?\s*$", "", s.strip(), flags=re.M)
+    s = " ⏎ ".join(x.strip() for x in s.splitlines() if x.strip())
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
 def brief_input(name: str, inp: Any) -> str:
-    """Short subject shown next to the label (e.g. the instrument or the search query)."""
+    """Short subject shown next to the label (e.g. the instrument, the search query, the command)."""
     if not isinstance(inp, dict):
         return ""
     short = name.split("__")[-1]
     if short == "shell":
-        words = str(inp.get("cmd", "")).split()
-        if len(words) > 1 and words[0] == "rev" and words[1] != "scan":
-            return words[1]
-        if len(words) > 2 and words[0] == "ca":
-            subj = [w for w in words[2:] if not w.startswith("-") and "=" not in w][:1]
-            inst = [w.split("=", 1)[1] for w in words[2:] if w.startswith("instId=")][:1]
-            return " ".join(inst or subj)[:60]
-        return ""
+        return shell_line(str(inp.get("cmd", "")))
     if short == "WebSearch":
         return str(inp.get("query", ""))[:80]
     if short == "WebFetch":
