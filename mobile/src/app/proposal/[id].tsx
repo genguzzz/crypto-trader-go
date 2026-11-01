@@ -21,7 +21,7 @@ export default function ProposalScreen() {
         <Loading />
       ) : (
         <ScrollView contentContainerStyle={{ paddingBottom: 60 }}>
-          <ChartView id={p.instId} proposal={p.id} style={{ height: Math.round(Math.min(480, height * 0.5)) }} />
+          <ChartView id={p.instId} proposal={p.id} compact style={{ height: Math.round(Math.max(300, Math.min(520, height * 0.5))) }} />
           <View style={{ padding: 10, gap: 10 }}>
             <ProposalCard p={p} inChart />
             {p.events?.map((e, i) => (

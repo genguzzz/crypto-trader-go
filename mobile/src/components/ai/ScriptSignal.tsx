@@ -146,12 +146,13 @@ export function ScriptTestView({ t }: { t: ScriptTest }) {
 }
 
 /** The script section of a subscription's detail. */
-export function ScriptSection({ x, every }: { x: ScriptInfo; every?: string }) {
+/** bare: without its own 脚本 title (inside a titled section). */
+export function ScriptSection({ x, every, bare }: { x: ScriptInfo; every?: string; bare?: boolean }) {
   const [code, setCode] = useState(false);
   const cadence = every && every !== "1m" && every !== x.timeframe ? `${x.timeframe} 收盘，至少间隔 ${EVERY_TEXT[every] ?? every}` : `每根 ${x.timeframe} K 线收盘`;
   return (
-    <View style={{ gap: 8, paddingHorizontal: 4 }}>
-      <Text style={{ fontSize: fs.sm, fontWeight: "600", color: colors.textSoft }}>脚本</Text>
+    <View style={{ gap: 8, paddingHorizontal: bare ? 0 : 4 }}>
+      {bare ? null : <Text style={{ fontSize: fs.sm, fontWeight: "600", color: colors.textSoft }}>脚本</Text>}
       <Text style={[{ fontSize: fs.sm, color: colors.textSoft }, tnum]}>
         {cadence}检查 · {x.instIds.map((i) => i.split("-")[0]).join("、")} · 回看 {x.lookback} 根
       </Text>

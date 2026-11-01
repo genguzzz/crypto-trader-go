@@ -248,7 +248,7 @@ export function ProposalChartHost() {
             <Ionicons name="close" size={17} color={colors.textSoft} />
           </Pressable>
         </View>
-        <ChartView id={p.instId} proposal={p.id} style={{ height: Math.round(Math.min(460, height * 0.48)) }} />
+        <ChartView id={p.instId} proposal={p.id} compact style={{ height: Math.round(Math.max(300, Math.min(480, height * 0.48))) }} />
         <ScrollView style={{ flexGrow: 0, flexShrink: 1 }} contentContainerStyle={{ padding: 8, gap: 8 }}>
           <ProposalCard p={p} inChart />
           {p.events?.length ? (

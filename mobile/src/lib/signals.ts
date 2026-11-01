@@ -72,6 +72,57 @@ interface SignalList { signals: Signal[] | null; caps: SignalCaps; now: number }
 export type SignalFilter = "active" | "fired" | "ended";
 export interface SignalCreate { spec: Record<string, unknown>; intent: string; expiresHours: number; maxFires?: number; every?: string; code?: string }
 
+/** An AI trade plan (server internal/aigate/plans.go; web charts/aiPlans.ts) a signal can be linked to. */
+export interface SignalPlan {
+  id: number; chatId: number; created: number; instId: string; side: "long" | "short";
+  entryLo: number; entryHi: number; stop: number; tp1: number; tp2?: number; leverage?: number;
+  invalidate?: string; expires: number; status: string;
+}
+export const PLAN_STATUS: Record<string, string> = { pending: "等待入场", active: "已入场", tp1: "已到 TP1" };
+/** Open and recently settled plans of a coin (owner key). */
+export const plansOf = (instId: string) => req<SignalPlan[]>(`/api/v1/ai/plans?instId=${encodeURIComponent(instId)}&recent=168`, quiet);
+
+/** The plan a signal waits for: its planId (or a plan leaf's), else the subscribing chat's newest plan on
+ *  that coin made by the time it subscribed (the same rule the compact chart draws with). */
+export function linkedPlan(s: Signal, plans: SignalPlan[] | undefined): SignalPlan | null {
+  if (!plans?.length) return null;
+  const pid = s.planId || planLeafId(s.spec);
+  if (pid) return plans.find((p) => p.id === pid) ?? null;
+  if (s.kind !== "chat" || !s.chatId) return null;
+  const mine = plans.filter((p) => p.chatId === s.chatId && p.created <= s.created + 10 * 60_000);
+  return mine.sort((a, b) => b.created - a.created)[0] ?? null;
+}
+function planLeafId(spec: Record<string, unknown>): number {
+  if (spec.type === "plan" && typeof spec.planId === "number") return spec.planId;
+  for (const c of (spec.of as Record<string, unknown>[] | undefined) ?? []) {
+    const id = planLeafId(c);
+    if (id) return id;
+  }
+  return 0;
+}
+
+export type PlanLevels = Pick<SignalPlan, "side" | "entryLo" | "entryHi" | "stop" | "tp1" | "tp2">;
+/** Entry / stop / target written in the intent (入场 a-b，止损 c，目标 d), when no plan is linked.
+ *  Needs a stop and an entry or target; numbers more than 50% from the price are ignored. */
+export function intentLevels(text: string, px?: number): PlanLevels | null {
+  const N = String.raw`(\d+(?:\.\d+)?)`;
+  const m = (re: string) => new RegExp(re).exec(text);
+  const e = m(String.raw`(?:入场|进场|挂单)\s*[:：]?\s*${N}(?:\s*[-–~至到]\s*${N})?`);
+  const sl = m(String.raw`止损\s*[:：]?\s*${N}`);
+  const tp = m(String.raw`(?:目标|止盈|TP1?)\s*[:：]?\s*${N}(?:\s*[/、,，]\s*${N})?`);
+  if (!sl || (!e && !tp)) return null;
+  const v = (x?: string) => (x ? Number(x) : 0);
+  const near = (x: number) => !x || !px || Math.abs(x / px - 1) < 0.5;
+  const lo = e ? Math.min(v(e[1]), v(e[2]) || v(e[1])) : 0;
+  const hi = e ? Math.max(v(e[1]), v(e[2]) || v(e[1])) : 0;
+  const stop = v(sl[1]);
+  const tp1 = tp ? v(tp[1]) : 0;
+  const tp2 = tp ? v(tp[2]) : 0;
+  if (![lo, hi, stop, tp1, tp2].every(near)) return null;
+  const side = (lo ? stop < lo : stop < tp1) ? "long" : "short";
+  return { side, entryLo: lo, entryHi: hi, stop, tp1, tp2: tp2 || undefined };
+}
+
 export const STATUS_LABEL: Record<SignalStatus, string> = { active: "等待触发", fired: "已触发", expired: "已过期", cancelled: "已取消" };
 export const statusTone = (s: SignalStatus): "good" | "warn" | "info" | undefined => (s === "active" ? "info" : s === "fired" ? "good" : undefined);
 export const WAKE_LABEL: Record<WakeState, string> = { queued: "排队中（对话正忙）", started: "已唤醒 AI", skipped: "未唤醒（超出每日上限）", failed: "唤醒失败" };
