@@ -80,12 +80,12 @@ type Chat struct {
 
 // ChatMsg is one stored turn. Steps are the tool calls of an assistant turn.
 type ChatMsg struct {
-	ID        int64           `json:"id"`
-	Ts        int64           `json:"ts"`
-	Role      string          `json:"role"`
-	Content   string          `json:"content"`
-	Steps     json.RawMessage `json:"steps"`
-	CostUSD   float64         `json:"costUsd,omitempty"`
+	ID      int64           `json:"id"`
+	Ts      int64           `json:"ts"`
+	Role    string          `json:"role"`
+	Content string          `json:"content"`
+	Steps   json.RawMessage `json:"steps"`
+	CostUSD float64         `json:"costUsd,omitempty"`
 	// Usage: the turn's tokens {input, output, cacheWrite, cacheRead, searches} (the agent's result), as in 影库.
 	Usage     json.RawMessage `json:"usage,omitempty"`
 	LatencyMs int64           `json:"latencyMs,omitempty"`
@@ -315,7 +315,22 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		defer g.endRun(in.ChatID)
 		start := g.now()
 		msg := map[string]any{"type": "chat", "id": run.callID, "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "turnEffort": in.Effort, "webSearch": in.WebSearch, "notes": g.MemoryFor(in.Message)}
-		resp, err := g.callStream(ctx, msg, func(ev chatEvent) { g.onAgentEvent(ev); run.publish(ev) })
+		// the session id comes early (agent.py): kept even when the turn is stopped or fails, so the next
+		// question resumes the conversation instead of starting a new one without context
+		var early struct {
+			Type      string `json:"type"`
+			SessionID string `json:"sessionId"`
+		}
+		resp, err := g.callStream(ctx, msg, func(ev chatEvent) {
+			if json.Unmarshal(ev, &early) == nil && early.Type == "session" {
+				if early.SessionID != "" {
+					session = early.SessionID
+				}
+				return
+			}
+			g.onAgentEvent(ev)
+			run.publish(ev)
+		})
 		lat := g.now().Sub(start).Milliseconds()
 		var out struct {
 			Text      string          `json:"text"`
@@ -339,6 +354,9 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		ts := g.now().UnixMilli()
 		g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content, steps, cost_usd, latency_ms, error, usage) VALUES(?,?,?,?,?,?,?,?,?)`,
 			in.ChatID, ts, "assistant", out.Text, string(out.Steps), out.Cost, lat, errText, string(out.Usage))
+		if out.SessionID == "" {
+			out.SessionID = session
+		}
 		if out.SessionID != "" {
 			g.st.DB.Exec(`UPDATE ai_chats SET updated=?, session_id=?, cost_usd=cost_usd+? WHERE id=?`, ts, out.SessionID, out.Cost, in.ChatID)
 		} else {

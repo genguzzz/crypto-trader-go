@@ -514,8 +514,15 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
             parts.append({"t": "text", "v": ""})
         return parts[-1]
 
+    session = ""
     try:
         async for m in query(prompt=prompt_stream(prompt, inbox), options=options):
+            # the session id as soon as it is known: a turn that is stopped or fails still has its context
+            # in the session's transcript, and Go keeps the id so the next question resumes it
+            sid = getattr(m, "session_id", "") or ""
+            if sid and sid != session:
+                session = sid
+                await emit({"type": "session", "sessionId": sid})
             if isinstance(m, StreamEvent):
                 if m.parent_tool_use_id:
                     continue  # subagent tokens: only their tool calls are shown
