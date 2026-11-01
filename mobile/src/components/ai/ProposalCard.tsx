@@ -1,7 +1,11 @@
-// An AI trade proposal (lib/realtrade.ts) as a card: coin, side, leverage, size, entry / stop / target
-// with R:R, the reasoning, its status and the outcome. While pending: a countdown and 同意 / 拒绝
-// (同意 asks once with the exact order). The coin or 查看 opens a floating K-line over the AI sheet
-// (the web chart with the proposal's levels drawn, ChartView `proposal`). Owner only.
+// An AI trade proposal (lib/realtrade.ts) as a card: what it does (开仓 / 补仓 / 减仓 / 平仓 / 调整止盈止损),
+// coin, side, leverage, margin mode, order type (市价 / 限价 @price), size, entry / stop / target with R:R,
+// the position it acts on (补仓: the new average and liquidation estimate; 减仓 / 平仓: how much of which
+// position), what happens to the TP/SL, the reasoning, its status, a resting limit's state (挂单中 ·
+// 已成交 x/y · 已撤单) and the outcome. While pending: a countdown and 同意 / 拒绝 (同意 asks once with the
+// exact action). The coin or 查看 opens a floating K-line over the AI sheet (the web chart with the
+// proposal's levels drawn, ChartView `proposal`). TradeBubble is the server's message in the chat after
+// an approved proposal ran (role trade). Owner only.
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Platform, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -11,12 +15,13 @@ import { CoinIcon } from "@/components/CoinIcon";
 import { PillButton, Tag, confirm, tap, toast, toastError } from "@/components/ui";
 import type { StepItem } from "@/components/ai/AiSteps";
 import { price, sym, time } from "@/lib/fmt";
-import { answerProposal, serverNow, statusLabel, statusTone, useProposal, useRealtrade, type Proposal } from "@/lib/realtrade";
+import { answerProposal, kindLabel, mgnLabel, orderStateLabel, serverNow, statusLabel, statusTone, useProposal, useRealtrade, type Proposal } from "@/lib/realtrade";
 import { colors, fs, tnum } from "@/lib/theme";
 
 const mono = { fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }) };
 const VIA: Record<string, string> = { telegram: "Telegram", web: "网页", app: "App" };
-const CLOSE: Record<string, string> = { tp: "止盈", sl: "止损", other: "平仓" };
+const CLOSE: Record<string, string> = { tp: "止盈", sl: "止损", manual: "主动平仓", unfilled: "未成交", other: "平仓" };
+const lots = (v?: number) => String(+(v ?? 0).toPrecision(6));
 const u = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2).replace(/\.?0+$/, ""));
 const signed = (v: number) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2);
 
@@ -43,15 +48,31 @@ function useNow(on: boolean) {
   return now;
 }
 
-/** The order the owner agrees to, in words (the confirm alert). */
+/** The action the owner agrees to, in words (the confirm alert). */
 function orderText(p: Proposal) {
   const long = p.side === "long";
   const d = (v: number, up: boolean) => `${up ? "+" : "−"}${v.toFixed(2)}%`;
-  return (
-    `以市价开${long ? "多" : "空"} ${sym(p.instId)}，保证金 ${u(p.marginUsdt)} U，杠杆 ${p.leverage}×（逐仓，${p.contracts} 张，名义 ${u(p.notionalUsdt)} U），` +
-    `止损 ${price(p.sl)}（${d(p.slPct, !long)}），止盈 ${price(p.tp)}（${d(p.tpPct, long)}）。` +
-    (p.mode === "dryrun" ? "\n\nDRY RUN：只生成并记录下单请求，不会真实下单。" : "\n\n将在 OKX 真实下单。")
-  );
+  const pos = `${sym(p.instId)} ${long ? "多单" : "空单"}`;
+  const how = p.orderType === "limit" ? `限价 ${price(p.px)}（挂 ${p.orderMin ?? 60} 分钟，未成交部分到期自动撤单）` : "市价";
+  let text: string;
+  switch (p.kind) {
+    case "reduce":
+      text = `以${how}减仓 ${pos} ${Math.round((p.fraction ?? 0) * 100)}%：${lots(p.contracts)} 张（持仓 ${lots(p.posContracts)} 张）。`;
+      break;
+    case "close":
+      text = `以${how}平掉 ${pos} 全部 ${lots(p.contracts)} 张。`;
+      break;
+    case "adjust":
+      text = `把 ${pos} 的止损改为 ${price(p.sl)}（${d(p.slPct, !long)}），止盈改为 ${price(p.tp)}（${d(p.tpPct, long)}），覆盖整个仓位。`;
+      break;
+    default:
+      text =
+        `以${how}${p.kind === "add" ? "补仓" : "开"}${long ? "多" : "空"} ${sym(p.instId)}，保证金 ${u(p.marginUsdt)} U，杠杆 ${p.leverage}×（${mgnLabel(p)}，${lots(p.contracts)} 张，名义 ${u(p.notionalUsdt)} U），` +
+        `止损 ${price(p.sl)}（${d(p.slPct, !long)}），止盈 ${price(p.tp)}（${d(p.tpPct, long)}）。`;
+      if (p.kind === "add" && p.newAvgPx) text += `补后 ${lots((p.posContracts ?? 0) + p.contracts)} 张，均价约 ${price(p.newAvgPx)}${p.liqPx ? `，强平约 ${price(p.liqPx)}` : ""}。`;
+  }
+  if (p.tpsl && p.kind !== "open") text += `\n止盈止损：${p.tpsl}。`;
+  return text + (p.mode === "dryrun" ? "\n\nDRY RUN：只生成、记录并模拟，不会真实下单。" : "\n\n将在 OKX 真实执行。");
 }
 
 function DryRun() {
@@ -91,8 +112,11 @@ export function ProposalCard({ p, inChart }: { p: Proposal; inChart?: boolean })
       .catch((e) => toastError(action === "approve" ? "未能同意" : "未能拒绝", e))
       .finally(() => setBusy(""));
   };
-  const approve = () => confirm(dry ? "同意这笔交易（DRY RUN）" : "同意并真实下单", orderText(p), dry ? "同意" : "同意并下单", () => answer("approve"), !dry);
-  const reject = () => confirm("拒绝这笔提议", `${sym(p.instId)} ${long ? "做多" : "做空"}，拒绝后不会下单。`, "拒绝", () => answer("reject"), true);
+  const kind = kindLabel(p);
+  const risky = p.kind === "open" || p.kind === "add" || !p.kind;
+  const approve = () => confirm(dry ? `同意${kind}（DRY RUN）` : `同意并真实${kind}`, orderText(p), dry ? "同意" : "同意并执行", () => answer("approve"), !dry);
+  const reject = () => confirm("拒绝这笔提议", `${kind} ${sym(p.instId)} ${long ? "多单" : "空单"}，拒绝后不会执行。`, "拒绝", () => answer("reject"), true);
+  const ordState = orderStateLabel(p);
 
   const answered = p.via && ["approved", "executing", "executed", "failed", "rejected"].includes(p.status);
   const longText = p.rationale.length > 90;
@@ -105,8 +129,10 @@ export function ProposalCard({ p, inChart }: { p: Proposal; inChart?: boolean })
           <Text style={{ fontSize: fs.lg, fontWeight: "700", color: colors.primary }}>{sym(p.instId)}</Text>
           {inChart ? null : <Ionicons name="chevron-forward" size={13} color={colors.primary} />}
         </Pressable>
+        {p.kind && p.kind !== "open" ? <Tag text={kind} tone="info" /> : null}
         <Tag text={long ? "做多" : "做空"} tone={long ? "good" : "bad"} />
         <Text style={[{ fontSize: fs.md, fontWeight: "600", color: colors.text }, tnum]}>{p.leverage}×</Text>
+        <Text style={{ fontSize: fs.sm, color: colors.textFaint }}>{mgnLabel(p)}</Text>
         <View style={{ flex: 1 }} />
         {dry ? <DryRun /> : null}
         <Tag text={statusLabel(p)} tone={statusTone(p.status)} />
@@ -115,15 +141,40 @@ export function ProposalCard({ p, inChart }: { p: Proposal; inChart?: boolean })
       {/* size and levels */}
       <View style={{ paddingHorizontal: 12, gap: 10 }}>
         <View style={{ flexDirection: "row", gap: 10 }}>
-          <Cell k="保证金" v={`${u(p.marginUsdt)} U`} sub={`${p.contracts} 张 · 名义 ${u(p.notionalUsdt)} U`} />
-          <Cell k="入场参考" v={price(p.refPx)} sub="市价" />
-          <Cell k="盈亏比" v={`1 : ${p.rr.toFixed(2)}`} />
+          {risky ? <Cell k="保证金" v={`${u(p.marginUsdt)} U`} sub={`${lots(p.contracts)} 张 · 名义 ${u(p.notionalUsdt)} U`} />
+            : p.kind === "reduce" ? <Cell k="减仓" v={`${Math.round((p.fraction ?? 0) * 100)}%`} sub={`${lots(p.contracts)} / ${lots(p.posContracts)} 张`} />
+            : p.kind === "close" ? <Cell k="平仓" v="全部" sub={`${lots(p.contracts)} 张`} />
+            : <Cell k="仓位" v={`${lots(p.posContracts)} 张`} sub={`均价 ${price(p.posAvgPx)}`} />}
+          {p.kind === "adjust" ? <Cell k="现价" v={price(p.refPx)} />
+            : <Cell k={p.orderType === "limit" ? "限价" : "入场参考"} v={price(p.orderType === "limit" ? p.px : p.refPx)} sub={p.orderType === "limit" ? `现价 ${price(p.refPx)} · 挂 ${p.orderMin ?? 60} 分钟` : "市价"} />}
+          {risky ? <Cell k="盈亏比" v={`1 : ${p.rr.toFixed(2)}`} /> : <Cell k="仓位" v={p.posId ? `#${p.posId}` : "你的"} sub={p.kind === "adjust" ? undefined : `持仓 ${lots(p.posContracts)} 张`} />}
         </View>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <Cell k="止损" v={price(p.sl)} sub={`${long ? "−" : "+"}${p.slPct.toFixed(2)}%`} color={colors.down} />
-          <Cell k="止盈" v={price(p.tp)} sub={`${long ? "+" : "−"}${p.tpPct.toFixed(2)}%`} color={colors.up} />
-          <Cell k="来源" v={source(p)} sub={`${time(p.created, true)} · #${p.id}`} />
-        </View>
+        {p.sl > 0 || p.tp > 0 ? (
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <Cell k="止损" v={price(p.sl)} sub={`${long ? "−" : "+"}${p.slPct.toFixed(2)}%`} color={colors.down} />
+            <Cell k="止盈" v={price(p.tp)} sub={`${long ? "+" : "−"}${p.tpPct.toFixed(2)}%`} color={colors.up} />
+            <Cell k="来源" v={source(p)} sub={`${time(p.created, true)} · #${p.id}`} />
+          </View>
+        ) : (
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <Cell k="来源" v={source(p)} sub={`${time(p.created, true)} · #${p.id}`} />
+          </View>
+        )}
+        {p.kind === "add" && p.newAvgPx ? (
+          <Text style={[{ fontSize: fs.sm, color: colors.textSoft }, tnum]}>
+            {`补前 ${lots(p.posContracts)} 张 @${price(p.posAvgPx)} → 补后 ${lots((p.posContracts ?? 0) + p.contracts)} 张 · 均价 ≈ ${price(p.newAvgPx)}`}
+            {p.liqPx ? ` · 强平 ≈ ${price(p.liqPx)}` : ""}
+          </Text>
+        ) : p.kind === "open" && p.liqPx ? (
+          <Text style={[{ fontSize: fs.sm, color: colors.textFaint }, tnum]}>{`预估强平 ≈ ${price(p.liqPx)}`}</Text>
+        ) : null}
+        {p.tpsl && p.kind !== "open" ? (
+          <Text style={{ fontSize: fs.sm, lineHeight: 18, color: colors.textSoft }}>
+            <Text style={{ color: colors.textFaint }}>止盈止损 </Text>
+            {p.tpsl}
+          </Text>
+        ) : null}
+        {p.note ? <Text style={{ fontSize: fs.sm, lineHeight: 18, color: colors.warn }}>{p.note}</Text> : null}
       </View>
 
       {/* reasoning */}
@@ -143,16 +194,24 @@ export function ProposalCard({ p, inChart }: { p: Proposal; inChart?: boolean })
       </View>
 
       {/* outcome */}
-      {!pending && (answered || p.execPx || p.ordId || p.error || p.closedAt) ? (
+      {!pending && (answered || p.execPx || p.ordId || p.error || p.closedAt || ordState) ? (
         <View style={{ marginHorizontal: 12, marginTop: 10, paddingTop: 9, borderTopWidth: 1, borderColor: colors.border, gap: 4 }}>
           {answered ? (
             <Text style={{ fontSize: fs.sm, color: colors.textFaint }}>
               {p.status === "rejected" ? "拒绝" : "同意"}{p.by ? `：${p.by}` : ""} · 经 {VIA[p.via!] ?? p.via} · {time(p.statusAt, true)}
             </Text>
           ) : null}
-          {p.execPx || p.ordId ? (
+          {ordState ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Tag text={ordState} tone={p.ordState === "canceled" ? undefined : p.ordState === "filled" ? "good" : "info"} />
+              {p.ordState === "live" || p.ordState === "partially_filled" ? (
+                <Text style={[{ fontSize: fs.xs, color: colors.textFaint }, tnum]}>{`${time(p.orderUntil ?? 0, true)} 前未成交自动撤单`}</Text>
+              ) : null}
+            </View>
+          ) : null}
+          {(p.execPx || p.ordId) && !(p.orderType === "limit" && !p.fillPx) ? (
             <Text style={[{ fontSize: fs.sm, color: colors.text }, tnum]}>
-              {dry ? "模拟成交" : "成交"} {price(p.execPx)}
+              {p.kind === "adjust" ? (dry ? "模拟执行" : "已执行") : `${dry ? "模拟成交" : "成交"} ${price(p.fillPx || p.execPx)}`}
               {p.ordId ? <Text style={[mono, { fontSize: 11, color: colors.textFaint }]}>{`  ordId ${p.ordId}`}</Text> : null}
             </Text>
           ) : null}
@@ -184,6 +243,52 @@ export function ProposalCard({ p, inChart }: { p: Proposal; inChart?: boolean })
         ) : null}
       </View>
     </View>
+  );
+}
+
+/** The server's message after an approved proposal ran or its position closed (chat role trade): the first
+ *  line as the head (✅ 已成交 · 📌 挂出 · ⌛ 撤单 · ❌ 失败 · ⚠️ 未下单 · 📕 已结束), the position and its TP/SL,
+ *  the instructions to the AI folded, and 查看提议 (the proposal's K-line) when the id is known. */
+export function TradeBubble({ text, onSelect }: { text: string; onSelect: (t: string) => void }) {
+  const [more, setMore] = useState(false);
+  const lines = text.split("\n");
+  const head = lines[0] ?? "";
+  const id = Number(/#(\d+)/.exec(head)?.[1] ?? 0);
+  // the instructions to the AI start at the first line that asks it to act
+  const cut = lines.findIndex((l, i) => i > 0 && /^(请|这个仓位已结束|（这是)/.test(l));
+  const body = (cut > 0 ? lines.slice(1, cut) : lines.slice(1)).join("\n");
+  const rest = cut > 0 ? lines.slice(cut).join("\n") : "";
+  const bad = /^[❌⚠]/.test(head);
+  const tint = bad ? "rgba(247,166,0," : "rgba(188,255,47,";
+  return (
+    <Pressable onLongPress={() => onSelect(text)} style={{ marginTop: 14, marginBottom: 6, borderRadius: 14, borderWidth: 1, borderColor: tint + "0.4)", backgroundColor: tint + "0.06)", paddingHorizontal: 12, paddingVertical: 10, gap: 6 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <Ionicons name="swap-vertical" size={15} color={bad ? colors.warn : colors.primary} />
+        <Text style={{ flex: 1, fontSize: fs.lg, fontWeight: "700", color: colors.text }}>{head.replace(/^\S+\s*/, "")}</Text>
+      </View>
+      {body ? <Text selectable style={[{ fontSize: fs.md, lineHeight: 19, color: colors.textSoft }, tnum]}>{body}</Text> : null}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>交易执行后自动通知 AI 核对</Text>
+        <View style={{ flex: 1 }} />
+        {rest ? (
+          <Pressable hitSlop={6} onPress={() => { tap(); setMore(!more); }}>
+            <Text style={{ fontSize: fs.xs, color: colors.textSoft }}>{more ? "收起指令" : "给 AI 的指令"}</Text>
+          </Pressable>
+        ) : null}
+        {id ? <ProposalLink id={id} /> : null}
+      </View>
+      {more ? <Text selectable style={{ fontSize: fs.sm, lineHeight: 18, color: colors.textFaint }}>{rest}</Text> : null}
+    </Pressable>
+  );
+}
+
+function ProposalLink({ id }: { id: number }) {
+  const p = useProposal(id);
+  if (!p) return null;
+  return (
+    <Pressable hitSlop={6} onPress={() => { tap(); openProposalChart(p); }}>
+      <Text style={{ fontSize: fs.xs, color: colors.primary }}>查看提议</Text>
+    </Pressable>
   );
 }
 

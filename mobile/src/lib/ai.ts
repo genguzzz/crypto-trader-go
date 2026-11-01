@@ -18,8 +18,11 @@ export type ToolPart = { t: "tool"; id: string; name: string; label: string; inp
 /** The model's (summarized) reasoning; t0 = when it started streaming here, ms = its length once ended. */
 export type ThinkPart = { t: "think"; v: string; ms?: number; t0?: number; live?: boolean };
 export type Part = { t: "text"; v: string } | ThinkPart | ToolPart;
-/** role signal: the server's ⚡ message when a subscribed signal fired (lib/signals.ts), answered like a question */
-export interface Msg { id?: number; role: "user" | "assistant" | "signal"; parts: Part[]; error?: string; costUsd?: number; latencyMs?: number; live?: boolean }
+/** role signal: the server's ⚡ message when a subscribed signal fired (lib/signals.ts); role trade: its message after an
+ *  approved trade proposal ran or its position closed (lib/realtrade.ts). Both are answered like a question, and arrive
+ *  inside a running answer too (stream event `steer`). */
+export type MsgRole = "user" | "assistant" | "signal" | "trade";
+export interface Msg { id?: number; role: MsgRole; parts: Part[]; error?: string; costUsd?: number; latencyMs?: number; live?: boolean }
 export interface ChatSummary { id: number; title: string; instId?: string; updated: number; costUsd: number; running: boolean }
 export interface Note { id: number; ts: number; text: string; by: "ai" | "owner" }
 
@@ -170,6 +173,12 @@ function apply(ev: any) {
     case "text_start":
       last().parts.push({ t: "text", v: "" });
       return emit();
+    case "steer": { // a server message injected into the running answer: shown where it arrived; the answer continues below it
+      const m = ai.msgs[ai.msgs.length - 1];
+      if (m?.role === "assistant" && m.live && !m.parts.length) ai.msgs.pop();
+      ai.msgs.push({ role: ev.role === "trade" ? "trade" : "signal", parts: [{ t: "text", v: String(ev.text ?? "") }] });
+      return emit();
+    }
     case "think_start":
       last().parts.push({ t: "think", v: "", t0: Date.now(), live: true });
       return emit();
@@ -405,7 +414,7 @@ export async function stop() {
   await kfetch(`/api/v1/ai/chats/${ai.chatId}/stop`, { method: "POST" }).catch((e) => log.warn("stop failed", e));
 }
 
-interface StoredMsg { id: number; role: "user" | "assistant" | "signal"; content: string; steps: any[]; costUsd?: number; latencyMs?: number; error?: string }
+interface StoredMsg { id: number; role: MsgRole; content: string; steps: any[]; costUsd?: number; latencyMs?: number; error?: string }
 function fromStored(m: StoredMsg): Msg {
   const parts: Part[] =
     Array.isArray(m.steps) && m.steps.length ? m.steps.map((s: any) => (s.t === "text" ? { t: "text", v: s.v } : s.t === "think" ? { t: "think", v: s.v, ms: s.ms } : { ...s, t: "tool" })) : m.content ? [{ t: "text", v: m.content }] : [];

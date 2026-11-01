@@ -22,7 +22,7 @@ import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
 import { ScrollLock } from "@/components/ai/InnerScroll";
 import { HistoryPane, NotesPane, ProposalsPane, SelectPane, onShowFullText, plainText } from "@/components/ai/AiPanes";
-import { ProposalById, ProposalChartHost, proposalIds } from "@/components/ai/ProposalCard";
+import { ProposalById, ProposalChartHost, TradeBubble, proposalIds } from "@/components/ai/ProposalCard";
 import { SignalBubble, SignalById, SignalHost, signalIds } from "@/components/ai/SignalCard";
 import { usePendingProposals, useRealtrade } from "@/lib/realtrade";
 import { useActiveSignalCount } from "@/lib/signals";
@@ -264,6 +264,7 @@ export default function AiScreen() {
           {s.msgs.map((m, mi) =>
             m.role === "user" ? <UserBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} />
               : m.role === "signal" ? <SignalBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} />
+              : m.role === "trade" ? <TradeBubble key={m.id ?? "m" + mi} text={textOf(m)} onSelect={selectText} />
               : <Answer key={m.id ?? "m" + mi} m={m} now={now} onSelect={selectText} />,
           )}
 

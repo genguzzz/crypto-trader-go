@@ -102,10 +102,11 @@ function AiProposals() {
         <Text style={{ fontSize: fs.lg, fontWeight: "600", color: colors.text }}>AI 交易提议</Text>
         {mode ? <Tag text={mode === "dryrun" ? "DRY RUN" : "实盘"} tone={mode === "dryrun" ? "warn" : "bad"} /> : null}
         <InfoTip title="AI 交易提议" items={[
-          "AI 在对话里或信号触发时提出的 OKX 真实交易：市价单，逐仓，必带止盈止损。",
+          "AI 在对话里或信号触发时提出的 OKX 真实操作：开仓、补仓、减仓、平仓、调整止盈止损；市价或限价，逐仓或全仓，开仓和补仓必带止盈止损。",
+          "限价单挂在 OKX 上，到期未成交的部分由服务器自动撤单；执行结果会自动发回提议它的 AI 对话，让 AI 核对仓位并安排下一步。",
           "在这里、Telegram 交易机器人或 AI 对话里同意 / 拒绝都可以，先答复的为准，其他地方会同步。",
-          "同意时会按最新价格重新检查偏移、止盈止损方向和各项上限，不满足就作废。",
-          mode === "dryrun" ? "当前是 DRY RUN：同意后只生成并记录下单请求，不会真实下单。" : "当前是实盘：同意后立即在 OKX 下单。",
+          "同意时会按最新价格和仓位重新检查偏移、止盈止损方向和各项上限，不满足就作废。",
+          mode === "dryrun" ? "当前是 DRY RUN：同意后只生成并记录下单请求，不会真实下单。" : "当前是实盘：同意后立即在 OKX 执行。",
         ]} />
       </View>
       {pending.length ? pending.map((p) => <ProposalCard key={p.id} p={p} />) : <Card><EmptyState icon="sparkles-outline" text="没有待审核的 AI 交易提议" /></Card>}

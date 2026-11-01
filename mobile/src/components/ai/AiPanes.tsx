@@ -172,12 +172,12 @@ export function ProposalsPane({ onClose }: { onClose: () => void }) {
       ) : (
         <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 40 }} refreshControl={<Pull onRefresh={() => Promise.all([refreshProposals(), cfg.refresh()])} />}>
           <Text style={[styles.note, { marginHorizontal: 4, marginBottom: 4 }]}>
-            {mode === "live" ? "LIVE：同意后以市价在 OKX 真实下单（逐仓，带止盈止损）。" : "DRY RUN：同意后只生成并记录下单请求，不会真实下单。"}
+            {mode === "live" ? "LIVE：同意后在 OKX 真实执行（开仓、补仓、减仓、平仓或调整止盈止损）。" : "DRY RUN：同意后只生成、记录并模拟，不会真实下单。"}
             {"AI 在对话或信号触发时提议，Telegram、网页、App 任一处先答复为准。"}
           </Text>
           {lim ? (
             <Text style={[styles.note, { marginHorizontal: 4, marginBottom: 6 }]}>
-              {`杠杆 ${(lim.minLeverage ?? 1) > 1 ? `${lim.minLeverage}–${lim.maxLeverage}` : `≤ ${lim.maxLeverage}`}× · 单笔保证金 ${lim.minMarginUsdt ? `${lim.minMarginUsdt}–${lim.maxMarginUsdt}` : `≤ ${lim.maxMarginUsdt}`} U · 同时 ≤ ${lim.maxOpen} 笔 · 日亏损上限 ${lim.dailyLossUsdt} U · 盈亏比 ≥ ${lim.minRR} · ${lim.expiryMin} 分钟未审核自动过期`}
+              {`杠杆 ${(lim.minLeverage ?? 1) > 1 ? `${lim.minLeverage}–${lim.maxLeverage}` : `≤ ${lim.maxLeverage}`}× · 单笔保证金 ${lim.minMarginUsdt ? `${lim.minMarginUsdt}–${lim.maxMarginUsdt}` : `≤ ${lim.maxMarginUsdt}`} U · 同时 ≤ ${lim.maxOpen} 笔 · 日亏损上限 ${lim.dailyLossUsdt} U · 盈亏比 ≥ ${lim.minRR} · ${lim.expiryMin} 分钟未审核自动过期${lim.maxAdds ? ` · 每仓补仓 ≤ ${lim.maxAdds} 次` : ""}${lim.limitMaxMin ? ` · 限价单最长挂 ${Math.round(lim.limitMaxMin / 60)} 小时` : ""}`}
               {tg ? ` · Telegram ${tg.enabled ? tg.state || "已开启" : "未开启"}` : ""}
             </Text>
           ) : null}
