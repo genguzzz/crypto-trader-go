@@ -177,7 +177,7 @@ export function ProposalsPane({ onClose }: { onClose: () => void }) {
           </Text>
           {lim ? (
             <Text style={[styles.note, { marginHorizontal: 4, marginBottom: 6 }]}>
-              {`杠杆 ${(lim.minLeverage ?? 1) > 1 ? `${lim.minLeverage}–${lim.maxLeverage}` : `≤ ${lim.maxLeverage}`}× · 单笔保证金 ≤ ${lim.maxMarginUsdt} U · 同时 ≤ ${lim.maxOpen} 笔 · 日亏损上限 ${lim.dailyLossUsdt} U · 盈亏比 ≥ ${lim.minRR} · ${lim.expiryMin} 分钟未审核自动过期`}
+              {`杠杆 ${(lim.minLeverage ?? 1) > 1 ? `${lim.minLeverage}–${lim.maxLeverage}` : `≤ ${lim.maxLeverage}`}× · 单笔保证金 ${lim.minMarginUsdt ? `${lim.minMarginUsdt}–${lim.maxMarginUsdt}` : `≤ ${lim.maxMarginUsdt}`} U · 同时 ≤ ${lim.maxOpen} 笔 · 日亏损上限 ${lim.dailyLossUsdt} U · 盈亏比 ≥ ${lim.minRR} · ${lim.expiryMin} 分钟未审核自动过期`}
               {tg ? ` · Telegram ${tg.enabled ? tg.state || "已开启" : "未开启"}` : ""}
             </Text>
           ) : null}
