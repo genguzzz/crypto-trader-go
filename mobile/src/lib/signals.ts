@@ -12,6 +12,7 @@ import { getAdminKey } from "./adminKey";
 import { ai, openChat } from "./ai";
 import { onStreamEvent } from "./market";
 import { logger } from "./log";
+import type { Diagnostic } from "./tradeApi";
 
 const log = logger("signals");
 
@@ -20,6 +21,27 @@ export type WakeState = "queued" | "started" | "skipped" | "failed";
 export interface SignalLevel { instId: string; px: number; label: string }
 export interface SignalProgress { instId?: string; px?: number; target?: number; pct: number; text: string }
 export interface SignalFire { id: number; ts: number; px?: number; matched: string; wake: WakeState; wakeChat?: number; wakeAt?: number; error?: string }
+
+// Script signals (server internal/signals/script.go): a Python ctg.Condition run on its timeframe's bar close.
+/** One check of a script at a bar close; fire null = no answer (None, missing bars, an error). */
+export interface ScriptEval { at: number; fire: boolean | null; values?: Record<string, number>; note?: string; ms: number; error?: string; missing?: string[] }
+export interface ReplayFire { t: number; values?: Record<string, number>; note?: string }
+export type ScriptProblem = "compile" | "error" | "slow" | "often" | "unknown" | "holds" | "nodata";
+/** The script run over recent history: how often it would have fired. states = one char per close: 1 holds, 0 not, - unknown. */
+export interface ScriptReplay {
+  at: number; from: number; to: number; timeframe: string; bars: number; days: number; states: string;
+  fires: ReplayFire[]; fireCount: number; perDay: number; unknown: number; errors: number; firstError?: string; firstErrorAt?: number;
+  avgMs: number; maxMs: number; noFactors?: boolean; now?: ScriptEval; ok: boolean; problem?: ScriptProblem; reason?: string;
+}
+export interface ScriptMeta { class: string; desc: string; instIds: string[]; timeframe: string; lookback: number; hash: string }
+/** A subscription's script: what it declares, its code, the replay it was accepted with and its live checks. */
+export interface ScriptInfo extends ScriptMeta {
+  code: string; replay?: ScriptReplay; last?: ScriptEval; checks: number; avgMs: number;
+  /** consecutive errors; maxErrors in a row end the subscription */
+  errors: number; lastError?: string; lastErrorAt?: number;
+}
+export interface ScriptLimits { maxBytes: number; budgetMs: number; maxAvgMs: number; maxFiresPerDay: number; maxErrors: number; replayDays: number; maxActive: number; activeScripts: number }
+export interface ScriptTest { ok: boolean; problem?: ScriptProblem; reason?: string; diagnostics: Diagnostic[]; meta?: ScriptMeta; replay?: ScriptReplay; limits: ScriptLimits }
 export interface Signal {
   id: number; created: number; updated: number;
   kind: "chat" | "owner"; chatId?: number;
@@ -42,11 +64,13 @@ export interface Signal {
   progress?: SignalProgress;
   /** detail only */
   history?: SignalFire[];
+  /** script signals */
+  script?: ScriptInfo;
 }
-export interface SignalCaps { maxActive: number; perChat: number; wakesPerDay: number; wakesToday: number; active: number; maxDays: number }
+export interface SignalCaps { maxActive: number; perChat: number; wakesPerDay: number; wakesToday: number; active: number; maxDays: number; scripts?: ScriptLimits }
 interface SignalList { signals: Signal[] | null; caps: SignalCaps; now: number }
 export type SignalFilter = "active" | "fired" | "ended";
-export interface SignalCreate { spec: Record<string, unknown>; intent: string; expiresHours: number; maxFires?: number; every?: string }
+export interface SignalCreate { spec: Record<string, unknown>; intent: string; expiresHours: number; maxFires?: number; every?: string; code?: string }
 
 export const STATUS_LABEL: Record<SignalStatus, string> = { active: "等待触发", fired: "已触发", expired: "已过期", cancelled: "已取消" };
 export const statusTone = (s: SignalStatus): "good" | "warn" | "info" | undefined => (s === "active" ? "info" : s === "fired" ? "good" : undefined);
@@ -70,6 +94,9 @@ export const sigApi = {
   /** the owner's own subscription: when it fires it starts a new chat with `intent` as the instructions */
   create: (b: SignalCreate) => req<Signal>(base, { method: "POST", body: b }),
   cancel: (id: number, reason = "主人取消") => req<Signal>(`${base}/${id}/cancel`, { method: "POST", body: { reason } }),
+  /** compile + replay a script over recent history; nothing is stored */
+  testScript: (code: string) => req<ScriptTest>(`${base}/test-script`, { method: "POST", body: { code } }),
+  scriptTemplate: () => req<{ code: string; limits: ScriptLimits }>(`${base}/script-template`, quiet),
 };
 
 // ---------- store ----------
@@ -239,7 +266,15 @@ const ZH: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/(\d+) subscriptions are active; the cap is (\d+)/, (m) => `已有 ${m[1]} 个活跃订阅，上限 ${m[2]} 个，先取消一个`],
   [/unknown instrument (\S+)/, (m) => `未知合约 ${m[1]}`],
   [/unknown field/, () => "不支持这个字段"],
+  [/every tick is not allowed with a script/, () => "脚本信号不能选实时检查：脚本在它的 K 线收盘时运行"],
+  [/(\d+) script signals are active; the cap is (\d+)/, (m) => `已有 ${m[1]} 个脚本信号，上限 ${m[2]} 个，先取消一个`],
+  [/script signals need the strategy runner|script runner:/, () => "脚本执行环境（策略容器）暂时不可用，稍后再试"],
+  [/script rejected \((\w+)\): (.*)/, (m) => `脚本未通过检验（${PROBLEM_LABEL[m[1] as ScriptProblem] ?? m[1]}）：${m[2]}`],
 ];
+
+export const PROBLEM_LABEL: Record<ScriptProblem, string> = {
+  compile: "代码有误", error: "回放中出错", slow: "太慢", often: "触发太频繁", unknown: "判断不了", holds: "条件已经成立", nodata: "没有数据",
+};
 export function zhSignalError(msg: string) {
   for (const [re, f] of ZH) {
     const m = msg.match(re);

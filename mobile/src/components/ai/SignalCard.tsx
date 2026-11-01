@@ -3,7 +3,8 @@
 // do. 查看 opens the detail (K-line with the levels drawn, the full spec, intent and fire history); 取消
 // asks first. Rendered under the subscribe_signal step in the chat, in 交易 → 信号, and in the detail.
 // Inside the AI sheet the detail floats over the chat (SignalHost), like the proposal K-line; elsewhere
-// it is a page sheet (SignalSheet).
+// it is a page sheet (SignalSheet). Script signals add their timeframe tag, the newest check (as the
+// progress line) and, in the detail, the code, replay and live checks (ScriptSignal.tsx).
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Platform, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -20,6 +21,7 @@ import {
   STATUS_LABEL, WAKE_LABEL, cancelSignal, endedByText, leftText, sigNow, statusTone, useSignal, useSignals, type Signal,
 } from "@/lib/signals";
 import { colors, fs, tnum } from "@/lib/theme";
+import { ScriptSection } from "./ScriptSignal";
 
 const mono = { fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }) };
 
@@ -79,6 +81,7 @@ function Closeness({ pct }: { pct: number }) {
 
 export function SignalCard({ s, inDetail, showSubscriber, onOpen, onLeave }: { s: Signal; inDetail?: boolean; showSubscriber?: boolean; onOpen?: () => void; onLeave?: () => void }) {
   const active = s.status === "active";
+  const caps = useSignals((x) => x.caps);
   const now = useNow(active);
   const dist = useDistance(s);
   const [busy, setBusy] = useState(false);
@@ -107,6 +110,7 @@ export function SignalCard({ s, inDetail, showSubscriber, onOpen, onLeave }: { s
             <Text style={{ fontSize: fs.md, fontWeight: "700", color: colors.primary }}>{sym(id)}</Text>
           </Pressable>
         ))}
+        {s.script ? <Tag text={`脚本 · ${s.script.timeframe}`} /> : null}
         <View style={{ flex: 1 }} />
         <Tag text={STATUS_LABEL[s.status] ?? s.status} tone={statusTone(s.status)} />
       </View>
@@ -119,6 +123,11 @@ export function SignalCard({ s, inDetail, showSubscriber, onOpen, onLeave }: { s
             <Text style={[{ fontSize: fs.md, color: colors.textSoft }, tnum]}>{dist.text}</Text>
             {dist.pct != null ? <Closeness pct={dist.pct} /> : null}
           </View>
+        ) : null}
+        {active && s.script?.errors ? (
+          <Text numberOfLines={inDetail ? undefined : 2} style={{ fontSize: fs.sm, lineHeight: 18, color: colors.warn }}>
+            脚本连续出错 {s.script.errors} 次（{s.script.errors >= (caps?.scripts?.maxErrors ?? 3) - 1 ? "再错一次就会停止" : "连续出错过多会停止"}）：{s.script.lastError}
+          </Text>
         ) : null}
         {s.intent ? (
           <Pressable disabled={!longIntent} onPress={() => { tap(); setMore(!more); }}>
@@ -207,6 +216,7 @@ export function SignalDetail({ s, chartHeight, onLeave }: { s: Signal; chartHeig
     <View style={{ gap: 10 }}>
       {inst ? <ChartView id={inst} signal={s.id} style={{ height: chartHeight, borderRadius: 12 }} /> : null}
       <SignalCard s={s} inDetail showSubscriber onLeave={onLeave} />
+      {s.script ? <ScriptSection x={s.script} every={(s.spec as { every?: string }).every} /> : null}
       <View style={{ gap: 6, paddingHorizontal: 4 }}>
         <Text style={{ fontSize: fs.sm, fontWeight: "600", color: colors.textSoft }}>触发记录</Text>
         {!s.history?.length ? (
@@ -234,7 +244,7 @@ export function SignalDetail({ s, chartHeight, onLeave }: { s: Signal; chartHeig
       </View>
       <View style={{ gap: 4, paddingHorizontal: 4, paddingBottom: 6 }}>
         <Text style={{ fontSize: fs.sm, fontWeight: "600", color: colors.textSoft }}>条件定义</Text>
-        <Text selectable style={[mono, { fontSize: 11, lineHeight: 16, color: colors.textFaint }]}>{JSON.stringify(s.spec, null, 1)}</Text>
+        <Text selectable style={[mono, { fontSize: 11, lineHeight: 16, color: colors.textFaint }]}>{JSON.stringify(s.spec, (k, v) => (k === "code" || k === "script" ? "…" : v), 1)}</Text>
         <Text style={[{ fontSize: fs.xs, color: colors.textFaint }, tnum]}>
           创建 {time(s.created, true)} · 到期 {time(s.expiresAt, true)} · 冷却 {s.cooldownMin} 分钟{s.planId ? ` · 关联计划 #${s.planId}` : ""}
         </Text>

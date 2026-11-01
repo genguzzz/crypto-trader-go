@@ -1,30 +1,43 @@
 // 新建信号: the owner subscribes a condition himself (POST /api/v1/signals, server internal/signals/spec.go).
 // When it fires, the server starts a new "信号 · …" AI chat and runs the agent with the intent as its
 // instructions. One leaf per subscription: price break, zone, a fact-panel field, continuation risk
-// (P_tail) or a timed review. Opened from 交易 → 信号 (+); `instId` prefills the coin (instrument page).
-import { useMemo, useState } from "react";
+// (P_tail), a timed review, or a script (a ctg Condition class: starts from the server's template with
+// the coin filled in, edited in a full-height CodeEditor sheet, 测试 replays it over recent history and
+// shows the result; 订阅 tests first when the code changed since). Opened from 交易 → 信号 (+); `instId`
+// prefills the coin (instrument page).
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api, type CatalogItem } from "@/lib/api";
 import { price, sym } from "@/lib/fmt";
 import { useLivePrice, useUniverse } from "@/lib/market";
 import { useQuery } from "@/lib/query";
-import { createSignal, useSignals } from "@/lib/signals";
+import { createSignal, sigApi, useSignals, type ScriptTest } from "@/lib/signals";
 import { colors, fs, tnum } from "@/lib/theme";
 import { CoinIcon } from "../CoinIcon";
 import { Field, Input, NumInput } from "../Form";
-import { Chip, PillButton, Segmented, Sheet, tap, toast } from "../ui";
-import { Banner, Muted } from "./common";
+import { Chip, PillButton, Segmented, Sheet, tap, toast, toastError } from "../ui";
+import { problemText, ScriptTestView } from "../ai/ScriptSignal";
+import { CodeEditor } from "./CodeEditor";
+import { CodeView } from "./CodeView";
+import { Banner, Muted, SmallButton } from "./common";
 import { InstSearch, MAJORS } from "./forms";
 
-type Kind = "price" | "zone" | "field" | "moverisk" | "time";
+type Kind = "price" | "zone" | "field" | "moverisk" | "time" | "script";
 const KINDS: { value: Kind; label: string }[] = [
   { value: "price", label: "突破/跌破" },
   { value: "zone", label: "进入区间" },
   { value: "field", label: "字段" },
   { value: "moverisk", label: "延伸风险" },
   { value: "time", label: "定时复查" },
+  { value: "script", label: "脚本" },
 ];
+const EVERY: { value: "" | "tick" | "1m" | "5m" | "15m" | "1H"; label: string }[] = [
+  { value: "", label: "默认" }, { value: "tick", label: "实时" }, { value: "1m", label: "1 分" }, { value: "5m", label: "5 分" }, { value: "15m", label: "15 分" }, { value: "1H", label: "1 时" },
+];
+
+/** The server's template with the coin put in (its example coin is AAVE). */
+const personalize = (code: string, inst: string) => (inst ? code.replaceAll("AAVE-USDT-SWAP", inst).replace(/"""AAVE /, `"""${sym(inst)} `) : code);
 const BARS = [{ value: "", label: "现价" }, ...["1m", "15m", "1H", "4H"].map((v) => ({ value: v, label: v }))];
 
 // Fact-panel fields (features.Fields), entered in display units: rate → %/h, log → %, mult → ×.
@@ -51,6 +64,7 @@ const DEFAULT_INTENT: Record<Kind, (c: string, d: string) => string> = {
   field: (c, d) => `${d}后重新评估 ${c}：结合价格结构和持仓变化判断方向，条件成立就提交交易提议，否则说明放弃。`,
   moverisk: (c, d) => `${d}后重新评估做空/抄底 ${c}：延伸风险降下来了，看结构是否转弱，条件成立就提交交易提议，否则说明放弃。`,
   time: (c) => `到点复查${c ? ` ${c}` : ""}：用最新数据重新评估之前的计划，条件成立就提交交易提议，否则说明为什么继续等或放弃。`,
+  script: (_c, d) => `${d}成立后重新评估：用最新数据看结构、量能和持仓变化，条件成立就提交交易提议（入场、止损、目标），否则说明放弃。`,
 };
 
 export function NewSignalSheet({ visible, onClose, instId: initial }: { visible: boolean; onClose: () => void; instId?: string }) {
@@ -86,6 +100,33 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
   const [intentEdited, setIntentEdited] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // script
+  const [code, setCode] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [test, setTest] = useState<{ code: string; r: ScriptTest } | null>(null);
+  const [testing, setTesting] = useState(false);
+  useEffect(() => {
+    if (kind !== "script" || code || !visible) return;
+    sigApi.scriptTemplate().then((t) => setCode((c) => c || personalize(t.code, inst))).catch((e) => setErr(`未能加载模板：${e instanceof Error ? e.message : String(e)}`));
+  }, [kind, code, visible, inst]);
+  const tested = test && test.code === code ? test.r : null;
+
+  /** Compile + replay the current code; the result stays until the code changes. */
+  const runTest = async (): Promise<ScriptTest | null> => {
+    if (!code.trim()) { setErr("先写脚本"); return null; }
+    setErr("");
+    setTesting(true);
+    try {
+      const r = await sigApi.testScript(code);
+      setTest({ code, r });
+      return r;
+    } catch (e) {
+      toastError("测试失败", e);
+      return null;
+    } finally {
+      setTesting(false);
+    }
+  };
 
   // follow a new prefilled coin (opened from another instrument page)
   const [seenInit, setSeenInit] = useState(initial);
@@ -109,10 +150,14 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
       case "field": return isFinite(fval) ? `${c} ${fdef.label} ${OPS.find((o) => o.value === fop)?.label} ${+fval.toPrecision(6)}${UNIT_TEXT[fdef.unit]}` : "";
       case "moverisk": return isFinite(pTail) ? `${c} ${side === "top" ? "上涨端" : "下跌端"} P_tail ${rop === "<" ? "<" : ">"} ${pTail}%` : "";
       case "time": return tmode === "after" ? `${after} 分钟后` : `到 ${at.slice(5)}`;
+      case "script": return "";
     }
   }, [c, kind, level, bar, op, lo, hi, fval, fdef, fop, side, rop, pTail, tmode, after, at]);
+  const scriptDesc = tested?.meta ? `脚本 ${tested.meta.timeframe} · ${tested.meta.desc}` : "";
+  const shownDesc = kind === "script" ? scriptDesc : desc;
 
-  const defaultIntent = c || kind === "time" ? DEFAULT_INTENT[kind](c, desc || "条件到了") : "";
+  const defaultIntent = kind === "script" ? DEFAULT_INTENT.script(c, tested?.meta?.desc || "脚本条件")
+    : c || kind === "time" ? DEFAULT_INTENT[kind](c, desc || "条件到了") : "";
   const intentText = intentEdited ? intent : defaultIntent;
 
   // distance from the live price, and a warning when the condition already holds (the server rejects it)
@@ -133,6 +178,7 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
   }, [px, kind, level, op, bar, lo, hi]);
 
   const spec = (): Record<string, unknown> | string => {
+    if (kind === "script") return code.trim() ? { type: "script" } : "先写脚本";
     if (!inst && kind !== "time") return "先选一个合约";
     switch (kind) {
       case "price":
@@ -163,10 +209,15 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
     if (typeof s === "string") { setErr(s); return; }
     if (hoursErr || firesErr) { setErr("检查有效期和触发次数"); return; }
     if (intentText.trim().length < 6) { setErr("请写清触发后让 AI 做什么（至少 6 个字）"); return; }
+    if (kind === "script") { // the server runs the same check; testing first gives the reason in Chinese
+      const r = tested ?? (await runTest());
+      if (!r) return;
+      if (!r.ok) { setErr(problemText(r)); return; }
+    }
     setErr("");
     setBusy(true);
     try {
-      const r = await createSignal({ spec: s, intent: intentText.trim(), expiresHours: hours, maxFires, ...(every ? { every } : {}) });
+      const r = await createSignal({ spec: s, intent: intentText.trim(), expiresHours: hours, maxFires, ...(every ? { every } : {}), ...(kind === "script" ? { code } : {}) });
       toast("信号已订阅", r.desc);
       reset();
       onClose();
@@ -178,7 +229,7 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
   };
 
   const reset = () => {
-    setLevel(NaN); setLo(NaN); setHi(NaN); setIntent(""); setIntentEdited(false); setErr("");
+    setLevel(NaN); setLo(NaN); setHi(NaN); setIntent(""); setIntentEdited(false); setErr(""); setCode(""); setTest(null);
     if (!initial) setInst("");
   };
 
@@ -197,7 +248,7 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
         </View>
       )}
     >
-      <Field label="合约" style={{ borderTopWidth: 0 }}>
+      {kind === "script" ? null : <Field label="合约" style={{ borderTopWidth: 0 }}>
         {inst ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
             <CoinIcon instId={inst} size={20} />
@@ -216,9 +267,9 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
             </View>
           )} />
         )}
-      </Field>
+      </Field>}
 
-      <Field label="条件">
+      <Field label="条件" style={kind === "script" ? { borderTopWidth: 0 } : undefined}>
         <Segmented small value={kind} onChange={(k) => { setKind(k); setErr(""); }} options={KINDS} />
         {kind === "price" ? (
           <View style={{ gap: 10, marginTop: 4 }}>
@@ -256,6 +307,20 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
             </View>
             <Muted>按 1H 收盘计算的延续风险（上涨端：做空会被继续拉的概率）。{risk ? `当前 ${Math.round(risk[side].pTail * 100)}%` : ""}</Muted>
           </View>
+        ) : kind === "script" ? (
+          <View style={{ gap: 10, marginTop: 4 }}>
+            <Muted>用策略 SDK 写一个 Condition 类：在它的 K 线收盘时运行，check 从不成立变为成立时触发。合约、周期都在代码里声明。详见 帮助 → 策略 → 脚本信号。</Muted>
+            {code ? (
+              <View style={{ maxHeight: 260, overflow: "hidden", borderRadius: 8 }}>
+                <CodeView code={code} diagnostics={tested?.diagnostics} onLinePress={() => { tap(); setEditing(true); }} />
+              </View>
+            ) : <Muted>正在加载模板…</Muted>}
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <SmallButton label="编辑代码" icon="create-outline" onPress={() => setEditing(true)} disabled={!code} />
+              <SmallButton label={testing ? "测试中…" : tested ? "重新测试" : "测试"} icon="play-outline" onPress={() => void runTest()} disabled={!code || testing} />
+            </View>
+            {tested ? <ScriptTestView t={tested} /> : test ? <Muted>代码改过了，测试结果已过期。</Muted> : <Muted>测试会把脚本在最近 7 天的每根 K 线收盘上跑一遍：会触发几次、何时、数值，以及有没有出错、快不快、现在是否已成立。</Muted>}
+          </View>
         ) : (
           <View style={{ gap: 10, marginTop: 4 }}>
             <Segmented small value={tmode} onChange={setTmode} options={[{ value: "after", label: "N 分钟后" }, { value: "at", label: "指定时间" }]} style={{ alignSelf: "flex-start" }} />
@@ -270,12 +335,12 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
             <Muted>{tmode === "at" ? "UTC+8。" : ""}不需要合约也可以；选了合约会作为复查对象。</Muted>
           </View>
         )}
-        {live && kind !== "time" ? (
+        {live && kind !== "time" && kind !== "script" ? (
           <Text style={[{ fontSize: fs.sm, color: live.holds ? colors.warn : colors.textSoft, marginTop: 2 }, tnum]}>
             {live.text}{live.holds ? " · 条件已经成立，服务器会拒绝" : ""}
           </Text>
         ) : null}
-        {desc ? <Text style={{ fontSize: fs.md, color: colors.text, marginTop: 2 }}>条件：{desc}</Text> : null}
+        {shownDesc ? <Text style={{ fontSize: fs.md, color: colors.text, marginTop: 2 }}>条件：{shownDesc}</Text> : null}
       </Field>
 
       <Field label="触发后让 AI 做什么" desc="触发时会新开一个「信号 · …」对话，AI 按这段说明用最新数据重新评估。">
@@ -296,10 +361,37 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
       </View>
       <View style={{ gap: 4, paddingBottom: 8 }}>
         {lbl("检查间隔")}
-        <Segmented small value={every} onChange={setEvery} options={[{ value: "", label: "默认" }, { value: "tick", label: "实时" }, { value: "1m", label: "1 分" }, { value: "5m", label: "5 分" }, { value: "15m", label: "15 分" }, { value: "1H", label: "1 时" }]} />
-        <Muted>越慢越省资源；不需要第一时间响应的条件选 5 分或更慢，两次检查之间的短暂插针可能错过。</Muted>
+        <Segmented small value={kind === "script" && every === "tick" ? "" : every} onChange={setEvery} options={kind === "script" ? EVERY.filter((o) => o.value !== "tick") : EVERY} />
+        <Muted>{kind === "script" ? "脚本在它的 K 线收盘时运行；这里设的是最短间隔（比如 5m 周期选 15 分，就只在每个 15 分钟整点运行）。" : "越慢越省资源；不需要第一时间响应的条件选 5 分或更慢，两次检查之间的短暂插针可能错过。"}</Muted>
       </View>
-      {caps ? <Muted>活跃 {caps.active}/{caps.maxActive} · 今天已唤醒 AI {caps.wakesToday}/{caps.wakesPerDay} 次</Muted> : null}
+      {caps ? <Muted>活跃 {caps.active}/{caps.maxActive} · 今天已唤醒 AI {caps.wakesToday}/{caps.wakesPerDay} 次{caps.scripts ? ` · 脚本 ${caps.scripts.activeScripts}/${caps.scripts.maxActive}` : ""}</Muted> : null}
+      <ScriptEditorSheet visible={editing} code={code} onChange={setCode} diagnostics={tested?.diagnostics ?? []} testing={testing} result={tested}
+        onTest={() => void runTest()} onClose={() => setEditing(false)} />
+    </Sheet>
+  );
+}
+
+/** Full-height code editor for the script, with 测试 and the verdict in one line. */
+function ScriptEditorSheet({ visible, code, onChange, diagnostics, testing, result, onTest, onClose }: {
+  visible: boolean; code: string; onChange: (c: string) => void; diagnostics: ScriptTest["diagnostics"]; testing: boolean; result: ScriptTest | null; onTest: () => void; onClose: () => void;
+}) {
+  return (
+    <Sheet visible={visible} onClose={onClose} title="编辑脚本" fill footer={(
+      <View style={{ gap: 8 }}>
+        {result ? (
+          <Text numberOfLines={3} style={{ fontSize: fs.sm, lineHeight: 18, color: result.ok ? colors.textSoft : colors.warn }}>
+            {result.ok ? `通过：过去 ${result.replay ? +result.replay.days.toFixed(1) : 0} 天会触发 ${result.replay?.fireCount ?? 0} 次` : problemText(result)}
+          </Text>
+        ) : null}
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={{ flex: 1 }}><PillButton variant="soft" icon="play-outline" label={testing ? "测试中…" : "测试"} loading={testing} onPress={onTest} /></View>
+          <View style={{ flex: 1 }}><PillButton label="完成" onPress={onClose} /></View>
+        </View>
+      </View>
+    )}>
+      <View style={{ flex: 1, marginHorizontal: -16 }}>
+        <CodeEditor code={code} onChange={onChange} diagnostics={diagnostics} />
+      </View>
     </Sheet>
   );
 }
