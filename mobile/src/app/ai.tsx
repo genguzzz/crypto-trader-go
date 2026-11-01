@@ -20,7 +20,7 @@ import { AiBlock } from "@/components/ai/AiBlock";
 import { AiSteps, type StepItem } from "@/components/ai/AiSteps";
 import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
-import { HistoryPane, NotesPane, ProposalsPane, SelectPane, plainText } from "@/components/ai/AiPanes";
+import { HistoryPane, NotesPane, ProposalsPane, SelectPane, onShowFullText, plainText } from "@/components/ai/AiPanes";
 import { ProposalById, ProposalChartHost, proposalIds } from "@/components/ai/ProposalCard";
 import { SignalBubble, SignalById, SignalHost, signalIds } from "@/components/ai/SignalCard";
 import { usePendingProposals, useRealtrade } from "@/lib/realtrade";
@@ -69,6 +69,7 @@ export default function AiScreen() {
   const { pane: paneParam, chat: chatParam } = useLocalSearchParams<{ pane?: string; chat?: string }>();
   const [pane, setPane] = useState<Pane | null>(paneParam === "trades" ? "trades" : null);
   const [selText, setSelText] = useState("");
+  const [selFull, setSelFull] = useState<{ title: string } | null>(null); // a step's request / result, monospace
   const [slide] = useState(() => new Animated.Value(paneParam === "trades" ? 1 : 0));
   const showPane = (p: Pane | null) => {
     if (p) {
@@ -84,9 +85,17 @@ export default function AiScreen() {
     void haptic("medium");
     Keyboard.dismiss();
     setSelText(plainText(t));
+    setSelFull(null);
     showPane("select");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(() => onShowFullText(({ title, text }) => {
+    Keyboard.dismiss();
+    setSelText(text);
+    setSelFull({ title });
+    showPane("select");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
   // owner only: pending trade proposals → badge on the header button
   const owner = useRealtrade((r) => r.owner);
   const pendingN = usePendingProposals().length;
@@ -323,7 +332,7 @@ export default function AiScreen() {
         <Animated.View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 10, backgroundColor: colors.bg,
           transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [width, 0] }) }] }}>
           {pane === "history" ? <HistoryPane onClose={() => showPane(null)} />
-            : pane === "select" ? <SelectPane text={selText} onClose={() => showPane(null)} />
+            : pane === "select" ? <SelectPane text={selText} title={selFull?.title} mono={!!selFull} onClose={() => showPane(null)} />
             : pane === "trades" ? <ProposalsPane onClose={() => showPane(null)} />
             : <NotesPane onClose={() => showPane(null)} />}
         </Animated.View>

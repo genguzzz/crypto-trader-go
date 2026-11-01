@@ -190,6 +190,17 @@ export function ProposalsPane({ onClose }: { onClose: () => void }) {
   );
 }
 
+// A step's full request / result, opened from AiSteps (it renders far from the sheet's pane state).
+type TextReq = { title: string; text: string };
+const textListeners = new Set<(r: TextReq) => void>();
+export function showFullText(title: string, text: string) {
+  textListeners.forEach((l) => l({ title, text }));
+}
+export function onShowFullText(l: (r: TextReq) => void) {
+  textListeners.add(l);
+  return () => void textListeners.delete(l);
+}
+
 /** Markdown → plain text for selecting: links, emphasis and code marks dropped, structure kept. */
 export function plainText(md: string) {
   return md
@@ -202,17 +213,20 @@ export function plainText(md: string) {
 }
 
 /** The answer as native iOS text: drag the handles to select any span, then copy / look up / share. */
-export function SelectPane({ text, onClose }: { text: string; onClose: () => void }) {
+export function SelectPane({ text, title = "选择文本", mono, onClose }: { text: string; title?: string; mono?: boolean; onClose: () => void }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1 }}>
-      <PaneHeader title="选择文本" onClose={onClose} />
+      <PaneHeader title={title} onClose={onClose} />
       <TextInput
         value={text}
         editable={false}
         multiline
         scrollEnabled
-        style={{ flex: 1, paddingHorizontal: 16, paddingTop: 12, paddingBottom: insets.bottom + 24, fontSize: fs.lg, lineHeight: 24, color: colors.text, textAlignVertical: "top" }}
+        style={[
+          { flex: 1, paddingHorizontal: 16, paddingTop: 12, paddingBottom: insets.bottom + 24, fontSize: fs.lg, lineHeight: 24, color: colors.text, textAlignVertical: "top" },
+          mono ? { fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 12, lineHeight: 18, color: colors.textSoft } : null,
+        ]}
       />
       <View style={{ position: "absolute", right: 12, top: Platform.OS === "web" ? 10 : 16 }}>
         <Pressable
