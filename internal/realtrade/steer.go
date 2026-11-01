@@ -151,6 +151,10 @@ func (s *Service) steerText(ctx context.Context, p Proposal, kind string) string
 		}
 	case StatusFailed:
 		fmt.Fprintf(&b, "❌ %s#%d 执行失败 · %s：%s", dry, p.ID, what, clip(p.Error, 300))
+	case StatusRejected:
+		fmt.Fprintf(&b, "🚫 %s#%d 主人拒绝了这个提议，没有下单 · %s · %s", dry, p.ID, what, summary(p))
+	case StatusExpired:
+		fmt.Fprintf(&b, "⌛ %s#%d 超时未审核，提议已过期，没有下单 · %s · %s", dry, p.ID, what, summary(p))
 	case StatusInvalidated:
 		fmt.Fprintf(&b, "⚠️ %s#%d 主人已同意，但复核未通过，没有下单 · %s：%s", dry, p.ID, what, clip(p.Error, 300))
 	case "closed":
@@ -186,6 +190,10 @@ func (s *Service) steerText(ctx context.Context, p Proposal, kind string) string
 		b.WriteString("请说明这个价位是否还值得等：值得就重新提议或订阅信号（带 tradeId），否则说明原因并取消相关信号。")
 	case StatusFailed:
 		b.WriteString("请用 get_positions 核对 OKX 上的实际状态（可能部分请求已生效），告诉主人发生了什么；原因没排除前不要重复提议同一笔。")
+	case StatusRejected:
+		b.WriteString("主人没有给原因：不要原样再提；简短问他想改什么（价位、止损、仓位大小、还是不想做），或带着新证据重新提议。过时的信号取消。")
+	case StatusExpired:
+		b.WriteString("请用最新数据判断这个计划现在还成立吗：成立就按当前价重新提议（有效期可以放长），不成立就说明原因并取消相关信号。")
 	case StatusInvalidated:
 		b.WriteString("请用最新数据判断计划是否还成立：成立就按新价格重新提议，否则说明原因。")
 	case "closed":

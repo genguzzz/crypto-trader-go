@@ -2,8 +2,10 @@ package realtrade
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"crypto-trader-go/internal/okxorder"
 )
@@ -79,5 +81,32 @@ func TestOpenDefaultsToCross(t *testing.T) {
 	in.MarginMode = ""
 	if p := approve(t, e, in); p.MarginMode != "cross" {
 		t.Fatalf("default margin mode %q", p.MarginMode)
+	}
+}
+
+// A rejected or expired proposal wakes its chat too: the agent that waits for the owner must hear "no" or "too late".
+func TestRejectExpireSteerChat(t *testing.T) {
+	e := newEnv(t, okxorder.NewDryRun())
+	sink := withSteer(e)
+	p, err := e.s.Propose(context.Background(), input())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Reject(p.ID, "owner", "app"); err != nil {
+		t.Fatal(err)
+	}
+	if msg := sink.wait(t, e, 1); !strings.Contains(msg, "🚫") || !strings.Contains(msg, "拒绝") {
+		t.Fatalf("reject message %q", msg)
+	}
+	in := input()
+	in.ExpiresMin = 3
+	q, err := e.s.Propose(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.advance(4 * time.Minute)
+	e.s.expireDue()
+	if msg := sink.wait(t, e, 2); !strings.Contains(msg, "⌛") || !strings.Contains(msg, fmt.Sprintf("#%d", q.ID)) {
+		t.Fatalf("expire message %q", msg)
 	}
 }

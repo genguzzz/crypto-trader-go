@@ -20,7 +20,7 @@ func (s *Service) ProposeTool(ctx context.Context, chat int64, a map[string]stri
 		return nil, err
 	}
 	note := "Waiting for the owner's approval; nothing has been sent. Tell him it is pending (#id, valid until) — never that it was placed. " +
-		"Once approved and executed, this conversation gets a message with the fill and the position."
+		"When he approves (and it runs), rejects it, or it expires unanswered, this conversation gets a message with the outcome (fill and position, or the refusal) — you do not need to poll or wait."
 	if s.Mode() != "live" {
 		note += " Dry run: even if approved, it is only recorded and simulated, not sent."
 	}

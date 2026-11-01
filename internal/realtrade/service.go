@@ -369,6 +369,7 @@ func (s *Service) Reject(id int64, by, via string) (Proposal, error) {
 	}
 	s.audit(id, StatusRejected, "拒绝", by)
 	s.emit(StatusRejected, id)
+	s.queueSteer(id, StatusRejected)
 	return p, nil
 }
 
@@ -380,6 +381,7 @@ func (s *Service) expire(id int64) {
 	if ok {
 		s.audit(id, StatusExpired, "超时未审核，已过期（不会自动执行）", "timeout")
 		s.emit(StatusExpired, id)
+		s.queueSteer(id, StatusExpired)
 	}
 }
 
