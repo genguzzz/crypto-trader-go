@@ -18,7 +18,35 @@ const isShell = (s: ToolPart) => s.name.endsWith("__shell");
 const oneLine = (cmd: string) =>
   cmd.replace(/\s*2>&1/g, "").replace(/\s*\|\s*head(\s+-n?\s*\d+)?\s*$/gm, "").split("\n").map((x) => x.trim()).filter(Boolean).join(" ⏎ ");
 const toolLabel = (s: ToolPart) => (isShell(s) && /^(Python )?计算$/.test(s.label) ? "命令" : s.label);
-const toolSub = (s: ToolPart) => (isShell(s) && !s.input && s.args ? oneLine(s.args) : s.input);
+/** The tool's own name (get_instrument, WebSearch …) and where it lives, as Claude desktop shows calls. */
+function toolId(s: ToolPart) {
+  const parts = s.name.split("__");
+  return parts.length >= 3 ? { kind: `工具 · ${parts[1]}`, id: parts.slice(2).join("__") } : { kind: "内置工具", id: s.name };
+}
+function parseArgs(a?: string): Record<string, unknown> | null {
+  try {
+    const v = JSON.parse(a || "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+const argVal = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+/** The call on one line: the command for shell steps, `name(k=v, …)` for tools. */
+function toolSub(s: ToolPart) {
+  if (isShell(s)) return s.args ? oneLine(s.args) : s.input;
+  const a = parseArgs(s.args);
+  const kv = a ? Object.entries(a).map(([k, v]) => `${k}=${argVal(v)}`).join(", ") : s.input;
+  return `${toolId(s).id}(${kv})`;
+}
+/** The expanded request: the full command, or one parameter per line. */
+function requestText(s: ToolPart) {
+  if (isShell(s)) return s.args || "";
+  const a = parseArgs(s.args);
+  if (!a) return s.args || "";
+  const kv = Object.entries(a);
+  return kv.length ? kv.map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v, null, 1)}`).join("\n") : "（无参数）";
+}
 const secs = (ms: number) => (ms < 10_000 ? (ms / 1000).toFixed(1) : Math.round(ms / 1000).toString()) + "s";
 
 function thinkMs(s: ThinkPart, now: number) {
@@ -126,12 +154,15 @@ export function AiSteps({ items, live, tail }: { items: StepItem[]; live: boolea
                 <Pressable onPress={() => { tap(); setDetail(on ? null : s.id); }} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 7, paddingRight: 12, paddingLeft: s.sub ? 30 : 12, backgroundColor: pressed ? colors.raised : undefined })}>
                   <Status s={s} size={13} />
                   <Text style={{ fontSize: fs.sm, color: colors.text }}>{toolLabel(s)}</Text>
-                  <Text numberOfLines={1} style={{ flex: 1, fontSize: fs.xs, color: colors.textFaint, fontFamily: isShell(s) ? mono : undefined }}>{toolSub(s)}</Text>
+                  <Text numberOfLines={1} style={{ flex: 1, fontSize: 11, color: colors.textFaint, fontFamily: mono }}>{toolSub(s)}</Text>
                   <Ionicons name="chevron-forward" size={13} color={colors.textDim} style={{ transform: [{ rotate: on ? "90deg" : "0deg" }] }} />
                 </Pressable>
                 {on ? (
                   <View style={{ paddingLeft: 34, paddingRight: 12, paddingTop: 2, paddingBottom: 10, gap: 8 }}>
-                    {s.args ? <Block k="请求" text={s.args} /> : null}
+                    <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>
+                      {isShell(s) ? "命令 · shell" : toolId(s).kind} <Text style={{ fontFamily: mono, color: colors.textSoft }}>{isShell(s) ? "" : toolId(s).id}</Text>
+                    </Text>
+                    {s.args != null ? <Block k={isShell(s) ? "命令" : "参数"} text={requestText(s)} /> : null}
                     <Block k={s.ok === false ? "出错" : "结果"} text={s.output ?? (s.ok == null ? "进行中…" : "（无输出）")} />
                   </View>
                 ) : null}
