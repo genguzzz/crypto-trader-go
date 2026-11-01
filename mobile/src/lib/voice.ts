@@ -22,7 +22,8 @@ async function makeRecorder(): Promise<Recorder> {
   const A = await import("expo-audio");
   const { default: AudioModule } = await import("expo-audio/build/AudioModule");
   const { createRecordingOptions } = await import("expo-audio/build/utils/options");
-  await A.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+  // take audio focus while the owner talks: music / video in other apps pauses (default mixWithOthers kept playing)
+  await A.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, interruptionMode: "doNotMix" });
   const opts = createRecordingOptions({ ...A.RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   return new (AudioModule as unknown as { AudioRecorder: new (o: unknown) => Recorder }).AudioRecorder(opts);
 }
@@ -30,7 +31,9 @@ async function makeRecorder(): Promise<Recorder> {
 async function audioOff() {
   try {
     const A = await import("expo-audio");
-    await A.setAudioModeAsync({ allowsRecording: false });
+    await A.setAudioModeAsync({ allowsRecording: false, interruptionMode: "mixWithOthers" });
+    // release the session; iOS notifies the paused app (notifyOthersOnDeactivation) so it can resume
+    await A.setIsAudioActiveAsync(false);
   } catch {
     // best effort
   }
