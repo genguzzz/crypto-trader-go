@@ -11,7 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ai, clearContext, newChat, openChat, retry, send, setOpen, stop, textOf, useAi, type Msg } from "@/lib/ai";
+import { ai, clearContext, newChat, openChat, retry, send, setOpen, stop, textOf, tokensLabel, useAi, type Msg } from "@/lib/ai";
 import { copy, haptic } from "@/lib/device";
 import { useHoldToTalk, useTapToTalk } from "@/lib/voice";
 import { colors, fs } from "@/lib/theme";
@@ -435,6 +435,7 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
             <Ionicons name="text-outline" size={14} color={colors.textSoft} />
           </Pressable>
           {m.latencyMs ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{(m.latencyMs / 1000).toFixed(0)}s</Text> : null}
+          {tokensLabel(m.usage) ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>· {tokensLabel(m.usage)}</Text> : null}
           {m.costUsd ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>· ${m.costUsd.toFixed(3)}</Text> : null}
         </View>
       ) : null}

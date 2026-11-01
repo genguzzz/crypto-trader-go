@@ -90,7 +90,7 @@ function Block({ k, text }: { k: string; text: string }) {
           </Pressable>
         ) : null}
       </View>
-      <InnerScroll maxHeight={300} style={{ borderRadius: 8, backgroundColor: "#0a0a0a", borderWidth: 1, borderColor: colors.border }} contentStyle={{ paddingHorizontal: 10, paddingVertical: 8 }}>
+      <InnerScroll maxHeight={300} style={{ borderRadius: 8, backgroundColor: colors.cardMuted, borderWidth: 1, borderColor: colors.border }} contentStyle={{ paddingHorizontal: 10, paddingVertical: 8 }}>
         <Text style={{ fontFamily: mono, fontSize: 11, lineHeight: 16, color: colors.textSoft }}>{text}</Text>
       </InnerScroll>
     </View>
