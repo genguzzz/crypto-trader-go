@@ -7,11 +7,11 @@ name: Mobile iOS IPA
 #   manual run                      → build only
 # Cut a release with: mobile/scripts/release.sh 0.2.0 "新增：…；修复：…"
 # JS-only changes ship over the air instead: mobile/scripts/ota.sh "说明".
+# Only releases build an IPA: JS changes ship as OTA updates (mobile/scripts/ota.sh, from the dev box),
+# so a branch push needs no macOS run. Run it by hand (workflow_dispatch) to check a native change early.
 on:
   push:
-    branches: [ios]
     tags: ["m-v*.*.*"]
-    paths: ["mobile/**", ".github/workflows/mobile-ios.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -23,8 +23,6 @@ permissions:
 
 jobs:
   build:
-    # release.sh pushes its "Release m-vX" commit together with the tag; build it once, via the tag.
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'Release m-v')
     runs-on: xcode-27 # same image as mediahub
     environment: production # deploy key for publishing (same as deploy.yml / ios.yml)
     timeout-minutes: 60
