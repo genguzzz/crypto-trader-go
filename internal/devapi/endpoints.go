@@ -427,7 +427,10 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				"GET under /api/v5/account/, asset/, trade/, finance/, tradingBot/, copytrading/, users/; nothing can be placed, moved or withdrawn. " +
 				"Common paths (params; times are ms; pages via after/before = the last row's id or ts; limit ≤ 100): " +
 				"deposits /api/v5/asset/deposit-history (ccy, state 2=credited, after, before, limit) · withdrawals /api/v5/asset/withdrawal-history " +
-				"(ccy, state 2=done, after, before, limit) · funding-account bills /api/v5/asset/bills (ccy, type, after, before, limit) · " +
+				"(ccy, state 2=done, after, before, limit) · funding-account bills /api/v5/asset/bills (1 month) and /api/v5/asset/bills-history (about 1 year) " +
+				"(ccy, type, after/before = ts, limit; types: 1 deposit, 2 withdrawal, 130/131 from/to trading account, 75/76 Simple Earn in/out, " +
+				"173 fee rebate, 116/117/118 C2C (P2P) order placed / filled / cancelled — balChg is the crypto that moved; the fiat price, amount " +
+				"and counterparty are in no API, OKX's P2P API is merchant-only) · " +
 				"trading-account bills /api/v5/account/bills (7 days) and /api/v5/account/bills-archive (3 months) (instType, ccy, type 2=trade 8=funding fee, " +
 				"after/before = billId, begin/end ms) · fills /api/v5/trade/fills-history (instType=SWAP required, 3 months) · orders " +
 				"/api/v5/trade/orders-history (7 days) and orders-history-archive (3 months) (instType=SWAP required) · closed positions " +
