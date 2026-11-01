@@ -246,7 +246,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		defer cancel()
 		defer g.endRun(in.ChatID)
 		start := g.now()
-		msg := map[string]any{"type": "chat", "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "notes": g.Notes()}
+		msg := map[string]any{"type": "chat", "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "notes": g.MemoryFor(in.Message)}
 		resp, err := g.callStream(ctx, msg, func(ev chatEvent) { g.onAgentEvent(ev); run.publish(ev) })
 		lat := g.now().Sub(start).Milliseconds()
 		var out struct {

@@ -38,7 +38,7 @@ var queryKeyPrefix = []string{"/api/v1/icons/"}
 
 // agentPath: the AI worker's own reads (ai/agent.py list_chats / read_chat) with the per-process
 // agent key (header X-CTG-Agent), so the owner key never has to reach the worker.
-var agentPath = regexp.MustCompile(`^/api/v1/ai/chats(/[0-9]+)?$`)
+var agentPath = regexp.MustCompile(`^/api/v1/ai/(chats(/[0-9]+)?|notes)$`)
 
 const (
 	failWindow   = time.Minute

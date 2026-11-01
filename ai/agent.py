@@ -1,7 +1,7 @@
 """Chat agent: one multi-turn Claude Agent SDK session per ctg conversation.
 
 Tools: the ctg MCP endpoint (small market-data lookups, read-only, in-memory key from Go),
-WebSearch/WebFetch, a `shell` tool that runs in the separate ctg-sandbox container, `remember`, and
+WebSearch/WebFetch, a `shell` tool that runs in the separate ctg-sandbox container, memory (memory_save / memory_search / memory_forget), and
 the skills `perp-analysis` and `ctg-platform`. One agent argues both sides of a trade itself. Progress is streamed to Go as compact events; the session is resumed
 by id on the next turn (transcripts live under $HOME/.claude, a persistent volume in compose).
 """
@@ -13,6 +13,7 @@ import re
 import json
 import os
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -45,7 +46,7 @@ TOOL_LABELS = {
     "get_orderbook": "盘口", "get_liquidations": "强平记录", "get_liquidation_map": "清算地图",
     "compare_with_majors": "对比 BTC/ETH", "get_universe": "监控池", "search_instruments": "搜索合约",
     "list_rules": "规则", "get_rule_track_record": "规则战绩", "get_alert_events": "告警", "get_system_status": "数据状态",
-    "list_fields": "字段定义", "get_usage": "接口额度", "get_positions": "我的仓位", "remember": "记住偏好", "okx_api": "查询 OKX 账户", "okx_history": "OKX 账户统计", "propose_trade": "提交交易提议", "get_trade_proposals": "交易提议", "list_chats": "查看历史对话", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
+    "list_fields": "字段定义", "get_usage": "接口额度", "get_positions": "我的仓位", "memory_save": "记一笔", "memory_search": "翻记忆", "memory_forget": "删掉记忆", "okx_api": "查询 OKX 账户", "okx_history": "OKX 账户统计", "propose_trade": "提交交易提议", "get_trade_proposals": "交易提议", "list_chats": "查看历史对话", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
 }
 # the analysis CLI's commands, as the owner would call them
 CA_LABELS = {
@@ -92,8 +93,12 @@ def brief_input(name: str, inp: Any) -> str:
         return str(inp.get("url", "")).split("//")[-1][:80]
     if short == "Skill":
         return ""
-    if short == "remember":
+    if short == "memory_save":
         return str(inp.get("text", ""))[:80]
+    if short == "memory_search":
+        return str(inp.get("query", ""))[:40]
+    if short == "memory_forget":
+        return f"#{inp.get('id', '')}"
     if short == "read_chat":
         return f"#{inp.get('id', '')}"
     if short == "list_chats":
@@ -226,29 +231,83 @@ def sessions_server(base: str, current: str, token: str):
     return create_sdk_mcp_server(name="sessions", version="1.0.0", tools=[list_chats, read_chat])
 
 
-def memory_server(emit: Emit):
+MEMORY_KINDS = ["profile", "fact", "position", "event", "plan"]
+
+
+def memory_server(emit: Emit, base: str = "", token: str = ""):
+    """The owner's memory, two layers (Go: internal/aigate/notes.go). profile = standing preferences, sent with
+    every turn; fact / position / event / plan = archival, the most relevant ones arrive with each turn and
+    memory_search finds more (ctg's API on loopback with the sessions token). Writes go back to Go as events."""
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
-    @tool("remember", "Save one lasting preference or fact about the owner (e.g. 杠杆偏好：多空都用 8 倍). Only when the owner "
-          "himself states a standing preference or asks you to remember something in this message; never to note your own "
-          "assumptions, defaults or placeholders. Pass replaces=<id> to update an existing note "
-          "from the list in your instructions instead of adding a duplicate.",
-          {"type": "object", "properties": {"text": {"type": "string"},
-                                            "replaces": {"type": "integer", "description": "id of the note this one updates"}},
-           "required": ["text"]})
-    async def remember(args: dict) -> dict:
-        text = str(args.get("text", "")).strip()[:300]
-        if not text or re.search(r"占位|placeholder|无需保存|测试|test", text, re.I):
-            return {"content": [{"type": "text", "text": "empty note"}], "is_error": True}
-        await emit({"type": "memory", "text": text, "replaces": int(args.get("replaces") or 0)})
-        return {"content": [{"type": "text", "text": f"已记住：{text}"}]}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # loopback: never through the LLM proxy
 
-    return create_sdk_mcp_server(name="memory", version="1.0.0", tools=[remember])
+    @tool("memory_save", "Save one memory: a single self-contained sentence naming the specific thing (\"不做 meme 币和新上线的币\", "
+          "not \"不做这类\"). kind: profile = a standing preference or rule, sent with every conversation (leverage, sizing, "
+          "coins he avoids, timeframes; max 12 — merge rather than add); fact = something about him; position = a holding or "
+          "plan for one he keeps outside ctg; event = something that happened (a trade he made, a call that worked or failed, "
+          "his feedback on your analysis); plan = something to follow up (\"等 SOL 回踩 140 再看\", \"FOMC 后复盘\"). Only what he "
+          "states or clearly confirms; never your own assumptions, defaults or placeholders. tags: 1-4 search words (coins, "
+          "topics). A near-duplicate of the same kind is updated automatically; pass replaces=<id> to rewrite one.",
+          {"type": "object", "properties": {"text": {"type": "string"}, "kind": {"type": "string", "enum": MEMORY_KINDS},
+                                            "tags": {"type": "array", "items": {"type": "string"}},
+                                            "replaces": {"type": "integer", "description": "id of the memory this one updates"}},
+           "required": ["text", "kind"]})
+    async def memory_save(args: dict) -> dict:
+        text = str(args.get("text", "")).strip()[:300]
+        kind = str(args.get("kind") or "profile")
+        if not text or re.search(r"占位|placeholder|无需保存|测试|test", text, re.I):
+            return {"content": [{"type": "text", "text": "empty memory"}], "is_error": True}
+        if kind not in MEMORY_KINDS:
+            return {"content": [{"type": "text", "text": f"kind must be one of {MEMORY_KINDS}"}], "is_error": True}
+        tags = [str(t).strip()[:30] for t in (args.get("tags") or []) if str(t).strip()][:4]
+        await emit({"type": "memory", "text": text, "kind": kind, "tags": tags, "replaces": int(args.get("replaces") or 0)})
+        return {"content": [{"type": "text", "text": f"已记下（{kind}）：{text}"}]}
+
+    @tool("memory_search", "Search the owner's memories by words (coins, topics), optionally one kind. Your instructions carry "
+          "only <profile> and the few memories most relevant to this message; search when he says \"我说过 / 上次那个计划 / "
+          "我的持仓\" or you need more background, and before saving something that may already exist.",
+          {"type": "object", "properties": {"query": {"type": "string"}, "kind": {"type": "string", "enum": MEMORY_KINDS},
+                                            "limit": {"type": "integer", "description": "default 10, max 50"}},
+           "required": ["query"]})
+    async def memory_search(args: dict) -> dict:
+        if not base:
+            return {"content": [{"type": "text", "text": "memory search unavailable"}], "is_error": True}
+        q = urllib.parse.urlencode({k: v for k, v in {"q": str(args.get("query") or " "), "kind": args.get("kind") or "",
+                                                      "limit": int(args.get("limit") or 10)}.items() if v})
+        try:
+            req = urllib.request.Request(f"{base}/api/v1/ai/notes?{q}", headers={"X-CTG-Agent": token})
+            with opener.open(req, timeout=15) as r:
+                ns = json.load(r)
+        except (OSError, ValueError) as e:
+            return {"content": [{"type": "text", "text": f"memory unavailable: {e}"}], "is_error": True}
+        lines = [f"[{n.get('id')} {n.get('kind') or 'profile'}] {n.get('text')}" + (f"  #{' #'.join(n['tags'])}" if n.get("tags") else "")
+                 + f"  ({datetime.fromtimestamp(n.get('ts', 0) / 1000, TZ8).strftime('%Y-%m-%d')})" for n in ns]
+        return {"content": [{"type": "text", "text": "\n".join(lines) or "没有相关记忆"}]}
+
+    @tool("memory_forget", "Delete one memory by id, only when he asks you to forget it or it is plainly wrong or outdated.",
+          {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]})
+    async def memory_forget(args: dict) -> dict:
+        await emit({"type": "memory_forget", "id": int(args.get("id") or 0)})
+        return {"content": [{"type": "text", "text": f"已删除 #{int(args.get('id') or 0)}"}]}
+
+    return create_sdk_mcp_server(name="memory", version="1.0.0", tools=[memory_save, memory_search, memory_forget])
 
 
 def notes_block(notes: Any) -> str:
-    lines = [f"[{n.get('id')}] {n.get('text')}" for n in (notes if isinstance(notes, list) else []) if isinstance(n, dict) and n.get("text")]
-    return "\n\n<owner_notes>\n" + ("\n".join(lines) or "(none yet)") + "\n</owner_notes>\n"
+    """Memory for this turn: {profile: [...], recalled: [...]} from Go (a plain list = profile, older Go)."""
+    def line(n: dict) -> str:
+        kind = n.get("kind") or "profile"
+        tags = f"  #{' #'.join(n['tags'])}" if n.get("tags") else ""
+        return f"[{n.get('id')}{'' if kind == 'profile' else ' ' + kind}] {n.get('text')}{tags}"
+    if isinstance(notes, dict):
+        profile, recalled = notes.get("profile") or [], notes.get("recalled") or []
+    else:
+        profile, recalled = (notes if isinstance(notes, list) else []), []
+    p = [line(n) for n in profile if isinstance(n, dict) and n.get("text")]
+    r = [line(n) for n in recalled if isinstance(n, dict) and n.get("text")]
+    return ("\n\n<profile>\n" + ("\n".join(p) or "(empty)") + "\n</profile>\n<recalled>\n"
+            + ("\n".join(r) or "(nothing relevant to this message)") + "\n</recalled>\n")
 
 
 def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes: Any = None, emit: Emit | None = None):
@@ -260,13 +319,13 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
     prompt += notes_block(notes)
     mcp: dict[str, Any] = {"sandbox": sandbox_server(chat, agent.get("sandboxToken", ""))}
     allowed = ["mcp__sandbox__shell", "WebSearch", "WebFetch", "Skill"]
+    # ctg's own API on the same loopback host as the MCP endpoint (other conversations, memory search)
+    base = agent["mcpUrl"].split("/mcp")[0] if agent.get("mcpUrl") else ""
     if emit is not None:
-        mcp["memory"] = memory_server(emit)
-        allowed.append("mcp__memory__remember")
+        mcp["memory"] = memory_server(emit, base, agent.get("sessionsToken", ""))
+        allowed += ["mcp__memory__memory_save", "mcp__memory__memory_search", "mcp__memory__memory_forget"]
     ctg_tools: list[str] = []
     if agent.get("mcpUrl"):
-        # the owner's other conversations, from ctg's API on the same loopback host as the MCP endpoint
-        base = agent["mcpUrl"].split("/mcp")[0]
         mcp["sessions"] = sessions_server(base, chat, agent.get("sessionsToken", ""))
         allowed += ["mcp__sessions__list_chats", "mcp__sessions__read_chat"]
     if agent.get("mcpUrl") and agent.get("mcpToken"):
