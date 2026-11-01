@@ -547,8 +547,8 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				{Name: "cooldownMin", In: "query", Type: "integer", Default: 60, Min: 5, Max: 1440, Desc: "minutes between two fires (maxFires > 1)"},
 				{Name: "every", In: "query", Type: "string", Enum: []string{"tick", "1m", "5m", "15m", "1H"}, Desc: "how often the server checks it: " +
 					"tick = each ~2 s price update (only for a fast level / zone you must catch at once), 1m, 5m, 15m, 1H (on that confirmed " +
-					"minute). Pick the slowest that still serves the setup — most waits (a 1H close, funding flip, risk easing, a level hours " +
-					"away) need 5m–1H. Default: tick for last-price levels / zones / times, else 1m. A brief spike between checks can be missed."},
+					"minute). Altcoins are always checked at least every minute (5m–1H is lowered to 1m); only BTC / ETH may wait 5m–1H. " +
+					"Default: tick for last-price levels / zones / times, else 1m. Scripts run on their own timeframe's close."},
 			},
 			owner: true,
 			write: true,

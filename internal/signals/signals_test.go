@@ -572,6 +572,7 @@ func TestAlertIsAMoment(t *testing.T) {
 
 func TestCheckInterval(t *testing.T) {
 	s, f, _ := newEnv(t, Options{})
+	f.set("BTC-USDT-SWAP", 139) // BTC / ETH may be checked less often than a minute
 	for _, bad := range []string{"2m", "1d"} {
 		if _, err := s.Subscribe(SubscribeInput{ChatID: 12, Spec: spec(t, `{"type":"price","instId":"AAVE","op":"above","level":140.2}`), Intent: "上破再评估做多", Every: bad}); err == nil {
 			t.Fatalf("every %q accepted", bad)
@@ -581,11 +582,11 @@ func TestCheckInterval(t *testing.T) {
 		Spec: spec(t, `{"type":"any","of":[{"type":"price","instId":"AAVE","op":"above","level":140.2,"every":"5m"},{"type":"time","afterMin":60}]}`)}); err == nil {
 		t.Fatal("every inside a composite accepted")
 	}
-	x, err := s.Subscribe(SubscribeInput{ChatID: 12, Spec: spec(t, `{"type":"price","instId":"AAVE","op":"above","level":140.2}`), Intent: "上破再评估做多", Every: "5m"})
-	if err != nil || x.Desc != "AAVE 价格上破 140.2（每 5 分钟检查）" {
+	x, err := s.Subscribe(SubscribeInput{ChatID: 12, Spec: spec(t, `{"type":"price","instId":"BTC","op":"above","level":140.2}`), Intent: "上破再评估做多", Every: "5m"})
+	if err != nil || x.Desc != "BTC 价格上破 140.2（每 5 分钟检查）" {
 		t.Fatalf("subscribe %+v %v", x, err)
 	}
-	f.set(aave, 141)
+	f.set("BTC-USDT-SWAP", 141)
 	s.evaluate(event{kind: "tick"})                               // not a tick subscription
 	m := time.Date(2026, 11, 1, 6, 1, 0, 0, time.UTC).UnixMilli() // the 06:01 bar closes at 06:02: not a 5-minute mark
 	s.evaluate(event{kind: "minute", minute: m})
@@ -595,5 +596,13 @@ func TestCheckInterval(t *testing.T) {
 	s.evaluate(event{kind: "minute", minute: m + 3*60_000}) // closes at 06:05
 	if f.wokenN() != 1 {
 		t.Fatalf("woken %d at the 5-minute check", f.wokenN())
+	}
+}
+
+func TestAltsCheckedEveryMinute(t *testing.T) {
+	s, _, _ := newEnv(t, Options{})
+	x, err := s.Subscribe(SubscribeInput{ChatID: 12, Spec: spec(t, `{"type":"price","instId":"AAVE","op":"above","level":140.2}`), Intent: "上破再评估做多", Every: "15m"})
+	if err != nil || x.Spec.Every != "1m" || x.Desc != "AAVE 价格上破 140.2（每分钟检查）" {
+		t.Fatalf("alt at 15m: %+v %v", x.Spec, err)
 	}
 }

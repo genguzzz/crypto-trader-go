@@ -271,6 +271,11 @@ func New(st *store.Store, src Sources, opts Options) (*Service, error) {
 		return nil, err
 	}
 	for _, sub := range subs {
+		if sub.Spec.capEvery() { // stored before the rule: alts are checked at least every minute
+			sub.Desc = sub.Spec.Label()
+			raw, _ := json.Marshal(sub.Spec)
+			s.db.Exec(`UPDATE signal_subs SET spec=?, descr=? WHERE id=?`, string(raw), sub.Desc, sub.ID)
+		}
 		s.live[sub.ID] = newLive(sub, build(sub.Spec))
 	}
 	return s, nil
@@ -713,6 +718,7 @@ func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subs
 	if err := spec.normalize(s.src, now, 0); err != nil {
 		return Subscription{}, err
 	}
+	spec.capEvery() // alts: at least every minute
 	if n := len(spec.leaves()); n > maxLeaves {
 		return Subscription{}, fmt.Errorf("at most %d conditions per subscription (got %d)", maxLeaves, n)
 	}
@@ -786,12 +792,7 @@ func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subs
 		b, _ := json.Marshal(script)
 		scriptRaw = string(b)
 	}
-	desc := spec.Describe()
-	auto := spec
-	auto.Every = ""
-	if spec.Every != "" && spec.Every != auto.interval() { // say it when it isn't the default
-		desc += "（" + everyText[spec.Every] + "检查）"
-	}
+	desc := spec.Label()
 	res, err := s.db.Exec(`INSERT INTO signal_subs(created, updated, kind, chat_id, label, inst_ids, spec, descr, intent, plan_id, expires_at,
 		max_fires, cooldown_min, state, status, status_at, script) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now.UnixMilli(), now.UnixMilli(), kind, in.ChatID, label, strings.Join(spec.InstIDs(), ","), string(raw), desc, in.Intent, in.PlanID,

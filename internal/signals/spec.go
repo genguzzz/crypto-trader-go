@@ -365,6 +365,42 @@ func (s Spec) leaves() []Spec {
 }
 
 // InstIDs are the instruments the spec is about, in order of appearance.
+// slowOK are the coins a subscription may check less often than once a minute; any other coin (alts
+// move fast) is checked at least every minute, whatever was asked (owner, 2026-11-01).
+var slowOK = map[string]bool{"BTC-USDT-SWAP": true, "ETH-USDT-SWAP": true}
+
+// capEvery lowers a 5m / 15m / 1H interval to 1m when the subscription watches anything but BTC / ETH
+// (scripts excepted: their timeframe sets their cadence).
+func (s *Spec) capEvery() bool {
+	if ms, ok := everyMs[s.Every]; !ok || ms <= 60_000 {
+		return false
+	}
+	for _, l := range s.leaves() {
+		if l.Type == "script" { // a script runs on its own timeframe's close; every only spaces those runs
+			return false
+		}
+	}
+	for _, id := range s.InstIDs() {
+		if !slowOK[id] {
+			s.Every = "1m"
+			return true
+		}
+	}
+	return false
+}
+
+// Label is the subscription's one-line description: the condition, plus the check interval when it
+// isn't the default.
+func (s Spec) Label() string {
+	desc := s.Describe()
+	auto := s
+	auto.Every = ""
+	if s.Every != "" && s.Every != auto.interval() {
+		desc += "（" + everyText[s.Every] + "检查）"
+	}
+	return desc
+}
+
 func (s Spec) InstIDs() []string {
 	var out []string
 	for _, l := range s.leaves() {
