@@ -26,7 +26,8 @@ export class ApiError extends Error {
 
 const rid = () => Math.random().toString(36).slice(2, 10);
 
-type ReqOpts = { method?: string; body?: unknown; timeoutMs?: number; quiet?: boolean };
+// noPrompt: a 401 admin_required fails quietly instead of asking for the key (owner-only reads in the background)
+type ReqOpts = { method?: string; body?: unknown; timeoutMs?: number; quiet?: boolean; noPrompt?: boolean };
 
 export async function req<T>(path: string, opts: ReqOpts = {}, retried = false): Promise<T> {
   const id = rid();
@@ -65,7 +66,7 @@ export async function req<T>(path: string, opts: ReqOpts = {}, retried = false):
   if (!opts.quiet || !res.ok) log.info("call", { path: path.split("?")[0], status: res.status, ms: Date.now() - t0, rid: id });
   if (!res.ok) {
     const body = (data && typeof data === "object" ? data : {}) as { error?: string; code?: string };
-    if (res.status === 401 && body.code === "admin_required" && !retried) {
+    if (res.status === 401 && body.code === "admin_required" && !retried && !opts.noPrompt) {
       const k = await askAdminKey(admin ? "密钥不正确，请重新输入" : "");
       if (k) return req<T>(path, opts, true);
       throw new ApiError("需要所有者密钥", 401, body.code);
@@ -138,6 +139,19 @@ export interface InstrumentInfo {
   watch: boolean; eligible: boolean; tier: string; syncing: boolean; syncMsg?: string; coin?: Coin;
 }
 export interface ComparePoint { t: number; v: Record<string, number> }
+/** The owner's open OKX position, read-only (server internal/okxacct; web components/charts/positions.ts). */
+export interface PosTrigger { algoId: string; px: number; pxType?: string; kind: string; full: boolean; contracts?: number }
+export interface Position {
+  instId: string; posSide: string; side: "long" | "short"; mgnMode: string;
+  contracts: number; coins?: number; notionalUsd?: number;
+  avgPx: number; markPx?: number; liqPx?: number; lever?: number;
+  upl: number; uplRatio: number; mgnRatio?: number; margin?: number;
+  tp: PosTrigger[]; sl: PosTrigger[]; cTime: number; uTime: number;
+}
+export interface AccountPositions {
+  enabled: boolean; ts?: number; positions: Position[];
+  equity?: { totalEq: number; availEq?: number; upl?: number; mgnRatio?: number; notionalUsd?: number };
+}
 
 // ---------- endpoints ----------
 
@@ -157,6 +171,8 @@ export const api = {
     req<Liquidations>(`/api/v1/liquidations?instId=${enc(id)}&bar=${bar}&limit=${limit}&recent=${recent}`),
   watch: (id: string, on: boolean) => req<{ ok: boolean }>(`/api/v1/watchlist/${enc(id)}`, { method: on ? "PUT" : "DELETE" }),
   status: () => req<Record<string, unknown>>("/api/v1/status"),
+  // owner only (key required even to read); never prompts for the key
+  positions: (id?: string) => req<AccountPositions>(`/api/v1/account/positions${id ? `?instId=${enc(id)}` : ""}`, { quiet: true, noPrompt: true }),
   // native app plumbing (internal/api/mobile.go)
   events: (events: unknown[]) => req<{ ok: boolean }>("/api/v1/app/events", { ...json("POST", { events }), quiet: true }),
   uploadLog: (log: string, meta: Record<string, unknown>) => req<{ id: string }>("/api/v1/app/logs", { ...json("POST", { log, meta }), timeoutMs: 60_000 }),

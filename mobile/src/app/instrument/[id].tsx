@@ -5,9 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { api, type InstrumentInfo, type Row } from "@/lib/api";
+import { api, type AccountPositions, type InstrumentInfo, type Position, type Row } from "@/lib/api";
 import { ago, catLabel, fieldValue, fundingLevel, logPct, num, pct, price, sign, sym, usd } from "@/lib/fmt";
 import { askAbout } from "@/lib/ai";
+import { useAdminKeySet } from "@/lib/adminKey";
 import { toggleWatch, useLivePrice, useMeta, useRuleId, setRule } from "@/lib/market";
 import { mutate, useQuery } from "@/lib/query";
 import { useSettings } from "@/lib/settings";
@@ -39,6 +40,8 @@ export default function InstrumentScreen() {
   const [scrollOn, setScrollOn] = useState(true);
   const [openCard, setOpenCard] = useState({ key: "", n: 0 });
   const exh = useExhaustion(id);
+  const owner = useAdminKeySet();
+  const pos = useQuery<AccountPositions>(owner ? `pos:${id}` : null, () => api.positions(id), { interval: 10_000, staleMs: 8000 });
   const exhSide = extendedSide(exh.data);
   const tall = useSettings((s) => s.chartTall);
   const now = useNow();
@@ -153,6 +156,8 @@ export default function InstrumentScreen() {
             </View>
           </Card>
 
+          {pos.data?.positions?.map((p) => <PositionStrip key={p.posSide} p={p} />)}
+
           <ChartView
             id={id}
             hasSpot={!!info.spotId}
@@ -224,6 +229,29 @@ function ScoreBar({ long, short, gate, rule, onPress }: { long?: number | null; 
         <Ionicons name="chevron-forward" size={10} color={colors.textDim} />
       </View>
     </Pressable>
+  );
+}
+
+// The owner's open OKX position on this coin (read-only); the chart draws the same levels.
+function PositionStrip({ p }: { p: Position }) {
+  const long = p.side === "long";
+  const size = p.coins ? `${+p.coins.toPrecision(4)} ${sym(p.instId).split("-")[0]}` : `${+p.contracts.toPrecision(6)} 张`;
+  const kv = (k: string, v: string, color: string = colors.text) => (
+    <Text style={[{ fontSize: fs.xs, color: colors.textSoft }, tnum]}>
+      {k} <Text style={{ color, fontWeight: "600" }}>{v}</Text>
+    </Text>
+  );
+  return (
+    <Card style={{ paddingHorizontal: 12, paddingVertical: 8, flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 10, rowGap: 4 }}>
+      <Text style={[{ fontSize: fs.sm, fontWeight: "700", color: long ? colors.up : colors.down }, tnum]}>
+        持{long ? "多" : "空"} {size}{p.lever ? ` · ${p.lever}x` : ""}
+      </Text>
+      {kv("均", price(p.avgPx))}
+      {kv("浮盈", `${p.upl >= 0 ? "+" : ""}${p.upl.toFixed(2)}U ${pct(p.uplRatio, 1)}`, toneColor(sign(p.upl)))}
+      {p.liqPx ? kv("强平", price(p.liqPx), colors.warn) : null}
+      {p.tp.length ? kv("止盈", p.tp.map((t) => price(t.px)).join(" / "), colors.up) : null}
+      {p.sl.length ? kv("止损", p.sl.map((t) => price(t.px)).join(" / "), colors.down) : kv("止损", "无", colors.textSoft)}
+    </Card>
   );
 }
 
