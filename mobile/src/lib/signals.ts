@@ -46,7 +46,7 @@ export interface Signal {
 export interface SignalCaps { maxActive: number; perChat: number; wakesPerDay: number; wakesToday: number; active: number; maxDays: number }
 interface SignalList { signals: Signal[] | null; caps: SignalCaps; now: number }
 export type SignalFilter = "active" | "fired" | "ended";
-export interface SignalCreate { spec: Record<string, unknown>; intent: string; expiresHours: number; maxFires?: number }
+export interface SignalCreate { spec: Record<string, unknown>; intent: string; expiresHours: number; maxFires?: number; every?: string }
 
 export const STATUS_LABEL: Record<SignalStatus, string> = { active: "等待触发", fired: "已触发", expired: "已过期", cancelled: "已取消" };
 export const statusTone = (s: SignalStatus): "good" | "warn" | "info" | undefined => (s === "active" ? "info" : s === "fired" ? "good" : undefined);

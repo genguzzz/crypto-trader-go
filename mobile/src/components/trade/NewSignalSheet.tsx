@@ -80,6 +80,8 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
   // common
   const [hours, setHours] = useState(24);
   const [maxFires, setMaxFires] = useState(1);
+  // how often the server checks it ("" = its default: real time for last-price levels / zones / times, else each minute)
+  const [every, setEvery] = useState<"" | "tick" | "1m" | "5m" | "15m" | "1H">("");
   const [intent, setIntent] = useState("");
   const [intentEdited, setIntentEdited] = useState(false);
   const [err, setErr] = useState("");
@@ -164,7 +166,7 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
     setErr("");
     setBusy(true);
     try {
-      const r = await createSignal({ spec: s, intent: intentText.trim(), expiresHours: hours, maxFires });
+      const r = await createSignal({ spec: s, intent: intentText.trim(), expiresHours: hours, maxFires, ...(every ? { every } : {}) });
       toast("信号已订阅", r.desc);
       reset();
       onClose();
@@ -291,6 +293,11 @@ export function NewSignalSheet({ visible, onClose, instId: initial }: { visible:
       <View style={{ flexDirection: "row", gap: 16, paddingVertical: 10, borderTopWidth: 1, borderColor: colors.border }}>
         <View>{lbl(`有效期（最长 ${maxHours} 小时）`)}<NumInput value={hours} onChange={setHours} unit="小时" invalid={!!hoursErr} /></View>
         <View>{lbl("最多触发")}<NumInput value={maxFires} onChange={setMaxFires} unit="次" decimal={false} width={90} invalid={!!firesErr} /></View>
+      </View>
+      <View style={{ gap: 4, paddingBottom: 8 }}>
+        {lbl("检查间隔")}
+        <Segmented small value={every} onChange={setEvery} options={[{ value: "", label: "默认" }, { value: "tick", label: "实时" }, { value: "1m", label: "1 分" }, { value: "5m", label: "5 分" }, { value: "15m", label: "15 分" }, { value: "1H", label: "1 时" }]} />
+        <Muted>越慢越省资源；不需要第一时间响应的条件选 5 分或更慢，两次检查之间的短暂插针可能错过。</Muted>
       </View>
       {caps ? <Muted>活跃 {caps.active}/{caps.maxActive} · 今天已唤醒 AI {caps.wakesToday}/{caps.wakesPerDay} 次</Muted> : null}
     </Sheet>
