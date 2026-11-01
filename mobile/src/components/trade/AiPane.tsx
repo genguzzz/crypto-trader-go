@@ -139,7 +139,7 @@ export function AiPane() {
       </Card>
 
       <Card>
-        <PanelTitle title="决策记录" right={<Segmented small value={kind} onChange={(v) => { setKind(v); setShown(30); }} options={[{ value: "review", label: "审核" }, { value: "", label: "全部" }]} />} />
+        <PanelTitle title="决策记录" right={<Segmented small fit value={kind} onChange={(v) => { setKind(v); setShown(30); }} options={[{ value: "review", label: "审核" }, { value: "", label: "全部" }]} />} />
         {q.error && !q.data ? <ErrorBox text={q.error} onRetry={() => void q.refresh()} /> : null}
         {!q.data && !q.error ? <Loading text="加载决策" /> : null}
         {decisions && !decisions.length ? <Muted style={{ paddingVertical: 12, textAlign: "center" }}>还没有 AI {kind ? "审核" : "调用"}记录</Muted> : null}

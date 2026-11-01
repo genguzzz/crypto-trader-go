@@ -4,7 +4,7 @@
 // intent, fire history), 取消 asks first. + opens 新建信号 (NewSignalSheet) for the owner's own subscription.
 import { useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { Card, Chip, EmptyState, IconButton, Loading, Pull, Segmented, TAB_BAR_SPACE } from "../ui";
+import { Card, Chip, EmptyState, PillButton, Loading, Pull, Segmented, TAB_BAR_SPACE } from "../ui";
 import { InfoTip } from "./common";
 import { NewSignalSheet } from "./NewSignalSheet";
 import { SignalCard, SignalSheet } from "../ai/SignalCard";
@@ -64,13 +64,14 @@ export function SignalsPane() {
           caps ? `上限：同时 ${caps.maxActive} 个（每个对话 ${caps.perChat} 个），最长 ${caps.maxDays} 天；每天最多唤醒 AI ${caps.wakesPerDay} 次（今天已用 ${caps.wakesToday}）。` : "",
         ].filter(Boolean)} />
         <View style={{ flex: 1 }} />
-        {filter === "active" ? (
-          <Segmented small value={group} onChange={setGroup} options={[{ value: "close", label: "按接近度" }, { value: "coin", label: "按币种" }]} />
-        ) : null}
-        {owner ? <IconButton name="add" label="新建信号" color={colors.primary} onPress={() => setCreating(true)} /> : null}
+        {owner ? <PillButton small icon="add" label="新建" onPress={() => setCreating(true)} /> : null}
       </View>
-      <View style={{ flexDirection: "row", gap: 8 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         {FILTERS.map((f) => <Chip key={f.value} label={f.label} active={filter === f.value} count={counts[f.value]} onPress={() => setFilter(f.value)} />)}
+        <View style={{ flex: 1 }} />
+        {filter === "active" && (list?.length ?? 0) > 1 ? (
+          <Segmented small fit value={group} onChange={setGroup} options={[{ value: "close", label: "接近度" }, { value: "coin", label: "币种" }]} />
+        ) : null}
       </View>
       {!owner && list === undefined ? <Loading text="加载信号" /> : null}
       {list && !list.length ? (

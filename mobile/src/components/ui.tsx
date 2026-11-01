@@ -152,13 +152,14 @@ export function ChipRow({ children, style }: { children: ReactNode; style?: Styl
 }
 
 // Segmented control (web ui/Segmented.vue).
-export function Segmented<T extends string>({ value, options, onChange, style, small }: { value: T; options: { value: T; label: string; tone?: Tone }[]; onChange: (v: T) => void; style?: StyleProp<ViewStyle>; small?: boolean }) {
+// fit: items keep their natural width (in a row next to other content); otherwise they share the width.
+export function Segmented<T extends string>({ value, options, onChange, style, small, fit }: { value: T; options: { value: T; label: string; tone?: Tone }[]; onChange: (v: T) => void; style?: StyleProp<ViewStyle>; small?: boolean; fit?: boolean }) {
   return (
-    <View style={[{ flexDirection: "row", backgroundColor: colors.card, borderRadius: 8, padding: 2, borderWidth: 1, borderColor: colors.borderStrong }, style]}>
+    <View style={[{ flexDirection: "row", backgroundColor: colors.card, borderRadius: 8, padding: 2, borderWidth: 1, borderColor: colors.borderStrong }, fit ? { alignSelf: "center", flexShrink: 0 } : null, style]}>
       {options.map((o) => {
         const on = value === o.value;
         return (
-          <Pressable key={o.value} onPress={() => { if (!on) { void haptic("select"); onChange(o.value); } }} style={{ flexGrow: 1, flexShrink: 1, flexBasis: "auto", minWidth: small ? 36 : 48, height: small ? 26 : 30, paddingHorizontal: 8, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: on ? colors.cardMuted : "transparent" }}>
+          <Pressable key={o.value} onPress={() => { if (!on) { void haptic("select"); onChange(o.value); } }} style={{ flexGrow: fit ? 0 : 1, flexShrink: 1, flexBasis: "auto", minWidth: small ? 36 : 48, height: small ? 26 : 30, paddingHorizontal: 8, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: on ? colors.cardMuted : "transparent" }}>
             <Text style={{ fontSize: small ? fs.sm : fs.md, fontWeight: on ? "600" : "500", color: on ? toneColor(o.tone, colors.text) : colors.textFaint }}>{o.label}</Text>
           </Pressable>
         );

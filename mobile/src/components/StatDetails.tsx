@@ -142,7 +142,7 @@ export function SpotDetail({ info, row }: { info: InstrumentInfo; row?: Row }) {
       <ChartHead
         title="期现基差走势（bps）"
         tip={<P>基差 = 永续收盘 ÷ 同时刻 OKX 同名 USDT 现货收盘 − 1。正值 = 永续比现货贵（多头情绪/资金费偏正时常见），负值相反。只是 OKX 一家现货，不代表全市场。</P>}
-        right={<Segmented small value={bar} onChange={setBar} options={["5m", "15m", "1H"].map((x) => ({ value: x, label: x }))} />}
+        right={<Segmented small fit value={bar} onChange={setBar} options={["5m", "15m", "1H"].map((x) => ({ value: x, label: x }))} />}
       />
       {data?.length ? <LineChart series={[{ label: "基差", color: colors.warn, points: data, width: 2 }]} height={220} fmtY={(x) => x.toFixed(1)} fmtT={fmtT} refY={0} /> : <Empty error={error} loaded={!!data} text="没有可对齐的现货 K 线" />}
     </View>

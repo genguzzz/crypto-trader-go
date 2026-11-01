@@ -20,7 +20,7 @@ export function ComparePanel({ id, bare }: { id: string; bare?: boolean }) {
   );
   const body = (
     <>
-      <PanelTitle title={bare ? "" : "相对 BTC / ETH 表现"} right={<Segmented small value={bar} onChange={setBar} options={["5m", "15m", "1H", "4H"].map((v) => ({ value: v, label: v }))} />} />
+      <PanelTitle title={bare ? "" : "相对 BTC / ETH 表现"} right={<Segmented small fit value={bar} onChange={setBar} options={["5m", "15m", "1H", "4H"].map((v) => ({ value: v, label: v }))} />} />
       {series.length ? <LineChart series={series} height={170} fmtY={(v) => v.toFixed(1)} fmtT={(t) => time(t, true)} /> : error ? <Text style={note}>{error}</Text> : <Loading />}
       <Text style={[note, { marginTop: 6 }]}>三者都以左端为 100 重新定基，看的是同一段时间里的相对涨跌。</Text>
     </>
@@ -92,7 +92,7 @@ export function LiqPanel({ id }: { id: string }) {
   const bigCut = [...recent.map((x) => x.usd)].sort((a, b) => b - a)[Math.floor(recent.length / 10)] ?? Infinity;
   return (
     <Card>
-      <PanelTitle title="强平" right={<Segmented small value={period} onChange={setPeriod} options={["15m", "1H", "4H"].map((v) => ({ value: v, label: v }))} />} />
+      <PanelTitle title="强平" right={<Segmented small fit value={period} onChange={setPeriod} options={["15m", "1H", "4H"].map((v) => ({ value: v, label: v }))} />} />
       <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
         {totals.map((x) => (
           <View key={x.h} style={{ flex: 1 }}>
