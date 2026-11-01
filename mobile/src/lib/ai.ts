@@ -27,8 +27,14 @@ export interface ChatSummary { id: number; title: string; instId?: string; updat
 export interface Note { id: number; ts: number; text: string; by: "ai" | "owner" }
 
 export const AI_MODELS = [
-  { value: "claude-sonnet-5", label: "Sonnet" },
-  { value: "claude-opus-5-5", label: "Opus" },
+  { value: "claude-sonnet-5", label: "Sonnet", hint: "快，日常分析够用" },
+  { value: "claude-opus-5-5", label: "Opus", hint: "最强，慢一些、更费 token" },
+];
+export type Effort = "low" | "medium" | "high";
+export const AI_EFFORTS: { value: Effort; label: string; hint: string }[] = [
+  { value: "low", label: "低", hint: "最省 token、最快，适合查数据和简单问答" },
+  { value: "medium", label: "中", hint: "平衡，大多数行情分析" },
+  { value: "high", label: "高", hint: "想得最久，复杂的多空研判和复盘" },
 ];
 
 export const ai = {
@@ -52,6 +58,9 @@ export const ai = {
   instId: "",
   /** model for the next turn (remembered on this device) */
   model: "claude-sonnet-5",
+  /** thinking effort and web search picked on this device; null = not sent, the server's configuration applies */
+  effort: null as Effort | null,
+  webSearch: null as boolean | null,
   notes: [] as Note[],
 };
 
@@ -92,6 +101,8 @@ const kv =
 const CHAT_KEY = "okxh.aiChat"; // the chat on screen, reopened after an app restart
 const PENDING_KEY = "okxh.aiPending"; // a chat whose answer we have not seen finish yet
 const MODEL_KEY = "okxh.aiModel";
+const EFFORT_KEY = "okxh.aiEffort";
+const WEB_KEY = "okxh.aiWebSearch";
 const savedVals: Record<string, string> = {};
 const saved = (k: string) => Number(savedVals[k] || 0);
 function put(k: string, v: string) {
@@ -108,6 +119,16 @@ function setPending(id: number) {
 export function setModel(m: string) {
   ai.model = m;
   put(MODEL_KEY, m);
+  emit();
+}
+export function setEffort(e: Effort | null) {
+  ai.effort = e;
+  put(EFFORT_KEY, e ?? "");
+  emit();
+}
+export function setWebSearch(on: boolean) {
+  ai.webSearch = on;
+  put(WEB_KEY, on ? "1" : "0");
   emit();
 }
 
@@ -378,7 +399,7 @@ export async function send(text: string, retrying = false) {
   ai.reconnecting = false;
   syncSeq++;
   track("ai.send", { model: ai.model, inst: ai.instId || undefined, retry: retrying || undefined, len: text.length });
-  const body = JSON.stringify({ chatId: ai.chatId || 0, message: text, instId: ai.instId, model: ai.model, retry: retrying });
+  const body = JSON.stringify({ chatId: ai.chatId || 0, message: text, instId: ai.instId, model: ai.model, effort: ai.effort ?? undefined, webSearch: ai.webSearch ?? undefined, retry: retrying });
   const f = await streamFetch();
   const end = await stream((signal) => kfetch("/api/v1/ai/chat", { method: "POST", body, headers: { "Content-Type": "application/json", accept: "text/event-stream" }, signal }, f));
   if (end === "replaced") return;
@@ -547,7 +568,9 @@ export async function initAi() {
   if (started) return;
   started = true;
   try {
-    const [c, p, m] = await Promise.all([kv.get(CHAT_KEY), kv.get(PENDING_KEY), kv.get(MODEL_KEY)]);
+    const [c, p, m, e, w] = await Promise.all([kv.get(CHAT_KEY), kv.get(PENDING_KEY), kv.get(MODEL_KEY), kv.get(EFFORT_KEY), kv.get(WEB_KEY)]);
+    if (e && AI_EFFORTS.some((x) => x.value === e)) ai.effort = e as Effort;
+    if (w === "1" || w === "0") ai.webSearch = w === "1";
     savedVals[CHAT_KEY] = c ?? "";
     savedVals[PENDING_KEY] = p ?? "";
     if (m && AI_MODELS.some((x) => x.value === m)) ai.model = m;

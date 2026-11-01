@@ -11,7 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AI_MODELS, ai, clearContext, newChat, openChat, retry, send, setModel, setOpen, stop, textOf, useAi, type Msg } from "@/lib/ai";
+import { ai, clearContext, newChat, openChat, retry, send, setOpen, stop, textOf, useAi, type Msg } from "@/lib/ai";
 import { copy, haptic } from "@/lib/device";
 import { useHoldToTalk, useTapToTalk } from "@/lib/voice";
 import { colors, fs } from "@/lib/theme";
@@ -27,6 +27,7 @@ import { SignalBubble, SignalById, SignalHost, signalIds } from "@/components/ai
 import { usePendingProposals, useRealtrade } from "@/lib/realtrade";
 import { useActiveSignalCount } from "@/lib/signals";
 import { VoiceWave } from "@/components/ai/VoiceWave";
+import { ModelChip, ModelMenu } from "@/components/ai/ModelMenu";
 import { segments } from "@/components/ai/blocks";
 
 const ONE_CLICK = "一键分析当前合约：完整的多空分析、风险和交易计划";
@@ -69,6 +70,8 @@ export default function AiScreen() {
   // ?pane=trades (the 「AI 提议了一笔交易」 toast) opens with the proposals pane in place
   const { pane: paneParam, chat: chatParam } = useLocalSearchParams<{ pane?: string; chat?: string }>();
   const [pane, setPane] = useState<Pane | null>(paneParam === "trades" ? "trades" : null);
+  const [menu, setMenu] = useState(false);
+  const [headH, setHeadH] = useState(60);
   const [selText, setSelText] = useState("");
   const [selFull, setSelFull] = useState<{ title: string } | null>(null); // a step's request / result, monospace
   const [slide] = useState(() => new Animated.Value(paneParam === "trades" ? 1 : 0));
@@ -177,30 +180,19 @@ export default function AiScreen() {
     <Screen>
       {/* header: close the sheet, title, model switch, memory, history, new chat */}
       <GestureDetector gesture={pull}>
-      <View style={{ paddingTop: Platform.OS === "web" ? insets.top + 6 : 18, paddingLeft: 16, paddingRight: 8, paddingBottom: 8, flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.bg, zIndex: 2 }}>
+      <View onLayout={(e) => setHeadH(e.nativeEvent.layout.height)} style={{ paddingTop: Platform.OS === "web" ? insets.top + 6 : 18, paddingLeft: 16, paddingRight: 8, paddingBottom: 8, flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.bg, zIndex: 2 }}>
         <Pressable hitSlop={10} accessibilityLabel="收起" onPress={() => { tap(); close(); }} style={({ pressed }) => ({ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderStrong, opacity: pressed ? 0.7 : 1 })}>
           <Ionicons name="chevron-down" size={18} color={colors.text} />
         </Pressable>
-        {/* title with the model as a small toggle under it (the row is too narrow for a segmented switch) */}
+        {/* title with the model chip under it: tap opens model / thinking / web search */}
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
             <Orb size={14} ring={7} period={4000} glow={0.6} />
             <Text numberOfLines={1} style={{ flex: 1, fontSize: fs.xl, fontWeight: "600", color: colors.text }}>{s.title || "AI 研究助手"}</Text>
           </View>
-          <Pressable
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={`模型：${AI_MODELS.find((o) => o.value === s.model)?.label ?? s.model}，点按切换`}
-            onPress={() => {
-              void haptic("select");
-              const i = AI_MODELS.findIndex((o) => o.value === s.model);
-              setModel(AI_MODELS[(i + 1) % AI_MODELS.length].value);
-            }}
-            style={{ flexDirection: "row", alignItems: "center", gap: 3, alignSelf: "flex-start", marginLeft: 21 }}
-          >
-            <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{AI_MODELS.find((o) => o.value === s.model)?.label ?? s.model}</Text>
-            <Ionicons name="swap-horizontal" size={11} color={colors.textFaint} />
-          </Pressable>
+          <View style={{ marginLeft: 21 }}>
+            <ModelChip onPress={() => { Keyboard.dismiss(); setMenu(true); }} />
+          </View>
         </View>
         {owner ? <HeadButton icon="receipt-outline" label="交易提议" badge={pendingN} onPress={() => showPane("trades")} /> : null}
         <HeadButton icon="bulb-outline" label="偏好与记忆" onPress={() => showPane("notes")} />
@@ -336,6 +328,7 @@ export default function AiScreen() {
         </View>
       </KeyboardAvoidingView>
     </Screen>
+      {menu ? <ModelMenu top={headH + 4} onClose={() => setMenu(false)} /> : null}
       {pane ? (
         <Animated.View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 10, backgroundColor: colors.bg,
           transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [width, 0] }) }] }}>
