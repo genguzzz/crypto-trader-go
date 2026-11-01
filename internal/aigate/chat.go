@@ -158,6 +158,9 @@ type ChatInput struct {
 	Message string `json:"message"`
 	InstID  string `json:"instId"` // the instrument page the owner is on (context only)
 	Model   string `json:"model"`  // one of ChatModels; empty = the configured model
+	// Effort (low / medium / high) and WebSearch for this turn, picked in the app; empty / nil = the configured ones.
+	Effort    string `json:"effort"`
+	WebSearch *bool  `json:"webSearch"`
 	// Retry re-runs the chat's last question (after an error or an interrupted turn) instead of
 	// adding a new one; Message is ignored.
 	Retry bool `json:"retry"`
@@ -178,8 +181,9 @@ const (
 	RoleTrade     = "trade"
 )
 
-// ChatModels the app may pick per turn.
+// ChatModels and ChatEfforts the app may pick per turn.
 var ChatModels = []string{"claude-sonnet-5", "claude-opus-5-5"}
+var ChatEfforts = []string{"low", "medium", "high"}
 
 // ErrChatBusy: the chat is answering; a new turn has to wait until it ends.
 var ErrChatBusy = errors.New("这个对话还在回答中")
@@ -189,6 +193,9 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	in.Message = strings.TrimSpace(in.Message)
 	if in.Model != "" && !slices.Contains(ChatModels, in.Model) {
 		return 0, errors.New("unknown model")
+	}
+	if in.Effort != "" && !slices.Contains(ChatEfforts, in.Effort) {
+		return 0, errors.New("unknown effort")
 	}
 	if in.Retry {
 		if in.ChatID == 0 || g.run(in.ChatID) != nil {
@@ -266,7 +273,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		defer g.chatDone(in.ChatID) // after endRun: the chat takes a new turn again
 		defer g.endRun(in.ChatID)
 		start := g.now()
-		msg := map[string]any{"type": "chat", "id": run.callID, "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "notes": g.MemoryFor(in.Message)}
+		msg := map[string]any{"type": "chat", "id": run.callID, "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "turnEffort": in.Effort, "webSearch": in.WebSearch, "notes": g.MemoryFor(in.Message)}
 		resp, err := g.callStream(ctx, msg, func(ev chatEvent) { g.onAgentEvent(ev); run.publish(ev) })
 		lat := g.now().Sub(start).Milliseconds()
 		var out struct {

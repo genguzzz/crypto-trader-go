@@ -31,6 +31,7 @@ AGENT_DIR = Path(__file__).resolve().parent / "agent"  # cwd: holds .claude/skil
 CHAT_PROMPT = "chat_v2"
 CHAT_MAX_TURNS = 60
 CHAT_MODELS = ("claude-sonnet-5", "claude-opus-5-5")  # chosen per turn in the app
+CHAT_EFFORTS = ("low", "medium", "high")
 SANDBOX_SOCKET = os.environ.get("CTG_SANDBOX_SOCKET", "/run/sbx/sbx.sock")
 # ctg data tools the agent may call directly: small, parameterised answers (a few thousand characters).
 # Raw series (candles, minute OI, liquidation map, compare, track records: 15k–95k characters) are only
@@ -396,7 +397,8 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
     prompt, _ = llm.load_prompt(CHAT_PROMPT)
     prompt += notes_block(notes)
     mcp: dict[str, Any] = {"sandbox": sandbox_server(chat, agent.get("sandboxToken", ""))}
-    allowed = ["mcp__sandbox__shell", "WebSearch", "WebFetch", "Skill"]
+    web = [] if config.get("noWeb") else ["WebSearch", "WebFetch"]
+    allowed = ["mcp__sandbox__shell", *web, "Skill"]
     # ctg's own API on the same loopback host as the MCP endpoint (other conversations, memory search)
     base = agent["mcpUrl"].split("/mcp")[0] if agent.get("mcpUrl") else ""
     if emit is not None:
@@ -415,7 +417,7 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
     kw: dict[str, Any] = dict(
         system_prompt=prompt,
         model=config.get("model") or llm.DEFAULT_MODEL,
-        tools=["WebSearch", "WebFetch", "Skill"],  # one agent argues both sides itself: no subagents
+        tools=[*web, "Skill"],  # one agent argues both sides itself: no subagents
         allowed_tools=allowed,
         disallowed_tools=[f"mcp__ctg__{t}" for t in CTG_HIDDEN],  # not even listed to the model
         mcp_servers=mcp,
@@ -488,6 +490,11 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
     prompt = f"[当前页面: {inst}]\n{text}" if inst else text
     if msg.get("model") in CHAT_MODELS:
         config = {**config, "model": msg["model"]}
+    # this turn's thinking effort and web search, picked in the app (unset: the configured ones)
+    if msg.get("turnEffort") in CHAT_EFFORTS:
+        config = {**config, "effort": msg["turnEffort"]}
+    if msg.get("webSearch") is False:
+        config = {**config, "noWeb": True}
     options = build_chat_options(config, proxy, chat_id, str(msg.get("sessionId") or ""), msg.get("notes"), emit)
     inbox = inbox or Inbox()
 

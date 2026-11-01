@@ -105,3 +105,18 @@ class WorkerSteer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TurnOptions(unittest.TestCase):
+    """The app picks effort and web search per turn; build_chat_options honours them."""
+
+    def setUp(self):
+        fakesdk.install()
+
+    def test_web_search_off_drops_the_web_tools(self):
+        on = agent.build_chat_options(CHAT_CONFIG, "http://127.0.0.1:9", "1", "")
+        off = agent.build_chat_options({**CHAT_CONFIG, "noWeb": True, "effort": "low"}, "http://127.0.0.1:9", "1", "")
+        self.assertIn("WebSearch", on.tools)
+        self.assertNotIn("WebSearch", off.tools)
+        self.assertNotIn("WebFetch", off.allowed_tools)
+        self.assertEqual(off.effort, "low")
