@@ -420,6 +420,34 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			},
 		})
 	}
+	if s.okxHistory != nil {
+		eps = append(eps, &Endpoint{
+			Name: "okx_history", Path: "okx-history", Summary: "Totals of the owner's OKX history over a period, paged on the server (read-only)",
+			Desc: "Pages through a whole period of one history and returns totals and groups — use this, not okx_api, for anything summed " +
+				"over time (this year's P&L, deposits vs withdrawals, funding fees, C2C volume, fees). kind: positions = closed swap " +
+				"positions (realizedPnl = pnl + fee + fundingFee + liqPenalty; wins / losses; goes back as far as OKX keeps, over a year) · " +
+				"orders = swap orders (back to the start of the year or more) · fills / bills = about 3 months, one row per fill / fee / funding " +
+				"payment, so long periods come back partial — use positions for P&L and funding fees · deposits / withdrawals = credited / " +
+				"completed only, all history · " +
+				"funding = funding-account bills, about 1 year (C2C = types 116/117/118, transfers 130/131, Earn 75/76). " +
+				"from / to = the oldest and newest row counted; complete=false means it stopped at the cap (15k rows or 45 s) before begin — " +
+				"say so. group: inst, ccy, month, day, type, side, state (default per kind). Sums are in each row's own ccy " +
+				"(group by ccy when currencies mix).",
+			Params: []Param{
+				{Name: "kind", In: "query", Type: "string", Required: true, Enum: []string{"positions", "fills", "orders", "bills", "deposits", "withdrawals", "funding"}},
+				{Name: "begin", In: "query", Type: "string", Desc: "period start, Beijing date like 2026-01-01 (default: as far back as OKX keeps)"},
+				{Name: "end", In: "query", Type: "string", Desc: "period end, e.g. 2026-11-01 (default: now)"},
+				{Name: "instId", In: "query", Type: "string", Desc: "only this instrument (positions, fills, orders, bills)"},
+				{Name: "ccy", In: "query", Type: "string", Desc: "only this currency (bills, deposits, withdrawals, funding)"},
+				{Name: "group", In: "query", Type: "string", Enum: []string{"inst", "ccy", "month", "day", "type", "side", "state"}},
+				{Name: "sample", In: "query", Type: "integer", Default: 0, Min: 0, Max: 30, Desc: "also return this many raw rows (newest first)"},
+			},
+			owner: true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				return s.okxHistory(ctx, a)
+			},
+		})
+	}
 	if s.okxRead != nil {
 		eps = append(eps, &Endpoint{
 			Name: "okx_api", Path: "okx", Summary: "Read any private OKX API endpoint of the owner's account (GET only, read-only key)",

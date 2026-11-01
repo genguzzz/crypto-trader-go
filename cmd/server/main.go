@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -114,6 +115,22 @@ func main() {
 				return nil, fmt.Errorf("query: %w", err)
 			}
 			return acct.Read(ctx, path, q)
+		})
+		dev.SetOKXHistory(func(ctx context.Context, a map[string]string) (any, error) {
+			begin, err := okxacct.ParseDay(a["begin"])
+			if err != nil {
+				return nil, err
+			}
+			end, err := okxacct.ParseDay(a["end"])
+			if err != nil {
+				return nil, err
+			}
+			if len(strings.TrimSpace(a["end"])) == 10 { // a plain date includes that whole day
+				end += 24*3600*1000 - 1
+			}
+			n, _ := strconv.Atoi(a["sample"])
+			return acct.History(ctx, okxacct.HistoryQuery{Kind: a["kind"], InstID: strings.ToUpper(a["instId"]), Ccy: strings.ToUpper(a["ccy"]),
+				Group: a["group"], Begin: begin, End: end, Sample: n})
 		})
 	} else if acctCfg.Key != "" || acctCfg.Proxy != nil {
 		log.Printf("okx account: disabled (needs OKX_API_KEY, OKX_API_SECRET, OKX_API_PASSPHRASE and OKX_PRIVATE_PROXY)")

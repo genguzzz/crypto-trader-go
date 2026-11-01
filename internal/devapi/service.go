@@ -117,13 +117,20 @@ type Service struct {
 	now    func() time.Time
 	eps    []*Endpoint // set by Mount
 
-	positions func(ctx context.Context, instID string) (any, error)      // the owner's OKX positions (optional)
-	okxRead   func(ctx context.Context, path, query string) (any, error) // generic read of his OKX account (optional)
+	positions  func(ctx context.Context, instID string) (any, error)          // the owner's OKX positions (optional)
+	okxRead    func(ctx context.Context, path, query string) (any, error)     // generic read of his OKX account (optional)
+	okxHistory func(ctx context.Context, args map[string]string) (any, error) // paged + totalled history (optional)
 }
 
 // SetOKXRead enables the owner-only okx_api tool: one GET of an allowed private OKX endpoint.
 func (s *Service) SetOKXRead(f func(ctx context.Context, path, query string) (any, error)) {
 	s.okxRead = f
+}
+
+// SetOKXHistory enables the owner-only okx_history tool: a whole period of one history kind, paged and
+// totalled on the server (args: kind, begin, end, instId, ccy, group, sample).
+func (s *Service) SetOKXHistory(f func(ctx context.Context, args map[string]string) (any, error)) {
+	s.okxHistory = f
 }
 
 // SetPositions enables the owner-only get_positions tool (call before Mount).
