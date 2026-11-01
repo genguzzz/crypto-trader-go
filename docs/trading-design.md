@@ -182,6 +182,8 @@ Firing appends a `role=signal` message to the subscriber's chat — "⚡ 信号 
 
 REST (owner key): `GET signals?status=active|fired|ended|all&instId&chatId&kind&limit` → {signals (active ones with `progress`: price, target, distance %), caps, now} · `GET signals/{id}` (with `history`: each fire's time, price, matched values, wake state, woken chat, error) · `POST signals` {spec, intent, expiresHours, maxFires, cooldownMin, planId} (the owner's own) · `POST signals/{id}/cancel` {reason}. The embed chart draws a subscription's levels with `?signal=<id>`.
 
+Each subscription has a check interval `every` (tick ≈ 2 s price broadcast, 1m, 5m, 15m, 1H on that confirmed minute; default tick for last-price levels / zones / times, else 1m): tick events skip anything not on tick, minute events skip subscriptions whose interval does not end at that minute. Coarser is cheaper and calmer; a spike between checks can be missed.
+
 ### Towards an autonomous trading agent
 
 The loop is: signals → subscriptions → wake-up → decision (the agent, with fresh data) → proposal → approval → execution (§7). Autonomy can grow only at named points, each a separate owner decision:

@@ -540,6 +540,10 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				{Name: "planId", In: "query", Type: "integer", Desc: "the AI plan (```plan block) this setup belongs to, if any"},
 				{Name: "maxFires", In: "query", Type: "integer", Default: 1, Min: 1, Max: 5, Desc: "fires before it ends"},
 				{Name: "cooldownMin", In: "query", Type: "integer", Default: 60, Min: 5, Max: 1440, Desc: "minutes between two fires (maxFires > 1)"},
+				{Name: "every", In: "query", Type: "string", Enum: []string{"tick", "1m", "5m", "15m", "1H"}, Desc: "how often the server checks it: " +
+					"tick = each ~2 s price update (only for a fast level / zone you must catch at once), 1m, 5m, 15m, 1H (on that confirmed " +
+					"minute). Pick the slowest that still serves the setup — most waits (a 1H close, funding flip, risk easing, a level hours " +
+					"away) need 5m–1H. Default: tick for last-price levels / zones / times, else 1m. A brief spike between checks can be missed."},
 			},
 			owner: true,
 			write: true,

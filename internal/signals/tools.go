@@ -23,7 +23,7 @@ func (s *Service) SubscribeTool(_ context.Context, chat int64, a map[string]stri
 	plan, _ := strconv.ParseInt(a["planId"], 10, 64)
 	fires, _ := strconv.Atoi(a["maxFires"])
 	cool, _ := strconv.Atoi(a["cooldownMin"])
-	sub, err := s.Subscribe(SubscribeInput{ChatID: chat, Spec: spec, Intent: a["intent"], ExpiresHours: hours, PlanID: plan, MaxFires: fires, CooldownMin: cool})
+	sub, err := s.Subscribe(SubscribeInput{ChatID: chat, Spec: spec, Intent: a["intent"], ExpiresHours: hours, PlanID: plan, MaxFires: fires, CooldownMin: cool, Every: a["every"]})
 	if err != nil {
 		return nil, err
 	}

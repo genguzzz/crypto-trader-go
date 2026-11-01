@@ -60,6 +60,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 			MaxFires     int             `json:"maxFires"`
 			CooldownMin  int             `json:"cooldownMin"`
 			PlanID       int64           `json:"planId"`
+			Every        string          `json:"every"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
 			httpErr(w, http.StatusBadRequest, "invalid JSON")
@@ -71,7 +72,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 			return
 		}
 		sub, err := s.Subscribe(SubscribeInput{Spec: spec, Intent: in.Intent, ExpiresHours: in.ExpiresHours, MaxFires: in.MaxFires,
-			CooldownMin: in.CooldownMin, PlanID: in.PlanID})
+			CooldownMin: in.CooldownMin, PlanID: in.PlanID, Every: in.Every})
 		if err != nil {
 			httpErr(w, http.StatusBadRequest, err.Error())
 			return

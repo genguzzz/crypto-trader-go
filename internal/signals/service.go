@@ -319,7 +319,10 @@ func (s *Service) evaluate(ev event) {
 	s.mu.Unlock()
 	slices.SortFunc(ls, func(a, b *liveSub) int { return int(a.sub.ID - b.sub.ID) })
 	for _, l := range ls {
-		if ev.kind == "tick" && !l.sub.Spec.live() {
+		if ev.kind == "tick" && (l.sub.Spec.interval() != "tick" || !l.sub.Spec.live()) {
+			continue
+		}
+		if ev.kind == "minute" && !l.sub.Spec.due(ev.minute) {
 			continue
 		}
 		if now.UnixMilli() >= l.sub.ExpiresAt {
@@ -622,6 +625,7 @@ type SubscribeInput struct {
 	PlanID       int64
 	MaxFires     int
 	CooldownMin  int
+	Every        string // check interval, see Spec.Every
 }
 
 // Subscribe validates the condition (it must be known and false right now), checks the caps and stores it.
@@ -635,6 +639,9 @@ func (s *Service) Subscribe(in SubscribeInput) (Subscription, error) {
 		return Subscription{}, fmt.Errorf("intent is too long (≤ %d characters)", maxIntent)
 	}
 	spec := in.Spec
+	if in.Every != "" {
+		spec.Every = in.Every
+	}
 	if err := spec.normalize(s.src, now, 0); err != nil {
 		return Subscription{}, err
 	}
@@ -702,6 +709,11 @@ func (s *Service) Subscribe(in SubscribeInput) (Subscription, error) {
 	}
 	raw, _ := json.Marshal(spec)
 	desc := spec.Describe()
+	auto := spec
+	auto.Every = ""
+	if spec.Every != "" && spec.Every != auto.interval() { // say it when it isn't the default
+		desc += "（" + everyText[spec.Every] + "检查）"
+	}
 	res, err := s.db.Exec(`INSERT INTO signal_subs(created, updated, kind, chat_id, label, inst_ids, spec, descr, intent, plan_id, expires_at,
 		max_fires, cooldown_min, state, status, status_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now.UnixMilli(), now.UnixMilli(), kind, in.ChatID, label, strings.Join(spec.InstIDs(), ","), string(raw), desc, in.Intent, in.PlanID,

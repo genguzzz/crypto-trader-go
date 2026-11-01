@@ -46,7 +46,33 @@ type Spec struct {
 	PlanID int64    `json:"planId,omitempty"`
 	State  string   `json:"state,omitempty"`
 	Of     []Spec   `json:"of,omitempty"`
+	// Every (root only) is how often it is checked: tick (each ~2 s price broadcast), 1m, 5m, 15m or 1H
+	// (on that confirmed minute). "" = tick when a leaf reads the last price, else 1m. Coarser = cheaper
+	// and calmer; a brief spike between checks can be missed.
+	Every string `json:"every,omitempty"`
 }
+
+// everyMs are the check intervals coarser than a tick.
+var everyMs = map[string]int64{"1m": 60_000, "5m": 300_000, "15m": 900_000, "1H": 3_600_000}
+
+// interval is the effective check interval: "tick" or a key of everyMs.
+func (s Spec) interval() string {
+	if s.Every == "" {
+		if s.live() {
+			return "tick"
+		}
+		return "1m"
+	}
+	return s.Every
+}
+
+// due reports whether a minute event (open time of the confirmed 1m bar) is a check for this spec.
+func (s Spec) due(minute int64) bool {
+	ms, ok := everyMs[s.interval()]
+	return !ok || ms == 60_000 || (minute+60_000)%ms == 0
+}
+
+var everyText = map[string]string{"tick": "实时", "1m": "每分钟", "5m": "每 5 分钟", "15m": "每 15 分钟", "1H": "每小时"}
 
 const (
 	maxLeaves = 6
@@ -92,6 +118,19 @@ func NormalizeInst(s string) string {
 // canonical form (instIds, ops, absolute times). now is the subscription time.
 func (s *Spec) normalize(src Sources, now time.Time, depth int) error {
 	s.Type = strings.ToLower(strings.TrimSpace(s.Type))
+	if s.Every != "" {
+		if depth > 0 {
+			return errors.New("every belongs to the whole subscription, not to a condition inside all/any")
+		}
+		if e := strings.TrimSpace(s.Every); e == "1h" {
+			s.Every = "1H"
+		} else {
+			s.Every = e
+		}
+		if _, ok := everyText[s.Every]; !ok {
+			return fmt.Errorf("every must be tick, 1m, 5m, 15m or 1H (got %q)", s.Every)
+		}
+	}
 	if s.Type == "all" || s.Type == "any" {
 		if depth >= maxDepth {
 			return fmt.Errorf("%s: composites nest at most %d levels", s.Type, maxDepth)

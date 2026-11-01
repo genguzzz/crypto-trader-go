@@ -569,3 +569,31 @@ func TestAlertIsAMoment(t *testing.T) {
 		t.Fatalf("woken %d", f.wokenN())
 	}
 }
+
+func TestCheckInterval(t *testing.T) {
+	s, f, _ := newEnv(t, Options{})
+	for _, bad := range []string{"2m", "1d"} {
+		if _, err := s.Subscribe(SubscribeInput{ChatID: 12, Spec: spec(t, `{"type":"price","instId":"AAVE","op":"above","level":140.2}`), Intent: "上破再评估做多", Every: bad}); err == nil {
+			t.Fatalf("every %q accepted", bad)
+		}
+	}
+	if _, err := s.Subscribe(SubscribeInput{ChatID: 12, Intent: "上破再评估做多",
+		Spec: spec(t, `{"type":"any","of":[{"type":"price","instId":"AAVE","op":"above","level":140.2,"every":"5m"},{"type":"time","afterMin":60}]}`)}); err == nil {
+		t.Fatal("every inside a composite accepted")
+	}
+	x, err := s.Subscribe(SubscribeInput{ChatID: 12, Spec: spec(t, `{"type":"price","instId":"AAVE","op":"above","level":140.2}`), Intent: "上破再评估做多", Every: "5m"})
+	if err != nil || x.Desc != "AAVE 价格上破 140.2（每 5 分钟检查）" {
+		t.Fatalf("subscribe %+v %v", x, err)
+	}
+	f.set(aave, 141)
+	s.evaluate(event{kind: "tick"}) // not a tick subscription
+	m := time.Date(2026, 11, 1, 6, 1, 0, 0, time.UTC).UnixMilli() // the 06:01 bar closes at 06:02: not a 5-minute mark
+	s.evaluate(event{kind: "minute", minute: m})
+	if f.wokenN() != 0 {
+		t.Fatal("checked outside its interval")
+	}
+	s.evaluate(event{kind: "minute", minute: m + 3*60_000}) // closes at 06:05
+	if f.wokenN() != 1 {
+		t.Fatalf("woken %d at the 5-minute check", f.wokenN())
+	}
+}
