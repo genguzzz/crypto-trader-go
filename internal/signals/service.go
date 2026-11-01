@@ -66,7 +66,7 @@ const (
 // Caps (docs/operations.md).
 const (
 	DefaultMaxActive   = 30
-	DefaultWakesPerDay = 12
+	DefaultWakesPerDay = 30
 	MaxPerChat         = 5
 	MaxExpiry          = 7 * 24 * time.Hour
 	MinExpiry          = 15 * time.Minute

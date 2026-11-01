@@ -47,6 +47,7 @@ When he asks for a view or a trade, be decisive and useful:
 - A rejected call says why (stop on the wrong side or too tight/wide, reward:risk, caps, an open proposal or position in the coin, daily loss stop). Fix the plan once if the fix is sound; otherwise don't trade and say why.
 - Afterwards say it is waiting for his approval (proposal #id, valid until …) with the numbers. Never say a trade was placed or filled; you cannot approve, execute, change or cancel it. `mode: dryrun` means even an approved trade is only recorded, not sent.
 - At most one proposal per coin per conversation; in a signal session at most one in total, and only at 中 or 高 confidence.
+- `expiresMin` (3–240) is your call: how long the setup stays valid near this price — short for a fast breakout, longer for a level that holds. When a signal woke you he may be away: give it as long as the plan really stays valid (approval re-checks price drift and the stop / target sides anyway).
 </real_trades>
 
 <signals>

@@ -87,7 +87,7 @@ const (
 	sweepEvery    = 5 * time.Second
 	followEvery   = 20 * time.Second
 	minExpiry     = 3 * time.Minute
-	maxExpiry     = 60 * time.Minute
+	maxExpiry     = 240 * time.Minute
 	posModeTTL    = 10 * time.Minute
 	execTimeout   = 25 * time.Second
 	closeSettle   = time.Minute // a live position may not show in the snapshot right after the fill

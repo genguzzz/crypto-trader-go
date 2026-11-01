@@ -479,7 +479,7 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				{Name: "tp", In: "query", Type: "number", Required: true, Desc: "take-profit trigger price"},
 				{Name: "rationale", In: "query", Type: "string", Required: true, Desc: "why this trade and why now, in Chinese, 2–6 sentences: the evidence for and against"},
 				{Name: "invalidation", In: "query", Type: "string", Required: true, Desc: "what would prove the idea wrong before the stop, in Chinese, one sentence"},
-				{Name: "expiresMin", In: "query", Type: "integer", Default: 15, Min: 3, Max: 60, Desc: "minutes the owner has to approve"},
+				{Name: "expiresMin", In: "query", Type: "integer", Default: 15, Min: 3, Max: 240, Desc: "minutes the owner has to approve: as long as the setup stays valid at roughly this price — short for a fast breakout, longer for a level that holds or when a signal woke you and he may not be looking (approval re-checks price drift anyway)"},
 			},
 			owner: true,
 			write: true,
