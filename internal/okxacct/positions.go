@@ -21,6 +21,7 @@ import (
 // Trigger is one take-profit or stop-loss level resting on OKX.
 type Trigger struct {
 	AlgoID    string  `json:"algoId"`
+	ClientID  string  `json:"clientId,omitempty"`  // algoClOrdId: ctg's own start with "ctg" (internal/okxorder)
 	Px        float64 `json:"px"`                  // trigger price
 	PxType    string  `json:"pxType,omitempty"`    // last | mark | index
 	Kind      string  `json:"kind"`                // conditional | oco | position (attached to the position)
@@ -72,6 +73,7 @@ type Snapshot struct {
 
 type rawAttached struct {
 	AlgoID          string `json:"algoId"`
+	AlgoClOrdID     string `json:"algoClOrdId"`
 	TpTriggerPx     string `json:"tpTriggerPx"`
 	TpTriggerPxType string `json:"tpTriggerPxType"`
 	SlTriggerPx     string `json:"slTriggerPx"`
@@ -101,6 +103,7 @@ type rawPosition struct {
 
 type rawAlgo struct {
 	AlgoID          string `json:"algoId"`
+	AlgoClOrdID     string `json:"algoClOrdId"`
 	InstID          string `json:"instId"`
 	OrdType         string `json:"ordType"`
 	Side            string `json:"side"`
@@ -165,7 +168,7 @@ func merge(ps []rawPosition, algos []rawAlgo, ctVal func(string) float64) []Posi
 			closing = "buy"
 		}
 		seen := map[string]bool{}
-		add := func(id, kind, tp, tpType, sl, slType string, full bool, sz float64) {
+		add := func(id, client, kind, tp, tpType, sl, slType string, full bool, sz float64) {
 			if seen[id] {
 				return
 			}
@@ -177,20 +180,20 @@ func merge(ps []rawPosition, algos []rawAlgo, ctVal func(string) float64) []Posi
 				sz = 0
 			}
 			if px := num(tp); px > 0 {
-				p.TP = append(p.TP, Trigger{AlgoID: id, Px: px, PxType: tpType, Kind: kind, Full: full, Contracts: sz})
+				p.TP = append(p.TP, Trigger{AlgoID: id, ClientID: client, Px: px, PxType: tpType, Kind: kind, Full: full, Contracts: sz})
 			}
 			if px := num(sl); px > 0 {
-				p.SL = append(p.SL, Trigger{AlgoID: id, Px: px, PxType: slType, Kind: kind, Full: full, Contracts: sz})
+				p.SL = append(p.SL, Trigger{AlgoID: id, ClientID: client, Px: px, PxType: slType, Kind: kind, Full: full, Contracts: sz})
 			}
 		}
 		for _, a := range algos {
 			if a.InstID != r.InstID || a.PosSide != r.PosSide || a.Side != closing {
 				continue
 			}
-			add(a.AlgoID, a.OrdType, a.TpTriggerPx, a.TpTriggerPxType, a.SlTriggerPx, a.SlTriggerPxType, a.CloseFraction == "1", num(a.Sz))
+			add(a.AlgoID, a.AlgoClOrdID, a.OrdType, a.TpTriggerPx, a.TpTriggerPxType, a.SlTriggerPx, a.SlTriggerPxType, a.CloseFraction == "1", num(a.Sz))
 		}
 		for _, a := range r.CloseOrderAlgo {
-			add(a.AlgoID, "position", a.TpTriggerPx, a.TpTriggerPxType, a.SlTriggerPx, a.SlTriggerPxType, a.CloseFraction == "1" || a.CloseFraction == "", 0)
+			add(a.AlgoID, a.AlgoClOrdID, "position", a.TpTriggerPx, a.TpTriggerPxType, a.SlTriggerPx, a.SlTriggerPxType, a.CloseFraction == "1" || a.CloseFraction == "", 0)
 		}
 		// nearest level first
 		long := side == "long"

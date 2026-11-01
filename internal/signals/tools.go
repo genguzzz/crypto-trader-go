@@ -27,16 +27,16 @@ func (s *Service) SubscribeTool(ctx context.Context, chat int64, a map[string]st
 	spec.fillCode(a["code"])
 	hours, _ := strconv.ParseFloat(a["expiresHours"], 64)
 	plan, _ := strconv.ParseInt(a["planId"], 10, 64)
+	trade, _ := strconv.ParseInt(a["tradeId"], 10, 64)
 	fires, _ := strconv.Atoi(a["maxFires"])
 	cool, _ := strconv.Atoi(a["cooldownMin"])
-	sub, err := s.SubscribeContext(ctx, SubscribeInput{ChatID: chat, Spec: spec, Intent: a["intent"], ExpiresHours: hours, PlanID: plan, MaxFires: fires, CooldownMin: cool, Every: a["every"]})
+	sub, err := s.SubscribeContext(ctx, SubscribeInput{ChatID: chat, Spec: spec, Intent: a["intent"], ExpiresHours: hours, PlanID: plan, TradeID: trade, MaxFires: fires, CooldownMin: cool, Every: a["every"]})
 	if err != nil {
 		return nil, err
 	}
 	out := toolRow(sub)
-	out["note"] = "Subscribed. When the condition turns true this conversation is woken with a ⚡ 信号 message carrying the values and your intent; " +
-		"re-check then and propose_trade, re-subscribe or explain. Nothing trades by itself and any trade still needs the owner's approval — " +
-		"tell the owner what you are waiting for (signal #id, condition, expiry), never that it will trade automatically."
+	out["note"] = "Subscribed. When it turns true this conversation gets a ⚡ 信号 message (values, your intent, the position) and you run again; " +
+		"nothing trades by itself. Tell the owner what you wait for (signal #id, condition, expiry), never that it will trade automatically."
 	return out, nil
 }
 
@@ -85,6 +85,9 @@ func toolRow(x Subscription) map[string]any {
 		"fires": strconv.Itoa(x.FireCount) + "/" + strconv.Itoa(x.MaxFires)}
 	if x.PlanID > 0 {
 		r["planId"] = x.PlanID
+	}
+	if x.TradeID > 0 {
+		r["tradeId"] = x.TradeID
 	}
 	if x.Progress != nil {
 		r["progress"] = x.Progress.Text

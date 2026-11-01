@@ -606,3 +606,44 @@ func TestAltsCheckedEveryMinute(t *testing.T) {
 		t.Fatalf("alt at 15m: %+v %v", x.Spec, err)
 	}
 }
+
+// A subscription that manages an AI position: the wake-up carries the position block, the brief lists
+// it, and it is cancelled (by system, with the reason) when the position closes.
+func TestTradeLinkedSignal(t *testing.T) {
+	s, f, _ := newEnv(t, Options{})
+	var asked []int64
+	s.SetContext(func(chat int64, insts []string, trade int64) string {
+		asked = append(asked, trade)
+		return "关联仓位 #8：仓位：AAVE 做多 3 张 · 均价 138"
+	})
+	x, err := s.Subscribe(SubscribeInput{ChatID: 12, Spec: spec(t, `{"type":"price","instId":"AAVE","op":"above","level":140.2}`),
+		Intent: "到 140.2 先减一半，止损移到保本", TradeID: 8})
+	if err != nil || x.TradeID != 8 {
+		t.Fatalf("subscribe %+v %v", x, err)
+	}
+	other := sub(t, s, 12, `{"type":"price","instId":"AAVE","op":"above","level":145}`)
+	if b := s.BriefFor(12, aave, 8); !strings.Contains(b, "#1 AAVE 价格上破 140.2（仓位 #8）（到 140.2 先减一半") || strings.Contains(b, "#2") {
+		t.Fatalf("brief by trade %q", b)
+	}
+	if b := s.BriefFor(12, aave, 0); !strings.Contains(b, "#1") || !strings.Contains(b, "#2") {
+		t.Fatalf("brief by chat %q", b)
+	}
+	f.set(aave, 140.5)
+	s.evaluate(event{kind: "tick"})
+	if f.wokenN() != 1 || !strings.Contains(f.woken[0], "关联仓位 #8：仓位：AAVE 做多 3 张") || !strings.Contains(f.woken[0], "减仓") || len(asked) != 1 || asked[0] != 8 {
+		t.Fatalf("wake %v asked %v", f.woken, asked)
+	}
+	y, _ := s.Subscribe(SubscribeInput{ChatID: 12, Spec: spec(t, `{"type":"price","instId":"AAVE","op":"below","level":137}`), Intent: "跌破 137 平仓离场", TradeID: 8})
+	if ids := s.CancelForTrade(8, "仓位 #8 已平仓（止损平仓），关联信号自动取消"); len(ids) != 1 || ids[0] != y.ID {
+		t.Fatalf("cancelled %v", ids)
+	}
+	if got := status(t, s, y.ID); got.Status != StatusCancelled || got.EndedBy != "system" || !strings.Contains(got.Reason, "已平仓") {
+		t.Fatalf("after close %+v", got)
+	}
+	if got := status(t, s, other.ID); got.Status != StatusActive {
+		t.Fatalf("an unlinked subscription was cancelled: %+v", got)
+	}
+	if s.CancelForTrade(0, "x") != nil {
+		t.Fatal("trade 0 cancelled something")
+	}
+}

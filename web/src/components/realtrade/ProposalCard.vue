@@ -12,10 +12,11 @@ import { store } from '../../store'
 import { ai } from '../../composables/ai'
 import { useDesktop } from '../../composables/device'
 import { rt, rtNow, fetchProposal, remember, timeLeft } from '../../composables/realtrade'
-import { realtradeApi, statusLabel, statusTone, viaText, type TradeProposal } from '../../realtradeApi'
+import { kindText, mgnText, orderState, orderText, realtradeApi, statusLabel, statusTone, viaText, type TradeProposal } from '../../realtradeApi'
 
 /**
- * One AI trade proposal: what would be ordered (side, leverage, margin, entry, stop, target, R:R),
+ * One AI trade proposal — 开仓 / 补仓 / 减仓 / 平仓 / 调整止盈止损, market or limit, isolated or cross:
+ * what would be ordered (side, leverage, margin, entry, stop, target, R:R; the position it acts on),
  * why, its state and — once resolved — the execution result. While pending: approve (after an
  * explicit confirm step) or reject. The coin / "K 线" opens the K-line with the proposal's levels.
  * live: refetch on every SSE `realtrade` (cards in the chat); list cards are refreshed by their list.
@@ -46,7 +47,22 @@ const sourceText = computed(() => {
   if (!x) return ''
   return x.source === 'chat' ? 'AI 对话' : `${x.source === 'signal' ? '信号' : '定时'}${x.trigger ? ' · ' + x.trigger : ''}`
 })
-const closeText = (k?: string) => (k === 'tp' ? '止盈平仓' : k === 'sl' ? '止损平仓' : '平仓')
+const closeText = (k?: string) => (k === 'tp' ? '止盈平仓' : k === 'sl' ? '止损平仓' : k === 'manual' ? '主动平仓' : k === 'unfilled' ? '未成交' : '平仓')
+const kind = computed(() => p.value?.kind ?? 'open')
+const risky = computed(() => kind.value === 'open' || kind.value === 'add')
+/** The action in one sentence (the confirm step). */
+const confirmMain = computed(() => {
+  const x = p.value
+  if (!x) return ''
+  const pos = `${sym.value} ${sideText.value}`
+  switch (kind.value) {
+    case 'reduce': return `以${orderText(x)}减仓 ${pos} ${Math.round((x.fraction ?? 0) * 100)}%（${lots(x.contracts)} 张，持仓 ${lots(x.posContracts ?? 0)} 张）。`
+    case 'close': return `以${orderText(x)}平掉 ${pos} 全部 ${lots(x.contracts)} 张。`
+    case 'adjust': return `把 ${pos} 的止损改为 ${price(x.sl)}、止盈改为 ${price(x.tp)}（覆盖整个仓位）。`
+  }
+  return `以${orderText(x)}${kindText[kind.value]}${long.value ? '多' : '空'} ${sym.value}，保证金 ${u(x.marginUsdt)} U，杠杆 ${x.leverage}×（${mgnText(x)}，约 ${lots(x.contracts)} 张，名义 ${u(x.notionalUsdt)} U），` +
+    `止损 ${price(x.sl)}（${long.value ? '−' : '+'}${x.slPct.toFixed(2)}%），止盈 ${price(x.tp)}（${long.value ? '+' : '−'}${x.tpPct.toFixed(2)}%）。`
+})
 
 // ---- rationale: clamped until expanded ----
 const whyOpen = ref(false)
@@ -108,7 +124,7 @@ const json = (v: unknown) => JSON.stringify(v, null, 2)
       <CoinIcon :inst-id="p.instId" :size="18" />
       <b class="sym">{{ sym }}</b>
       <span :class="long ? 'up' : 'down'">{{ sideText }}</span>
-      <span class="muted tnum">{{ p.leverage }}x · {{ u(p.marginUsdt) }}U</span>
+      <span class="muted tnum">{{ kindText[kind] }} · {{ p.leverage }}x{{ risky ? ` · ${u(p.marginUsdt)}U` : '' }}</span>
       <span class="sp"></span>
       <span v-if="p.pnlUsdt != null" class="tnum" :class="p.pnlUsdt >= 0 ? 'up' : 'down'">{{ signedU(p.pnlUsdt) }}U</span>
       <span v-else-if="p.status === 'pending'" class="muted tnum">{{ left }}</span>
@@ -122,32 +138,44 @@ const json = (v: unknown) => JSON.stringify(v, null, 2)
         <button type="button" class="coin" :title="`查看 ${sym} K 线`" @click="showChart">
           <CoinIcon :inst-id="p.instId" :size="22" /><b>{{ sym }}</b><small>永续</small>
         </button>
+        <span class="tag">{{ kindText[kind] }}</span>
         <span class="tag" :class="long ? 'good' : 'bad'">{{ sideText }} {{ p.leverage }}x</span>
+        <span class="muted">{{ mgnText(p) }} · {{ orderText(p) }}</span>
         <span class="sp"></span>
         <span v-if="p.mode === 'dryrun'" class="tag warn" title="模拟：只生成并记录下单请求，不会发往 OKX">DRY RUN</span>
         <span class="tag" :class="statusTone(p.status)">{{ statusLabel(p) }}</span>
       </div>
 
-      <div class="size tnum">
+      <div v-if="risky" class="size tnum">
         <span class="k">保证金</span>
         <span><b class="big">{{ u(p.marginUsdt) }}</b> <small>USDT</small></span>
-        <span class="muted">逐仓 · {{ lots(p.contracts) }} 张 · 名义 {{ u(p.notionalUsdt) }} U</span>
+        <span class="muted">{{ mgnText(p) }} · {{ lots(p.contracts) }} 张 · 名义 {{ u(p.notionalUsdt) }} U</span>
       </div>
+      <div v-else class="size tnum">
+        <span class="k">{{ kindText[kind] }}</span>
+        <span v-if="kind === 'reduce'"><b class="big">{{ Math.round((p.fraction ?? 0) * 100) }}%</b> <small>{{ lots(p.contracts) }} 张</small></span>
+        <span v-else-if="kind === 'close'"><b class="big">全部</b> <small>{{ lots(p.contracts) }} 张</small></span>
+        <span class="muted">持仓 {{ lots(p.posContracts ?? 0) }} 张 @{{ price(p.posAvgPx) }}{{ p.posId ? ` · 仓位 #${p.posId}` : ' · 你的仓位' }}</span>
+      </div>
+      <div v-if="kind === 'add' && p.newAvgPx" class="inv tnum"><span class="k">补后</span>{{ lots((p.posContracts ?? 0) + p.contracts) }} 张 · 均价 ≈ {{ price(p.newAvgPx) }}<template v-if="p.liqPx"> · 强平 ≈ {{ price(p.liqPx) }}</template></div>
 
       <div class="lv tnum">
-        <div><span class="k">{{ p.execPx ? '成交价' : '参考入场' }}</span><b>{{ price(p.execPx || p.refPx) }}</b><small v-if="p.execPx" class="muted">参考 {{ price(p.refPx) }}</small></div>
-        <div><span class="k">止损</span><b class="down">{{ price(p.sl) }}</b><small class="down">−{{ p.slPct.toFixed(2) }}%</small></div>
-        <div><span class="k">止盈</span><b class="up">{{ price(p.tp) }}</b><small class="up">+{{ p.tpPct.toFixed(2) }}%</small></div>
-        <div><span class="k">盈亏比</span><b>{{ p.rr.toFixed(2) }}</b><small class="muted">R:R</small></div>
+        <div v-if="kind !== 'adjust'"><span class="k">{{ p.fillPx || p.execPx ? '成交价' : p.orderType === 'limit' ? '限价' : '参考价' }}</span><b>{{ price(p.fillPx || (p.orderType === 'limit' ? p.px : p.execPx) || p.refPx) }}</b><small class="muted">参考 {{ price(p.refPx) }}</small></div>
+        <div v-if="p.sl > 0"><span class="k">止损</span><b class="down">{{ price(p.sl) }}</b><small class="down">{{ long ? '−' : '+' }}{{ p.slPct.toFixed(2) }}%</small></div>
+        <div v-if="p.tp > 0"><span class="k">止盈</span><b class="up">{{ price(p.tp) }}</b><small class="up">{{ long ? '+' : '−' }}{{ p.tpPct.toFixed(2) }}%</small></div>
+        <div v-if="risky"><span class="k">盈亏比</span><b>{{ p.rr.toFixed(2) }}</b><small class="muted">R:R</small></div>
       </div>
+      <div v-if="p.tpsl" class="inv"><span class="k">止盈止损</span>{{ p.tpsl }}</div>
+      <div v-if="p.note" class="inv"><span class="k">注意</span>{{ p.note }}</div>
 
       <div v-if="p.rationale" class="why" :class="{ clamp: !whyOpen }" @click="whyOpen = !whyOpen">{{ p.rationale }}</div>
       <button v-if="p.rationale && p.rationale.length > 90" type="button" class="link" @click="whyOpen = !whyOpen">{{ whyOpen ? '收起' : '展开理由' }}</button>
       <div v-if="p.invalidation" class="inv"><span class="k">失效条件</span>{{ p.invalidation }}</div>
 
       <!-- result -->
-      <div v-if="p.execPx || p.ordId || p.error || p.closedAt" class="res tnum">
-        <span v-if="p.execPx">成交 <b>{{ price(p.execPx) }}</b></span>
+      <div v-if="p.execPx || p.ordId || p.error || p.closedAt || p.ordState" class="res tnum">
+        <span v-if="orderState(p)" class="tag info">{{ orderState(p) }}</span>
+        <span v-if="p.fillPx || p.execPx">成交 <b>{{ price(p.fillPx || p.execPx) }}</b></span>
         <span v-if="p.ordId" class="muted">订单 {{ p.ordId }}</span>
         <span v-if="p.closedAt">{{ closeText(p.closeKind) }} <b>{{ price(p.closePx) }}</b></span>
         <span v-if="p.pnlUsdt != null">盈亏 <b :class="p.pnlUsdt >= 0 ? 'up' : 'down'">{{ signedU(p.pnlUsdt) }} U</b></span>
@@ -180,10 +208,11 @@ const json = (v: unknown) => JSON.stringify(v, null, 2)
       </div>
     </template>
 
-    <Modal :open="confirming" title="确认同意这笔交易" @close="confirming = false">
+    <Modal :open="confirming" :title="`确认同意：${kindText[kind]}`" @close="confirming = false">
       <div class="cf">
-        <p class="cf-main">以市价开{{ long ? '多' : '空' }} <b>{{ sym }}</b>，保证金 <b class="tnum">{{ u(p.marginUsdt) }} U</b>，杠杆 <b class="tnum">{{ p.leverage }}×</b>（逐仓，约 {{ lots(p.contracts) }} 张，名义 {{ u(p.notionalUsdt) }} U），止损 <b class="down tnum">{{ price(p.sl) }}</b>（−{{ p.slPct.toFixed(2) }}%），止盈 <b class="up tnum">{{ price(p.tp) }}</b>（+{{ p.tpPct.toFixed(2) }}%）。</p>
-        <p class="muted">按市价成交，成交价可能与参考价 {{ price(p.refPx) }} 不同；止损触发时预计亏损约 {{ u(p.notionalUsdt * p.slPct / 100) }} U（不含手续费和滑点）。</p>
+        <p class="cf-main">{{ confirmMain }}</p>
+        <p v-if="p.tpsl" class="muted">止盈止损：{{ p.tpsl }}</p>
+        <p v-if="risky" class="muted">{{ p.orderType === 'limit' ? `限价单挂 ${p.orderMin} 分钟，未成交部分到期自动撤单` : `按市价成交，成交价可能与参考价 ${price(p.refPx)} 不同` }}；止损触发时这笔预计亏损约 {{ u(p.notionalUsdt * p.slPct / 100) }} U（不含手续费和滑点）。</p>
         <p v-if="p.mode === 'dryrun'" class="tag warn cf-mode">DRY RUN：只生成并记录下单请求，不会真实下单</p>
         <p v-else class="tag bad cf-mode">实盘：会在 OKX 真实下单</p>
         <div v-if="p.status === 'pending'" class="cd tnum">剩 {{ left }} 过期</div>

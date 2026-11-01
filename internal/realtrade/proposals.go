@@ -1,15 +1,21 @@
 // Package realtrade turns the agent's trade ideas into real OKX orders only with the owner's approval
-// (owner decision 2026-11-01, docs/trading-design.md §7). A TradeProposal comes from a chat (the
+// (owner decisions 2026-11-01, docs/trading-design.md §7). A proposal comes from a chat (the
 // owner-only MCP tool propose_trade), a signal or a schedule (Trigger → a headless agent run recorded
 // as a normal chat, which may call propose_trade). Every proposal waits for the owner: the first
 // answer from any channel (the dedicated Telegram trade bot, the web, the app) wins, expiry never
-// approves, and approval re-validates against the live price before internal/okxorder places the one
-// allowed order (market + TP + SL, isolated). CTG_TRADE_MODE decides dry run (default) or live.
+// approves, and approval re-validates against the live price and the position before
+// internal/okxorder sends it. CTG_TRADE_MODE decides dry run (default) or live.
 //
-//	pending → approved → executing → executed (dryrun | live) → closed (TP / SL, detected)
+// Kinds: open (a new position, TP and SL attached), add (补仓), reduce (减仓), close (平仓) and adjust
+// (move TP/SL) — market or limit (a limit rests until filled or its order expiry, then the server
+// cancels the rest), isolated or cross margin. An executed open is an AI position (posId = its id);
+// later actions on it link to it, and its chat is told after every execution (a steer, steer.go).
+//
+//	pending → approved → executing → executed (dryrun | live) → closed (an open's position: TP / SL / close, detected)
 //	                               → failed       (OKX or network error; the request is kept)
 //	                   → invalidated              (re-validation failed; nothing sent)
 //	pending → rejected | expired
+//	executed limit: ordState live → partially_filled → filled | canceled (expired, or cancelled on OKX)
 package realtrade
 
 import (
@@ -17,6 +23,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"crypto-trader-go/internal/okxorder"
 )
 
 const schema = `
@@ -38,7 +46,51 @@ CREATE TABLE IF NOT EXISTS trade_trigger_runs(chat_id INTEGER PRIMARY KEY, trigg
   label TEXT NOT NULL, ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS trade_trigger_runs_t ON trade_trigger_runs(trigger_id, ts);
 CREATE TABLE IF NOT EXISTS trade_tg_msgs(proposal_id INTEGER PRIMARY KEY, chat INTEGER NOT NULL, message INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS trade_steers(id INTEGER PRIMARY KEY AUTOINCREMENT, proposal_id INTEGER NOT NULL, chat_id INTEGER NOT NULL,
+  kind TEXT NOT NULL, ts INTEGER NOT NULL, due INTEGER NOT NULL, state TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0,
+  message TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', done_at INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS trade_steers_state ON trade_steers(state, due);
 `
+
+// columns added 2026-11-01 (kinds, limit orders, cross margin, position bookkeeping); tables made
+// before get them with these defaults, so older proposals read as market opens in isolated margin.
+var addedCols = []struct{ name, def string }{
+	{"kind", "TEXT NOT NULL DEFAULT 'open'"}, {"ord_type", "TEXT NOT NULL DEFAULT 'market'"}, {"px", "REAL NOT NULL DEFAULT 0"},
+	{"mgn_mode", "TEXT NOT NULL DEFAULT 'isolated'"}, {"fraction", "REAL NOT NULL DEFAULT 0"}, {"pos_id", "INTEGER NOT NULL DEFAULT 0"},
+	{"pos_sz", "REAL NOT NULL DEFAULT 0"}, {"pos_avg", "REAL NOT NULL DEFAULT 0"}, {"new_avg", "REAL NOT NULL DEFAULT 0"},
+	{"liq_px", "REAL NOT NULL DEFAULT 0"}, {"tpsl", "TEXT NOT NULL DEFAULT ''"}, {"note", "TEXT NOT NULL DEFAULT ''"},
+	{"order_min", "INTEGER NOT NULL DEFAULT 0"}, {"order_until", "INTEGER NOT NULL DEFAULT 0"}, {"ord_state", "TEXT NOT NULL DEFAULT ''"},
+	{"filled", "REAL NOT NULL DEFAULT 0"}, {"fill_px", "REAL NOT NULL DEFAULT 0"}, {"filled_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"algo_ids", "TEXT NOT NULL DEFAULT ''"}, {"cur_sz", "REAL NOT NULL DEFAULT 0"}, {"cur_avg", "REAL NOT NULL DEFAULT 0"},
+	{"cur_sl", "REAL NOT NULL DEFAULT 0"}, {"cur_tp", "REAL NOT NULL DEFAULT 0"}, {"cur_algo", "TEXT NOT NULL DEFAULT ''"},
+	{"realized", "REAL NOT NULL DEFAULT 0"},
+}
+
+func migrate(db *sql.DB) error {
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	added := false
+	for _, c := range addedCols {
+		var has int
+		db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('trade_proposals') WHERE name=?`, c.name).Scan(&has)
+		if has == 0 {
+			if _, err := db.Exec(`ALTER TABLE trade_proposals ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
+				return err
+			}
+			added = true
+		}
+	}
+	if added { // opens executed before: filled market orders, each its own AI position with its attached TP/SL
+		if _, err := db.Exec(`UPDATE trade_proposals SET ord_state='filled', filled=contracts, fill_px=exec_px, filled_at=status_at, pos_id=id,
+			cur_sz=CASE WHEN closed_at=0 THEN contracts ELSE 0 END, cur_avg=exec_px, cur_sl=sl, cur_tp=tp, cur_algo='ctga'||id
+			WHERE status='executed' AND ord_state=''`); err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS trade_proposals_pos ON trade_proposals(pos_id)`)
+	return err
+}
 
 // Sources and statuses.
 const (
@@ -54,9 +106,21 @@ const (
 	StatusRejected    = "rejected"
 	StatusExpired     = "expired"
 	StatusInvalidated = "invalidated"
+
+	KindOpen   = okxorder.KindOpen
+	KindAdd    = okxorder.KindAdd
+	KindReduce = okxorder.KindReduce
+	KindClose  = okxorder.KindClose
+	KindAdjust = okxorder.KindAdjust
+
+	// order states of an executed proposal (a market order is filled at once)
+	OrdLive     = "live"
+	OrdPartial  = "partially_filled"
+	OrdFilled   = "filled"
+	OrdCanceled = "canceled"
 )
 
-// Proposal is one trade the agent asked the owner to approve, with its audit trail.
+// Proposal is one action the agent asked the owner to approve, with its audit trail.
 type Proposal struct {
 	ID           int64   `json:"id"`
 	Created      int64   `json:"created"`
@@ -64,18 +128,47 @@ type Proposal struct {
 	Source       string  `json:"source"`  // chat | signal | schedule
 	Trigger      string  `json:"trigger"` // trigger label ("" for a chat)
 	ChatID       int64   `json:"chatId"`
+	Kind         string  `json:"kind"` // open | add | reduce | close | adjust
 	InstID       string  `json:"instId"`
-	Side         string  `json:"side"` // long | short
-	MarginUSDT   float64 `json:"marginUsdt"`
+	Side         string  `json:"side"`       // long | short: the position's side
+	MarginMode   string  `json:"marginMode"` // isolated | cross
+	OrdType      string  `json:"orderType"`  // market | limit
+	Px           float64 `json:"px,omitempty"`
+	MarginUSDT   float64 `json:"marginUsdt"` // open / add
 	Leverage     int     `json:"leverage"`
-	Contracts    float64 `json:"contracts"`    // at creation (re-sized at execution)
-	NotionalUSDT float64 `json:"notionalUsdt"` // at creation
-	RefPx        float64 `json:"refPx"`        // last price at creation
+	Fraction     float64 `json:"fraction,omitempty"` // reduce: share of the position closed
+	Contracts    float64 `json:"contracts"`          // the order's size at creation (re-sized at execution)
+	NotionalUSDT float64 `json:"notionalUsdt"`       // at creation
+	RefPx        float64 `json:"refPx"`              // last price at creation
 	SL           float64 `json:"sl"`
 	TP           float64 `json:"tp"`
-	SLPct        float64 `json:"slPct"` // distance from RefPx, %
+	SLPct        float64 `json:"slPct"` // distance from the entry (limit price or RefPx), %
 	TPPct        float64 `json:"tpPct"`
 	RR           float64 `json:"rr"`
+	// the position an add / reduce / close / adjust acts on, at creation: its size and average entry;
+	// add: the average once filled; the estimated liquidation price after the order (0 = unknown)
+	PosID        int64   `json:"posId,omitempty"` // the AI position (its open's id; an executed open: itself); 0 = the owner's own
+	PosContracts float64 `json:"posContracts,omitempty"`
+	PosAvgPx     float64 `json:"posAvgPx,omitempty"`
+	NewAvgPx     float64 `json:"newAvgPx,omitempty"`
+	LiqPx        float64 `json:"liqPx,omitempty"`
+	TPSL         string  `json:"tpsl,omitempty"` // what happens to the position's TP/SL
+	Note         string  `json:"note,omitempty"` // a check that could not be made
+	// limit orders: minutes the order rests, the time the server cancels what is left (set at execution)
+	OrderMin   int     `json:"orderMin,omitempty"`
+	OrderUntil int64   `json:"orderUntil,omitempty"`
+	OrdState   string  `json:"ordState,omitempty"` // live | partially_filled | filled | canceled
+	Filled     float64 `json:"filled,omitempty"`   // contracts filled
+	FillPx     float64 `json:"fillPx,omitempty"`   // their average price
+	FilledAt   int64   `json:"filledAt,omitempty"`
+	// an AI position (executed open): what ctg knows of it now — size, average, TP/SL (the dry run follows these)
+	CurContracts float64 `json:"curContracts,omitempty"`
+	CurAvgPx     float64 `json:"curAvgPx,omitempty"`
+	CurSL        float64 `json:"curSl,omitempty"`
+	CurTP        float64 `json:"curTp,omitempty"`
+	curAlgo      string  // client id of ctg's TP/SL on it (dry run)
+	realized     float64 // dry run: estimated P&L of partial closes
+	algoIDs      string  // close by limit: ctg's TP/SL to cancel once filled
 	Rationale    string  `json:"rationale"`
 	Invalidation string  `json:"invalidation"`
 	ExpiresAt    int64   `json:"expiresAt"`
@@ -117,28 +210,45 @@ var (
 
 const cols = `id, created, updated, source, trigger_label, chat_id, inst_id, side, margin, leverage, contracts, notional, ref_px, sl, tp,
   rationale, invalidation, expires_at, status, status_at, mode, error, resolved_by, via, exec_px, ord_id, request, response,
-  closed_at, close_kind, close_px, pnl`
+  closed_at, close_kind, close_px, pnl, kind, ord_type, px, mgn_mode, fraction, pos_id, pos_sz, pos_avg, new_avg, liq_px, tpsl, note,
+  order_min, order_until, ord_state, filled, fill_px, filled_at, algo_ids, cur_sz, cur_avg, cur_sl, cur_tp, cur_algo, realized`
 
 func scan(row interface{ Scan(...any) error }) (Proposal, error) {
 	var p Proposal
 	var req, resp string
 	err := row.Scan(&p.ID, &p.Created, &p.Updated, &p.Source, &p.Trigger, &p.ChatID, &p.InstID, &p.Side, &p.MarginUSDT, &p.Leverage,
 		&p.Contracts, &p.NotionalUSDT, &p.RefPx, &p.SL, &p.TP, &p.Rationale, &p.Invalidation, &p.ExpiresAt, &p.Status, &p.StatusAt,
-		&p.Mode, &p.Error, &p.By, &p.Via, &p.ExecPx, &p.OrdID, &req, &resp, &p.ClosedAt, &p.CloseKind, &p.ClosePx, &p.PnlUSDT)
+		&p.Mode, &p.Error, &p.By, &p.Via, &p.ExecPx, &p.OrdID, &req, &resp, &p.ClosedAt, &p.CloseKind, &p.ClosePx, &p.PnlUSDT,
+		&p.Kind, &p.OrdType, &p.Px, &p.MarginMode, &p.Fraction, &p.PosID, &p.PosContracts, &p.PosAvgPx, &p.NewAvgPx, &p.LiqPx, &p.TPSL, &p.Note,
+		&p.OrderMin, &p.OrderUntil, &p.OrdState, &p.Filled, &p.FillPx, &p.FilledAt, &p.algoIDs, &p.CurContracts, &p.CurAvgPx, &p.CurSL, &p.CurTP,
+		&p.curAlgo, &p.realized)
 	if req != "" {
 		p.Request = json.RawMessage(req)
 	}
 	if resp != "" {
 		p.Response = json.RawMessage(resp)
 	}
-	if p.RefPx > 0 && p.SL > 0 && p.TP > 0 {
-		p.SLPct = abs(p.RefPx-p.SL) / p.RefPx * 100
-		p.TPPct = abs(p.TP-p.RefPx) / p.RefPx * 100
+	if ref := p.entry(); ref > 0 && p.SL > 0 && p.TP > 0 {
+		p.SLPct = abs(ref-p.SL) / ref * 100
+		p.TPPct = abs(p.TP-ref) / ref * 100
 		if p.SLPct > 0 {
 			p.RR = p.TPPct / p.SLPct
 		}
 	}
 	return p, err
+}
+
+// entry is the price the order was meant to fill at: the limit price, else the price at creation.
+func (p Proposal) entry() float64 {
+	if p.OrdType == okxorder.Limit && p.Px > 0 {
+		return p.Px
+	}
+	return p.RefPx
+}
+
+// Resting reports whether the proposal's limit order is on OKX now.
+func (p Proposal) Resting() bool {
+	return p.Status == StatusExecuted && (p.OrdState == OrdLive || p.OrdState == OrdPartial)
 }
 
 func abs(v float64) float64 {
@@ -178,10 +288,11 @@ func (s *Service) Get(id int64) (Proposal, error) {
 	return p, rows.Err()
 }
 
-// ListQuery filters List: Status pending | open (pending, approved, executing) | all.
+// ListQuery filters List: Status pending | open (pending, approved, executing, or a resting limit) | all.
 type ListQuery struct {
 	Status string
 	ChatID int64
+	PosID  int64 // the AI position and every action on it
 	Limit  int
 }
 
@@ -191,7 +302,7 @@ func (s *Service) List(q ListQuery) ([]Proposal, error) {
 	switch q.Status {
 	case "", "all":
 	case "open":
-		where = append(where, "status IN ('pending','approved','executing')")
+		where = append(where, "(status IN ('pending','approved','executing') OR (status='executed' AND ord_state IN ('live','partially_filled')))")
 	default:
 		where = append(where, "status=?")
 		args = append(args, q.Status)
@@ -199,6 +310,10 @@ func (s *Service) List(q ListQuery) ([]Proposal, error) {
 	if q.ChatID > 0 {
 		where = append(where, "chat_id=?")
 		args = append(args, q.ChatID)
+	}
+	if q.PosID > 0 {
+		where = append(where, "(id=? OR pos_id=?)")
+		args = append(args, q.PosID, q.PosID)
 	}
 	if q.Limit <= 0 || q.Limit > 500 {
 		q.Limit = 50

@@ -1,6 +1,6 @@
 # Data sources, freshness and retention
 
-OKX v5 **public** endpoints (no credentials, no orders), plus the CoinGecko free API (market cap, display only). The one exception is the owner's own positions: when configured, signed read-only GETs of positions, pending TP/SL and equity (fetched on demand, cached ~3 s), and the one order an owner-approved AI trade proposal may place (market + TP/SL, isolated; dry run by default). Timestamps follow exchange time; missing minutes/data = unknown, never 0. To check freshness: MCP `get_system_status`, or [系统状态](/status).
+OKX v5 **public** endpoints (no credentials, no orders), plus the CoinGecko free API (market cap, display only). The one exception is the owner's own positions: when configured, signed read-only GETs of positions, pending TP/SL and equity (fetched on demand, cached ~3 s), and the orders owner-approved AI trade proposals may place (open / add / reduce / close / adjust TP/SL, market or limit, isolated or cross; dry run by default). Timestamps follow exchange time; missing minutes/data = unknown, never 0. To check freshness: MCP `get_system_status`, or [系统状态](/status).
 
 ## Recorded locally vs fetched on demand
 

@@ -99,6 +99,7 @@ type chatRun struct {
 	subs   map[chan chatEvent]struct{}
 	done   bool
 	cancel context.CancelFunc
+	callID string // the worker call running the turn: a steer names it
 }
 
 func (r *chatRun) publish(ev chatEvent) {
@@ -167,11 +168,14 @@ type ChatInput struct {
 }
 
 // Message roles. A signal message is injected by the server when a subscribed signal fires
-// (internal/signals): the agent answers it like a question, the app shows it as a signal, not as the owner.
+// (internal/signals); a trade message when an approved trade proposal of the chat ran or its position
+// closed (internal/realtrade). The agent answers them like a question; the app shows them as system
+// messages, not as the owner.
 const (
 	RoleUser      = "user"
 	RoleAssistant = "assistant"
 	RoleSignal    = "signal"
+	RoleTrade     = "trade"
 )
 
 // ChatModels the app may pick per turn.
@@ -203,8 +207,8 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		return 0, errors.New("message too long")
 	}
 	role := RoleUser
-	if in.Role == RoleSignal {
-		role = RoleSignal
+	if in.Role == RoleSignal || in.Role == RoleTrade {
+		role = in.Role
 	}
 	g.mu.Lock()
 	ready := g.cred.configured() && g.w != nil && g.w.info.Ready
@@ -235,7 +239,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 			return 0, err
 		}
 	}
-	run := &chatRun{subs: map[chan chatEvent]struct{}{}}
+	run := &chatRun{subs: map[chan chatEvent]struct{}{}, callID: newID()}
 	g.runMu.Lock()
 	if g.runs == nil {
 		g.runs = map[int64]*chatRun{}
@@ -248,7 +252,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	g.runMu.Unlock()
 	if in.Retry {
 		// drop the failed answer (if any) so the question is answered once
-		g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=? AND role='assistant' AND id > (SELECT MAX(id) FROM ai_chat_msgs WHERE chat_id=? AND role IN ('user','signal'))`, in.ChatID, in.ChatID)
+		g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=? AND role='assistant' AND id > (SELECT MAX(id) FROM ai_chat_msgs WHERE chat_id=? AND role IN ('user','signal','trade'))`, in.ChatID, in.ChatID)
 	} else if _, err := g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content) VALUES(?,?,?,?)`, in.ChatID, now, role, in.Message); err != nil {
 		g.endRun(in.ChatID)
 		return 0, err
@@ -262,7 +266,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		defer g.chatDone(in.ChatID) // after endRun: the chat takes a new turn again
 		defer g.endRun(in.ChatID)
 		start := g.now()
-		msg := map[string]any{"type": "chat", "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "notes": g.MemoryFor(in.Message)}
+		msg := map[string]any{"type": "chat", "id": run.callID, "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "notes": g.MemoryFor(in.Message)}
 		resp, err := g.callStream(ctx, msg, func(ev chatEvent) { g.onAgentEvent(ev); run.publish(ev) })
 		lat := g.now().Sub(start).Milliseconds()
 		var out struct {
@@ -312,7 +316,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 
 func (g *Gate) lastQuestion(chat int64) (string, error) {
 	var q string
-	err := g.st.DB.QueryRow(`SELECT content FROM ai_chat_msgs WHERE chat_id=? AND role IN ('user','signal') ORDER BY id DESC LIMIT 1`, chat).Scan(&q)
+	err := g.st.DB.QueryRow(`SELECT content FROM ai_chat_msgs WHERE chat_id=? AND role IN ('user','signal','trade') ORDER BY id DESC LIMIT 1`, chat).Scan(&q)
 	if err != nil {
 		return "", errors.New("chat has no question")
 	}
@@ -360,6 +364,58 @@ func (g *Gate) WakeChat(chat int64, message string) error {
 	}
 	_, err := g.StartChat(ChatInput{ChatID: chat, Message: message, Role: RoleSignal})
 	return err
+}
+
+// steerTimeout bounds the worker's acknowledgement of a steer.
+const steerTimeout = 10 * time.Second
+
+// SteerChat delivers a server message (RoleSignal or RoleTrade) to a chat now: an idle chat starts a
+// turn with it; a chat that is answering gets it injected into the running turn — the worker hands it
+// to the agent's session as a further user message, answered before the turn ends — and it is stored
+// and streamed at that point. ErrChatBusy only when the running turn can no longer take it (it is
+// finishing, or the worker does not steer), ErrUnavailable while the agent is down: the caller keeps
+// it queued and retries when the turn ends (SetOnChatDone).
+func (g *Gate) SteerChat(chat int64, role, message string) error {
+	message = strings.TrimSpace(message)
+	switch {
+	case chat <= 0:
+		return errors.New("chat not found")
+	case role != RoleSignal && role != RoleTrade:
+		return errors.New("a steer is a signal or trade message")
+	case message == "" || utf8.RuneCountInString(message) > 8000:
+		return errors.New("empty or too long message")
+	}
+	for try := 0; try < 2; try++ {
+		r := g.run(chat)
+		if r == nil {
+			_, err := g.StartChat(ChatInput{ChatID: chat, Message: message, Role: role})
+			if errors.Is(err, ErrChatBusy) {
+				continue // a turn started meanwhile: steer into it
+			}
+			return err
+		}
+		return g.steer(r, chat, role, message)
+	}
+	return ErrChatBusy
+}
+
+func (g *Gate) steer(r *chatRun, chat int64, role, message string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), steerTimeout)
+	defer cancel()
+	if _, err := g.call(ctx, map[string]any{"type": "steer", "callId": r.callID, "message": message}); err != nil {
+		if errors.Is(err, ErrUnavailable) || errors.Is(err, ErrWorkerGone) {
+			return ErrUnavailable
+		}
+		g.logf("aigate: steer chat %d: %v (retried after the turn)", chat, err)
+		return ErrChatBusy
+	}
+	now := g.now().UnixMilli()
+	if _, err := g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content) VALUES(?,?,?,?)`, chat, now, role, message); err != nil {
+		g.logf("aigate: store steer %d: %v", chat, err)
+	}
+	g.st.DB.Exec(`UPDATE ai_chats SET updated=? WHERE id=?`, now, chat)
+	r.publish(evJSON(map[string]any{"type": "steer", "role": role, "text": message}))
+	return nil
 }
 
 // ChatTitle returns a chat's title; false when there is no such chat.
@@ -536,8 +592,11 @@ func (g *Gate) callStream(ctx context.Context, msg map[string]any, onEvent func(
 	if w == nil {
 		return inbound{}, ErrUnavailable
 	}
-	id := newID()
-	msg["id"] = id
+	id, _ := msg["id"].(string) // a chat turn brings its own (steers name it)
+	if id == "" {
+		id = newID()
+		msg["id"] = id
+	}
 	if dl, ok := ctx.Deadline(); ok {
 		msg["deadlineMs"] = dl.UnixMilli()
 	}

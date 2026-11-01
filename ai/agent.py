@@ -1,5 +1,9 @@
 """Chat agent: one multi-turn Claude Agent SDK session per ctg conversation.
 
+A turn runs in streaming-input mode so the server can steer it: a further user message (a fired signal,
+the result of an approved trade) is handed to the running turn through its Inbox and answered before
+the call ends (Go: aigate.SteerChat → worker `steer`).
+
 Tools: the ctg MCP endpoint (small market-data lookups, read-only, in-memory key from Go),
 WebSearch/WebFetch, a `shell` tool that runs in the separate ctg-sandbox container, memory (memory_save / memory_search / memory_forget), and
 the skills `perp-analysis` and `ctg-platform`. One agent argues both sides of a trade itself. Progress is streamed to Go as compact events; the session is resumed
@@ -57,10 +61,15 @@ CA_LABELS = {
     "tokenomics": "代币经济", "holders": "持仓分布", "security": "合约安全", "dex": "DEX 数据", "status": "数据状态",
 }
 
+PROPOSE_LABELS = {"open": "提议开仓", "add": "提议补仓", "reduce": "提议减仓", "close": "提议平仓", "adjust": "提议调整止盈止损"}
+
+
 def label_for(name: str, inp: Any = None) -> str:
     """Owner-facing label: what the step does, never how (no "sandbox" / tool ids). Shell steps are named
     after the command (the command line itself is the subject, see brief_input)."""
     short = name.split("__")[-1]
+    if short == "propose_trade" and isinstance(inp, dict):
+        return PROPOSE_LABELS.get(str(inp.get("kind") or "open"), TOOL_LABELS[short])
     if short == "shell":
         words = str(inp.get("cmd", "")).split()[:3] if isinstance(inp, dict) else []
         if len(words) > 1 and words[0] == "ca":
@@ -119,9 +128,30 @@ def brief_input(name: str, inp: Any) -> str:
         return script_title(str(inp.get("code") or ""))
     if short == "unsubscribe_signal":
         return f"#{inp.get('id', '')}"
+    if short == "propose_trade":
+        return propose_brief(inp)
     keep = [str(v) for k, v in inp.items() if k in ("instId", "q")]
     keep += [f"{v}" for k, v in inp.items() if k in ("bar", "field", "days")]
     return " · ".join(keep)[:80]
+
+
+def propose_brief(inp: dict) -> str:
+    """A propose_trade call in a few words: coin, side, the order, what it changes."""
+    coin = str(inp.get("instId") or "").upper().split("-")[0]
+    parts = [f"{coin} {'多' if inp.get('side') == 'long' else '空'}"]
+    kind = str(inp.get("kind") or "open")
+    if kind == "reduce" and inp.get("fraction"):
+        try:
+            parts.append(f"{float(inp['fraction']) * 100:.0f}%")
+        except (TypeError, ValueError):
+            pass
+    if kind != "adjust":
+        parts.append(f"限价 @{inp['price']}" if inp.get("orderType") == "limit" and inp.get("price") else "市价")
+    if kind == "open" and inp.get("marginMode") == "cross":
+        parts.append("全仓")
+    if kind in ("open", "add", "adjust") and inp.get("sl"):
+        parts.append(f"止损 {inp['sl']}")
+    return " · ".join(parts)[:80]
 
 
 def script_title(code: str) -> str:
@@ -269,7 +299,7 @@ def sessions_server(base: str, current: str, token: str):
         per = max(400, cap // max(1, len(msgs)))
         out = [f"#{c['id']} {c.get('title', '')}" + (f" · {c['instId']}" if c.get("instId") else "") + f" · {len(msgs)} 条消息"]
         for m in msgs:
-            who = "他" if m["role"] == "user" else "你"
+            who = {"user": "他", "assistant": "你", "signal": "⚡信号", "trade": "交易执行"}.get(m["role"], "系统")
             body = (m.get("content") or "").strip()
             if len(body) > per:
                 body = body[:per] + f"…（截断，原文 {len(body)} 字）"
@@ -408,8 +438,47 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
     return ClaudeAgentOptions(**kw)
 
 
-async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
-    """Run one user turn; streams events through emit and returns the final result."""
+class Inbox:
+    """Further user messages for a running turn (steers). put() refuses once the turn has ended, so a
+    message is either answered in this call or the caller (Go) retries it as a new turn."""
+
+    def __init__(self) -> None:
+        self._q: asyncio.Queue = asyncio.Queue()
+        self.closed = False
+
+    def put(self, text: str) -> bool:
+        if self.closed or not text.strip():
+            return False
+        self._q.put_nowait(text)
+        return True
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            self._q.put_nowait(None)  # wakes the prompt stream after the messages already queued
+
+    async def get(self) -> str | None:
+        return await self._q.get()
+
+
+def user_message(text: str) -> dict:
+    return {"type": "user", "message": {"role": "user", "content": text}, "parent_tool_use_id": None, "session_id": ""}
+
+
+async def prompt_stream(first: str, inbox: Inbox):
+    """The turn's input: the question, then every steer until the inbox closes. The SDK writes each to
+    the CLI as it comes and keeps the run open until every one written has its result."""
+    yield user_message(first)
+    while True:
+        text = await inbox.get()
+        if text is None:
+            return
+        yield user_message(text)
+
+
+async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | None = None) -> dict:
+    """Run one user turn; streams events through emit and returns the final result. Messages put into
+    inbox while it runs are injected into the session and answered in the same call."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, ToolResultBlock, ToolUseBlock, UserMessage, query
     from claude_agent_sdk.types import StreamEvent
 
@@ -420,6 +489,7 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
     if msg.get("model") in CHAT_MODELS:
         config = {**config, "model": msg["model"]}
     options = build_chat_options(config, proxy, chat_id, str(msg.get("sessionId") or ""), msg.get("notes"), emit)
+    inbox = inbox or Inbox()
 
     # ordered: {"t":"text","v"} | {"t":"think","v","ms"} | {"t":"tool","id","name","label","input","ok","sub"}
     parts: list[dict] = []
@@ -427,6 +497,7 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
     thinking: dict[int, tuple[dict, float]] = {}  # open thinking blocks by stream index
     started = time.monotonic()
     result = None
+    cost, turns = 0.0, 0
 
     def text_part() -> dict:
         if not parts or parts[-1]["t"] != "text":
@@ -434,7 +505,7 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
         return parts[-1]
 
     try:
-        async for m in query(prompt=prompt, options=options):
+        async for m in query(prompt=prompt_stream(prompt, inbox), options=options):
             if isinstance(m, StreamEvent):
                 if m.parent_tool_use_id:
                     continue  # subagent tokens: only their tool calls are shown
@@ -492,10 +563,18 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
                         p["output"] = result_text(b.content)
                         await emit({"type": "tool_done", "id": b.tool_use_id, "ok": p["ok"], "output": p["output"]})
             elif isinstance(m, ResultMessage):
+                # the first result ends what can be steered: later steers are refused (Go starts a new
+                # turn); those already queued are still written and answered before the call ends
+                inbox.close()
                 result = m
+                cost += float(m.total_cost_usd or 0)
+                turns += int(m.num_turns or 0)
     except Exception as e:  # noqa: BLE001
+        inbox.close()
         if result is None:
             raise llm.CallError(f"{type(e).__name__}: {e}", network=llm.looks_network(str(e))) from e
+    finally:
+        inbox.close()
     if result is None:
         raise llm.CallError("no result from the model")
     if result.is_error or result.subtype != "success":
@@ -507,6 +586,6 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit) -> dict:
     parts = [p for p in parts if p["t"] != "think" or p["v"].strip()]  # empty (omitted) thinking blocks
     final = "\n\n".join(p["v"].strip() for p in parts if p["t"] == "text" and p["v"].strip()) or (result.result or "")
     return {
-        "text": final, "sessionId": result.session_id, "cost": float(result.total_cost_usd or 0),
-        "steps": parts, "turns": result.num_turns, "latencyMs": int((time.monotonic() - started) * 1000),
+        "text": final, "sessionId": result.session_id, "cost": cost,
+        "steps": parts, "turns": turns, "latencyMs": int((time.monotonic() - started) * 1000),
     }

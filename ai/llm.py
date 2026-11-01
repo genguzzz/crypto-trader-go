@@ -233,8 +233,8 @@ async def test(config: dict, proxy: str) -> dict:
     return m
 
 
-async def chat(msg: dict, config: dict, proxy: str, emit) -> dict:
-    """One chat turn with tools (agent.py); events go through emit."""
+async def chat(msg: dict, config: dict, proxy: str, emit, inbox=None) -> dict:
+    """One chat turn with tools (agent.py); events go through emit, steers come in through inbox."""
     import agent  # lazy: agent imports this module
 
-    return await agent.chat(msg, config, proxy, emit)
+    return await agent.chat(msg, config, proxy, emit, inbox)

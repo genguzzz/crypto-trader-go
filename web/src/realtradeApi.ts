@@ -15,9 +15,20 @@ export interface TradeProposal {
   id: number; created: number; updated: number
   source: 'chat' | 'signal' | 'schedule'; trigger: string // trigger label, '' for chat
   chatId: number // 0 = none
-  instId: string; side: 'long' | 'short'
+  /** open | add (补仓) | reduce (减仓) | close (平仓) | adjust (move TP/SL) */
+  kind: RtKind
+  instId: string; side: 'long' | 'short' // the position's side
+  marginMode: 'isolated' | 'cross'; orderType: 'market' | 'limit'; px?: number // limit price
   marginUsdt: number; leverage: number; contracts: number; notionalUsdt: number
-  refPx: number; sl: number; tp: number; slPct: number; tpPct: number; rr: number // pct: distance from refPx in %, positive
+  fraction?: number // reduce: share of the position
+  refPx: number; sl: number; tp: number; slPct: number; tpPct: number; rr: number // pct: distance from the entry in %, positive; 0 = none (reduce / close)
+  /** add / reduce / close / adjust: the AI position (its open's id; 0 = the owner's own) and its size / average at creation */
+  posId?: number; posContracts?: number; posAvgPx?: number
+  newAvgPx?: number; liqPx?: number // add: the average once filled; the estimated liquidation
+  tpsl?: string; note?: string // what happens to the position's TP/SL; a check that could not be made
+  /** limit orders: minutes it rests, when the server cancels the rest, its state on OKX and the fills */
+  orderMin?: number; orderUntil?: number; ordState?: 'live' | 'partially_filled' | 'filled' | 'canceled'; filled?: number; fillPx?: number
+  curContracts?: number; curAvgPx?: number; curSl?: number; curTp?: number // an open AI position now
   rationale: string; invalidation: string
   expiresAt: number
   status: RtStatus
@@ -25,7 +36,7 @@ export interface TradeProposal {
   by?: string; via?: string // who resolved it and through which channel (telegram | web | app | timeout)
   execPx?: number; ordId?: string
   request?: unknown; response?: unknown // the exact OKX request(s) [{method, path, body}] and response
-  closedAt?: number; closeKind?: 'tp' | 'sl' | 'other'; closePx?: number; pnlUsdt?: number
+  closedAt?: number; closeKind?: 'tp' | 'sl' | 'manual' | 'unfilled' | 'other'; closePx?: number; pnlUsdt?: number
   events?: RtEvent[]
 }
 export interface RtTrigger {
@@ -39,6 +50,22 @@ export interface RtConfig {
   triggers: RtTrigger[]
 }
 export interface RtList { proposals: TradeProposal[]; now: number; mode: RtMode }
+export type RtKind = 'open' | 'add' | 'reduce' | 'close' | 'adjust'
+
+export const kindText: Record<RtKind, string> = { open: '开仓', add: '补仓', reduce: '减仓', close: '平仓', adjust: '调整止盈止损' }
+export const mgnText = (p: TradeProposal) => (p.marginMode === 'cross' ? '全仓' : '逐仓')
+export const orderText = (p: TradeProposal) => (p.orderType === 'limit' ? `限价 @${p.px}` : '市价')
+/** A limit order's state on OKX ('' for market orders and before execution). */
+export function orderState(p: TradeProposal) {
+  const f = `${+(p.filled ?? 0).toPrecision(6)}/${+p.contracts.toPrecision(6)}`
+  switch (p.ordState) {
+    case 'live': return '挂单中'
+    case 'partially_filled': return `挂单中 · 已成交 ${f}`
+    case 'canceled': return `已撤单 · 成交 ${f}`
+    case 'filled': return p.orderType === 'limit' ? '已成交' : ''
+  }
+  return ''
+}
 
 export const rtStatusText: Record<RtStatus, string> = {
   pending: '待审核', approved: '已同意', executing: '执行中', executed: '已执行', failed: '失败',

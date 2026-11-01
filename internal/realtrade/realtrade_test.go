@@ -398,7 +398,7 @@ func TestBot(t *testing.T) {
 	}
 	updates <- []map[string]any{cb(1001, "go:1")}
 	waitFor("executed", func() bool { got, _ := e.s.get(p.ID); return got.Status == StatusExecuted })
-	waitFor("push", func() bool { return find("sendMessage", "将会下单（未发送）") })
+	waitFor("push", func() bool { return find("sendMessage", "将会执行（未发送）") })
 	if got, _ := e.s.get(p.ID); got.By != "telegram:1001" {
 		t.Fatalf("by %q", got.By)
 	}

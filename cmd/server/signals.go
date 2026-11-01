@@ -70,11 +70,12 @@ func (s signalSources) AlertRule(id int64) (string, bool) {
 
 func (s signalSources) Keep(ids []string) { s.eng.KeepFor("signals", ids) }
 
-// signalWaker runs the agent for a fired subscription through the chat gate.
+// signalWaker runs the agent for a fired subscription through the chat gate: steered into the chat (a
+// new turn, or injected into the one running).
 type signalWaker struct{ gate *aigate.Gate }
 
 func (w signalWaker) Wake(chat int64, message string) error {
-	return wakeErr(w.gate.WakeChat(chat, message))
+	return wakeErr(w.gate.SteerChat(chat, aigate.RoleSignal, message))
 }
 
 func (w signalWaker) Start(title, message, instID string) (int64, error) {
@@ -89,7 +90,7 @@ func wakeErr(err error) error {
 	switch {
 	case errors.Is(err, aigate.ErrChatBusy):
 		return signals.ErrBusy
-	case errors.Is(err, aigate.ErrUnavailable):
+	case errors.Is(err, aigate.ErrUnavailable), errors.Is(err, aigate.ErrWorkerGone):
 		return signals.ErrAgentDown
 	}
 	return err

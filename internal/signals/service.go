@@ -3,9 +3,12 @@
 // subscriber means to do when it fires. Conditions are evaluated server-side on events only — the
 // engine's price broadcast (2 s), each confirmed minute and each alert — and fire on the edge from false
 // to true. A firing appends a "⚡ 信号" message to the subscriber's chat and runs the agent there with
-// its full history (internal/aigate WakeChat); a busy chat queues the wake-up until its turn ends. The
-// agent then re-checks and may call propose_trade, which still needs the owner's approval
-// (internal/realtrade): nothing here trades. docs/trading-design.md §8.
+// its full history; a chat that is answering gets it injected into the running turn (internal/aigate
+// SteerChat), and only when that fails is the wake-up queued until the turn ends. The message carries
+// the state of the AI position the subscription manages (tradeId) or of the chat's positions in its
+// instruments. The agent then re-checks and may call propose_trade, which still needs the owner's
+// approval (internal/realtrade): nothing here trades. A subscription linked to a position is cancelled
+// when the position closes (CancelForTrade). docs/trading-design.md §8.
 //
 //	active → fired      (maxFires reached)
 //	active → expired    (expiresAt passed)
@@ -40,7 +43,7 @@ CREATE TABLE IF NOT EXISTS signal_subs(id INTEGER PRIMARY KEY AUTOINCREMENT, cre
   expires_at INTEGER NOT NULL, max_fires INTEGER NOT NULL DEFAULT 1, cooldown_min INTEGER NOT NULL DEFAULT 60,
   fires INTEGER NOT NULL DEFAULT 0, last_fired_at INTEGER NOT NULL DEFAULT 0, state INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL, status_at INTEGER NOT NULL, ended_by TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '',
-  script TEXT NOT NULL DEFAULT '');
+  script TEXT NOT NULL DEFAULT '', trade_id INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS signal_subs_status ON signal_subs(status, expires_at);
 CREATE INDEX IF NOT EXISTS signal_subs_chat ON signal_subs(chat_id);
 CREATE TABLE IF NOT EXISTS signal_fires(id INTEGER PRIMARY KEY AUTOINCREMENT, sub_id INTEGER NOT NULL, ts INTEGER NOT NULL,
@@ -61,7 +64,7 @@ const (
 	StatusCancelled = "cancelled"
 
 	// fire wake-up states
-	WakeQueued  = "queued"  // the chat is busy or the agent is down: retried when a turn ends / each minute
+	WakeQueued  = "queued"  // the running turn could not take it or the agent is down: retried when a turn ends / each minute
 	WakeStarted = "started" // the agent runs (wake_chat)
 	WakeSkipped = "skipped" // daily wake-up cap reached: recorded and pushed, nobody woken
 	WakeFailed  = "failed"  // final error (chat deleted, queued too long)
@@ -93,8 +96,9 @@ var (
 
 // Waker runs the agent for a fired subscription.
 type Waker interface {
-	// Wake appends message to the chat as a signal message and runs the agent there (full history).
-	// ErrBusy / ErrAgentDown: retried later; any other error is final.
+	// Wake delivers message to the chat as a signal message and runs the agent there (full history):
+	// a new turn, or injected into the running one. ErrBusy / ErrAgentDown: retried later; any other
+	// error is final.
 	Wake(chat int64, message string) error
 	// Start runs the agent in a new chat (owner subscriptions) and returns its id.
 	Start(title, message, instID string) (int64, error)
@@ -155,6 +159,7 @@ type Subscription struct {
 	Desc        string      `json:"desc"`
 	Intent      string      `json:"intent"`
 	PlanID      int64       `json:"planId,omitempty"`
+	TradeID     int64       `json:"tradeId,omitempty"` // the AI position (its open proposal) this watch manages
 	ExpiresAt   int64       `json:"expiresAt"`
 	MaxFires    int         `json:"maxFires"`
 	CooldownMin int         `json:"cooldownMin"`
@@ -198,6 +203,7 @@ type Service struct {
 	notify   Notifier
 	onChange func(kind string, id, chat int64)
 	scripts  ScriptBackend
+	context  func(chat int64, instIDs []string, tradeID int64) string // the positions block of a wake-up (internal/realtrade)
 
 	ticks   chan struct{}
 	minutes chan int64
@@ -259,11 +265,13 @@ func New(st *store.Store, src Sources, opts Options) (*Service, error) {
 	if _, err := s.db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("signals schema: %w", err)
 	}
-	var has int // script (2026-11-01): tables made before it get the column
-	s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('signal_subs') WHERE name='script'`).Scan(&has)
-	if has == 0 {
-		if _, err := s.db.Exec(`ALTER TABLE signal_subs ADD COLUMN script TEXT NOT NULL DEFAULT ''`); err != nil {
-			return nil, fmt.Errorf("signals schema: %w", err)
+	for _, c := range []struct{ name, def string }{{"script", "TEXT NOT NULL DEFAULT ''"}, {"trade_id", "INTEGER NOT NULL DEFAULT 0"}} {
+		var has int // added 2026-11-01: tables made before get the column
+		s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('signal_subs') WHERE name=?`, c.name).Scan(&has)
+		if has == 0 {
+			if _, err := s.db.Exec(`ALTER TABLE signal_subs ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
+				return nil, fmt.Errorf("signals schema: %w", err)
+			}
 		}
 	}
 	subs, err := s.query(`status='active'`, nil, 1000)
@@ -283,6 +291,14 @@ func New(st *store.Store, src Sources, opts Options) (*Service, error) {
 
 // SetWaker wires the agent (aigate). Without it fires are recorded and queued.
 func (s *Service) SetWaker(w Waker) { s.mu.Lock(); s.waker = w; s.mu.Unlock() }
+
+// SetContext sets the source of the positions block in a wake-up message (internal/realtrade
+// WakeContext): the AI position a subscription manages, or the chat's in its instruments.
+func (s *Service) SetContext(f func(chat int64, instIDs []string, tradeID int64) string) {
+	s.mu.Lock()
+	s.context = f
+	s.mu.Unlock()
+}
 
 // SetNotifier sets the push on fire.
 func (s *Service) SetNotifier(n Notifier) { s.mu.Lock(); s.notify = n; s.mu.Unlock() }
@@ -493,6 +509,14 @@ func (s *Service) wakeMessage(sub Subscription, matched string, px float64, now 
 	if sub.Intent != "" {
 		b.WriteString("你订阅时的计划：" + sub.Intent + "\n")
 	}
+	s.mu.Lock()
+	ctxf := s.context
+	s.mu.Unlock()
+	if ctxf != nil && (sub.TradeID > 0 || sub.Kind == KindChat) {
+		if c := ctxf(sub.ChatID, sub.InstIDs, sub.TradeID); c != "" {
+			b.WriteString(c + "\n")
+		}
+	}
 	if sub.PlanID > 0 {
 		if p, ok := s.src.Plan(sub.PlanID); ok {
 			fmt.Fprintf(&b, "关联计划 #%d：%s %s · 入场 %s–%s · 止损 %s · 止盈 %s", p.ID, map[bool]string{true: "做多", false: "做空"}[p.Side == "long"],
@@ -512,12 +536,12 @@ func (s *Service) wakeMessage(sub Subscription, matched string, px float64, now 
 	} else {
 		fmt.Fprintf(&b, "这是第 %d/%d 次触发；订阅已结束。\n", sub.FireCount, sub.MaxFires)
 	}
-	b.WriteString("\n请先用最新数据重新检查，不要沿用订阅时的数字，然后三选一：\n" +
-		"1. 条件和计划仍然成立 → 用 propose_trade 提交交易提议（主人审核后才会下单）；\n" +
-		"2. 还差一步 → 用 subscribe_signal 订阅调整后的条件，并说明为什么；\n" +
+	b.WriteString("\n请先用最新数据（有仓位就先 get_positions）重新检查，不要沿用订阅时的数字，然后三选一：\n" +
+		"1. 计划仍然成立 → 用 propose_trade 提交对应的操作（开仓 / 补仓 / 减仓 / 平仓 / 调整止盈止损，主人审核后才执行）；\n" +
+		"2. 还差一步 → 用 subscribe_signal 订阅调整后的条件（管理仓位的带 tradeId），并说明为什么；\n" +
 		"3. 已经不成立 → 说明原因；若这个订阅仍有效且不再需要，用 unsubscribe_signal 取消。\n" +
-		"（这是自动触发的信号会话，主人此刻不一定在看。你只能用 propose_trade 提交待主人审核的交易提议，不能下单；" +
-		"没有足够把握就不要提议，直接说明不交易的理由。最多提议一笔。）")
+		"（这是自动触发的信号会话，主人此刻不一定在看。你只能用 propose_trade 提交待主人审核的提议，不能下单；" +
+		"没有足够把握就不要提议，直接说明理由。最多提议一笔。）")
 	return b.String()
 }
 
@@ -687,6 +711,7 @@ type SubscribeInput struct {
 	Intent       string
 	ExpiresHours float64
 	PlanID       int64
+	TradeID      int64 // the AI position this watch manages: cancelled when it closes
 	MaxFires     int
 	CooldownMin  int
 	Every        string // check interval, see Spec.Every
@@ -794,9 +819,9 @@ func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subs
 	}
 	desc := spec.Label()
 	res, err := s.db.Exec(`INSERT INTO signal_subs(created, updated, kind, chat_id, label, inst_ids, spec, descr, intent, plan_id, expires_at,
-		max_fires, cooldown_min, state, status, status_at, script) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		max_fires, cooldown_min, state, status, status_at, script, trade_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now.UnixMilli(), now.UnixMilli(), kind, in.ChatID, label, strings.Join(spec.InstIDs(), ","), string(raw), desc, in.Intent, in.PlanID,
-		now.Add(exp).UnixMilli(), maxFires, cool, int(no), StatusActive, now.UnixMilli(), scriptRaw)
+		now.Add(exp).UnixMilli(), maxFires, cool, int(no), StatusActive, now.UnixMilli(), scriptRaw, max(in.TradeID, 0))
 	if err != nil {
 		return Subscription{}, err
 	}
@@ -856,17 +881,83 @@ func (s *Service) CancelFor(chat, id int64, reason string, ownerAsked bool) (Sub
 	return s.Cancel(id, by, reason)
 }
 
+// CancelForTrade ends the active subscriptions that manage an AI position that closed (by system,
+// with reason) and returns their ids.
+func (s *Service) CancelForTrade(tradeID int64, reason string) []int64 {
+	if tradeID <= 0 {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT id FROM signal_subs WHERE status='active' AND trade_id=?`, tradeID)
+	if err != nil {
+		return nil
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	rows.Close()
+	var out []int64
+	for _, id := range ids {
+		if _, err := s.Cancel(id, "system", reason); err == nil {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// BriefFor lists, in one line, the active subscriptions that manage an AI position (tradeID), or a
+// chat's on an instrument when tradeID is 0: "#id condition（intent）".
+func (s *Service) BriefFor(chat int64, instID string, tradeID int64) string {
+	q := ListQuery{Status: StatusActive, Limit: 10}
+	if tradeID > 0 {
+		subs, err := s.query(`status='active' AND trade_id=?`, []any{tradeID}, 10)
+		if err != nil || len(subs) == 0 {
+			if chat <= 0 {
+				return ""
+			}
+		} else {
+			return brief(subs)
+		}
+	}
+	if chat <= 0 {
+		return ""
+	}
+	q.ChatID, q.InstID = chat, instID
+	subs, err := s.List(q)
+	if err != nil {
+		return ""
+	}
+	return brief(subs)
+}
+
+func brief(subs []Subscription) string {
+	parts := make([]string, 0, len(subs))
+	for _, x := range subs {
+		p := fmt.Sprintf("#%d %s", x.ID, x.Desc)
+		if x.TradeID > 0 {
+			p += fmt.Sprintf("（仓位 #%d）", x.TradeID)
+		}
+		if x.Intent != "" {
+			p += "（" + clip(x.Intent, 80) + "）"
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, "；")
+}
+
 // ---------- reads ----------
 
 const subCols = `id, created, updated, kind, chat_id, label, spec, descr, intent, plan_id, expires_at, max_fires, cooldown_min,
-  fires, last_fired_at, state, status, status_at, ended_by, reason, script`
+  fires, last_fired_at, state, status, status_at, ended_by, reason, script, trade_id`
 
 func scanSub(row interface{ Scan(...any) error }) (Subscription, error) {
 	var x Subscription
 	var raw, script string
 	var st int
 	err := row.Scan(&x.ID, &x.Created, &x.Updated, &x.Kind, &x.ChatID, &x.Label, &raw, &x.Desc, &x.Intent, &x.PlanID, &x.ExpiresAt,
-		&x.MaxFires, &x.CooldownMin, &x.FireCount, &x.LastFiredAt, &st, &x.Status, &x.StatusAt, &x.EndedBy, &x.Reason, &script)
+		&x.MaxFires, &x.CooldownMin, &x.FireCount, &x.LastFiredAt, &st, &x.Status, &x.StatusAt, &x.EndedBy, &x.Reason, &script, &x.TradeID)
 	if err != nil {
 		return x, err
 	}

@@ -179,3 +179,64 @@ func TestWakeChat(t *testing.T) {
 		t.Fatal("woke a chat that does not exist")
 	}
 }
+
+// A steer reaches a chat at once: an idle chat starts a turn with it (stored with its role); a chat
+// mid-answer gets it injected into the running turn (the worker is told which call, the message is
+// stored and streamed then); a turn that cannot take it any more answers ErrChatBusy so the caller
+// keeps it queued.
+func TestSteerChat(t *testing.T) {
+	e := newEnv(t, Options{})
+	e.g.SetCredential(KindAPIKey, testKey)
+	e.run(t)
+	w := e.dial(t, true)
+	waitFor(t, "available", e.g.Available)
+	if err := e.g.SteerChat(1, RoleUser, "x"); err == nil {
+		t.Fatal("a steer as the owner")
+	}
+	id, err := e.g.StartChat(ChatInput{Message: "BTC 开多"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := w.recv()
+	_, events := e.g.run(id).subscribe()
+	steered := make(chan error, 1)
+	go func() { steered <- e.g.SteerChat(id, RoleTrade, "✅ #3 已成交 · 开仓做多 BTC") }()
+	m := w.recv()
+	if m["type"] != "steer" || m["callId"] != turn["id"] || m["message"] != "✅ #3 已成交 · 开仓做多 BTC" {
+		t.Fatalf("steer msg %v (turn %v)", m, turn["id"])
+	}
+	w.send(map[string]any{"type": "result", "id": m["id"], "result": map[string]any{"ok": true}})
+	if err := <-steered; err != nil {
+		t.Fatalf("steer into a running turn: %v", err)
+	}
+	if ev := <-events; !strings.Contains(string(ev), `"type":"steer"`) || !strings.Contains(string(ev), `"role":"trade"`) {
+		t.Fatalf("stream event %s", ev)
+	}
+	// the turn is finishing: the worker refuses, the caller retries later
+	go func() { steered <- e.g.SteerChat(id, RoleSignal, "⚡ 信号 #2 触发") }()
+	m = w.recv()
+	w.send(map[string]any{"type": "error", "id": m["id"], "error": "turn is ending"})
+	if err := <-steered; !errors.Is(err, ErrChatBusy) {
+		t.Fatalf("refused steer: %v", err)
+	}
+	w.send(map[string]any{"type": "result", "id": turn["id"], "result": map[string]any{"text": "已核对", "sessionId": "s5"}})
+	waitFor(t, "turn ended", func() bool { return e.g.run(id) == nil })
+	// idle: a new turn in the same session, the message stored with its role
+	if err := e.g.SteerChat(id, RoleSignal, "⚡ 信号 #2 触发：BTC 价格上破 103000"); err != nil {
+		t.Fatal(err)
+	}
+	m = w.recv()
+	if m["type"] != "chat" || m["sessionId"] != "s5" || !strings.HasPrefix(m["message"].(string), "⚡ 信号 #2") {
+		t.Fatalf("new turn %v", m)
+	}
+	w.send(map[string]any{"type": "result", "id": m["id"], "result": map[string]any{"text": "已减仓提议", "sessionId": "s5"}})
+	waitFor(t, "second turn ended", func() bool { return e.g.run(id) == nil })
+	c, _ := e.g.ChatByID(id)
+	roles := []string{}
+	for _, m := range c.Messages {
+		roles = append(roles, m.Role)
+	}
+	if strings.Join(roles, ",") != "user,trade,assistant,signal,assistant" || c.Interrupted {
+		t.Fatalf("messages %v", roles)
+	}
+}

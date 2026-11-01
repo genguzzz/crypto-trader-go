@@ -141,8 +141,9 @@ func main() {
 		log.Printf("okx account: disabled (needs OKX_API_KEY, OKX_API_SECRET, OKX_API_PASSPHRASE and OKX_PRIVATE_PROXY)")
 	}
 
-	// Real trades: only proposals the owner approves (market + TP/SL, isolated margin), sent only when
-	// CTG_TRADE_MODE is exactly "live"; otherwise built, validated and recorded (dry run).
+	// Real trades: only proposals the owner approves (open / add / reduce / close / adjust TP/SL, market or
+	// limit, isolated or cross), sent only when CTG_TRADE_MODE is exactly "live"; otherwise built,
+	// validated, recorded and simulated (dry run).
 	orders, err := okxorder.New(okxorder.ModeFromEnv(), acctCfg)
 	if err != nil {
 		log.Fatal(err)
@@ -230,7 +231,18 @@ func main() {
 	}
 	sig.SetWaker(signalWaker{gate})
 	sig.SetScripts(signalScripts{Host: host, eng: eng})
-	gate.SetOnChatDone(sig.ChatDone)
+	sig.SetContext(rt.WakeContext) // a wake-up carries the state of the position it manages
+	// after an approved proposal ran (and when its position closed) its chat is told at once: a new
+	// turn, or injected into the running one; queued only when that fails
+	rt.SetSteerer(func(chat int64, message string) error {
+		err := gate.SteerChat(chat, aigate.RoleTrade, message)
+		if errors.Is(err, aigate.ErrChatBusy) || errors.Is(err, aigate.ErrUnavailable) || errors.Is(err, aigate.ErrWorkerGone) {
+			return realtrade.ErrSteerLater
+		}
+		return err
+	})
+	rt.SetSignals(sig.BriefFor, sig.CancelForTrade)
+	gate.SetOnChatDone(func(chat int64) { sig.ChatDone(chat); rt.ChatDone(chat) })
 	gate.SetOnPlan(sig.LinkPlan)
 	if tradeBot != nil {
 		sig.SetNotifier(tradeBot.Note)

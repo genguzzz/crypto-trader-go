@@ -82,16 +82,16 @@ func (alertKind) Match(d TriggerDef, sig Signal) bool {
 }
 
 // promptFooter is appended to every signal prompt: the run is unattended and can only propose.
-const promptFooter = "\n\n（这是自动触发的信号会话，主人此刻不一定在看。你只能用 propose_trade 提交待主人审核的交易提议，不能下单；" +
-	"没有足够把握就不要提议，直接说明不交易的理由。最多提议一笔。）"
+const promptFooter = "\n\n（这是自动触发的信号会话，主人此刻不一定在看。你只能用 propose_trade 提交待主人审核的提议，不能下单；" +
+	"没有足够把握就不要提议，直接说明理由。最多提议一笔。）"
 
 var defaultTriggers = []TriggerDef{
 	{ID: "scan", Kind: "schedule", Label: "定时扫描", EveryMin: 240, CooldownMin: 60,
 		Prompt: "定时扫描（{{time}}）：看一下大盘（BTC、ETH）和监控池，找出此刻风险收益最好的一个永续合约交易机会" +
-			"（市价入场 + 止损 + 止盈，逐仓），做完整的多空分析。"},
+			"，做完整的多空分析；已有 AI 仓位的先看要不要补仓、减仓、平仓或调整止盈止损。"},
 	{ID: "alerts", Kind: "alert", Label: "告警信号", CooldownMin: 60,
 		Prompt: "告警触发（{{time}}）：规则「{{rule}}」在 {{instId}} 触发：{{message}}。分析这个合约当前是否有值得做的交易" +
-			"（市价入场 + 止损 + 止盈，逐仓），给出多空两方面的理由。"},
+			"（已有仓位就按仓位管理：补仓、减仓、平仓或调整止盈止损），给出多空两方面的理由。"},
 }
 
 const (

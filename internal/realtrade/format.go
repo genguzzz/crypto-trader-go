@@ -21,6 +21,14 @@ func sideText(side string) string {
 	return "做多"
 }
 
+// posText names a position: "BTC 多单".
+func posText(inst, side string) string {
+	if side == "short" {
+		return coin(inst) + " 空单"
+	}
+	return coin(inst) + " 多单"
+}
+
 func modeText(mode string) string {
 	if mode == string(okxorder.Live) {
 		return "[实盘]"
@@ -34,8 +42,53 @@ func closeText(kind string) string {
 		return "止盈平仓"
 	case "sl":
 		return "止损平仓"
+	case "manual":
+		return "主动平仓"
+	case "unfilled":
+		return "限价单未成交"
 	}
 	return "已平仓"
+}
+
+var kindTexts = map[string]string{KindOpen: "开仓", KindAdd: "补仓", KindReduce: "减仓", KindClose: "平仓", KindAdjust: "调整止盈止损"}
+
+func kindText(kind string) string {
+	if t := kindTexts[kind]; t != "" {
+		return t
+	}
+	return "开仓"
+}
+
+func mgnText(mode string) string {
+	if mode == okxorder.Cross {
+		return "全仓"
+	}
+	return "逐仓"
+}
+
+// ordText is the order type: 市价, or 限价 @price.
+func ordText(p Proposal) string {
+	if p.OrdType == okxorder.Limit {
+		return "限价 @" + okxorder.FormatPx(p.Px)
+	}
+	return "市价"
+}
+
+// orderState is a limit order's state on OKX (empty for a market order or before execution).
+func orderState(p Proposal) string {
+	switch p.OrdState {
+	case OrdLive:
+		return fmt.Sprintf("挂单中 · %s 前未成交自动撤单", time.UnixMilli(p.OrderUntil).In(tz8).Format("01-02 15:04"))
+	case OrdPartial:
+		return fmt.Sprintf("挂单中 · 已成交 %s/%s 张", fmtNum(p.Filled), fmtNum(p.Contracts))
+	case OrdCanceled:
+		return fmt.Sprintf("已撤单 · 成交 %s/%s 张", fmtNum(p.Filled), fmtNum(p.Contracts))
+	case OrdFilled:
+		if p.OrdType == okxorder.Limit {
+			return fmt.Sprintf("已成交 %s 张 @%s", fmtNum(p.Filled), okxorder.FormatPx(p.FillPx))
+		}
+	}
+	return ""
 }
 
 func coin(inst string) string { return strings.Split(inst, "-")[0] }
@@ -53,26 +106,81 @@ func sourceText(p Proposal) string {
 	return "AI 对话"
 }
 
-// summary is one line: side, coin, leverage, margin, exits.
+// summary is one line: kind, side, coin, the order and its exits.
 func summary(p Proposal) string {
-	return fmt.Sprintf("%s %s %d× 保证金 %s U · 参考 %s · 止损 %s · 止盈 %s", sideText(p.Side), coin(p.InstID), p.Leverage,
+	head := fmt.Sprintf("%s %s %s · %s", kindText(p.Kind), sideText(p.Side), coin(p.InstID), ordText(p))
+	switch p.Kind {
+	case KindReduce:
+		return fmt.Sprintf("%s · %.0f%%（%s 张）· 参考 %s", head, p.Fraction*100, fmtNum(p.Contracts), okxorder.FormatPx(p.RefPx))
+	case KindClose:
+		return fmt.Sprintf("%s · 全部 %s 张 · 参考 %s", head, fmtNum(p.Contracts), okxorder.FormatPx(p.RefPx))
+	case KindAdjust:
+		return fmt.Sprintf("%s %s %s · 止损 %s · 止盈 %s", kindText(p.Kind), sideText(p.Side), coin(p.InstID), okxorder.FormatPx(p.SL), okxorder.FormatPx(p.TP))
+	}
+	return fmt.Sprintf("%s · %d× %s 保证金 %s U · 参考 %s · 止损 %s · 止盈 %s", head, p.Leverage, mgnText(p.MarginMode),
 		fmtNum(p.MarginUSDT), okxorder.FormatPx(p.RefPx), okxorder.FormatPx(p.SL), okxorder.FormatPx(p.TP))
+}
+
+// confirmText is the order the owner is asked to confirm, in one sentence.
+func confirmText(p Proposal) string {
+	switch p.Kind {
+	case KindReduce:
+		return fmt.Sprintf("确认以%s减仓 %s %s %.0f%%（%s 张）？", ordText(p), coin(p.InstID), sideText(p.Side), p.Fraction*100, fmtNum(p.Contracts))
+	case KindClose:
+		return fmt.Sprintf("确认以%s平掉 %s %s 全部 %s 张？", ordText(p), coin(p.InstID), sideText(p.Side), fmtNum(p.Contracts))
+	case KindAdjust:
+		return fmt.Sprintf("确认把 %s %s 的止损改为 %s、止盈改为 %s？", coin(p.InstID), sideText(p.Side), okxorder.FormatPx(p.SL), okxorder.FormatPx(p.TP))
+	}
+	return fmt.Sprintf("确认以%s%s%s %s，保证金 %s U，%d× %s？", ordText(p), kindText(p.Kind), sideText(p.Side), coin(p.InstID), fmtNum(p.MarginUSDT),
+		p.Leverage, mgnText(p.MarginMode))
 }
 
 // cardLines are the proposal as shown in the trade bot's message (plain text; the bot escapes it).
 func cardLines(p Proposal, now time.Time) []string {
 	sign := map[bool]string{true: "+", false: "−"}
 	long := p.Side == "long"
-	lines := []string{
-		fmt.Sprintf("%s %s %s · %d× 逐仓", modeText(p.Mode), sideText(p.Side), coin(p.InstID), p.Leverage),
-		fmt.Sprintf("保证金 %s U · %s 张（名义 ≈ %.0f U）", fmtNum(p.MarginUSDT), fmtNum(p.Contracts), p.NotionalUSDT),
-		fmt.Sprintf("入场 市价（参考 %s）", okxorder.FormatPx(p.RefPx)),
-		fmt.Sprintf("止损 %s（%s%.2f%%）", okxorder.FormatPx(p.SL), sign[!long], p.SLPct),
-		fmt.Sprintf("止盈 %s（%s%.2f%%）· 盈亏比 %.2f", okxorder.FormatPx(p.TP), sign[long], p.TPPct, p.RR),
-		"理由：" + clip(p.Rationale, 600),
-		"失效：" + clip(p.Invalidation, 200),
-		"来源：" + sourceText(p),
+	lines := []string{fmt.Sprintf("%s %s · %s %s · %d× %s", modeText(p.Mode), kindText(p.Kind), sideText(p.Side), coin(p.InstID), p.Leverage, mgnText(p.MarginMode))}
+	entry := fmt.Sprintf("入场 市价（参考 %s）", okxorder.FormatPx(p.RefPx))
+	if p.OrdType == okxorder.Limit {
+		entry = fmt.Sprintf("入场 限价 %s（现价 %s，挂单 %d 分钟）", okxorder.FormatPx(p.Px), okxorder.FormatPx(p.RefPx), p.OrderMin)
 	}
+	switch p.Kind {
+	case KindOpen, KindAdd:
+		lines = append(lines, fmt.Sprintf("保证金 %s U · %s 张（名义 ≈ %.0f U）", fmtNum(p.MarginUSDT), fmtNum(p.Contracts), p.NotionalUSDT), entry)
+		if p.Kind == KindAdd {
+			lines = append(lines, fmt.Sprintf("现有仓位 %s 张 @%s → 补后 %s 张 · 均价 ≈ %s", fmtNum(p.PosContracts), okxorder.FormatPx(p.PosAvgPx),
+				fmtNum(p.PosContracts+p.Contracts), okxorder.FormatPx(p.NewAvgPx)))
+		}
+	case KindReduce:
+		lines = append(lines, fmt.Sprintf("减仓 %.0f%% = %s 张（持仓 %s 张）· %s（参考 %s）", p.Fraction*100, fmtNum(p.Contracts), fmtNum(p.PosContracts),
+			ordText(p), okxorder.FormatPx(p.RefPx)))
+	case KindClose:
+		lines = append(lines, fmt.Sprintf("平仓 全部 %s 张 · %s（参考 %s）", fmtNum(p.Contracts), ordText(p), okxorder.FormatPx(p.RefPx)))
+	case KindAdjust:
+		lines = append(lines, fmt.Sprintf("仓位 %s 张 · 现价 %s", fmtNum(p.PosContracts), okxorder.FormatPx(p.RefPx)))
+	}
+	if p.SL > 0 && p.TP > 0 {
+		lines = append(lines, fmt.Sprintf("止损 %s（%s%.2f%%）", okxorder.FormatPx(p.SL), sign[!long], p.SLPct))
+		tp := fmt.Sprintf("止盈 %s（%s%.2f%%）", okxorder.FormatPx(p.TP), sign[long], p.TPPct)
+		if p.Kind != KindAdjust {
+			tp += fmt.Sprintf(" · 盈亏比 %.2f", p.RR)
+		}
+		lines = append(lines, tp)
+	}
+	if p.LiqPx > 0 {
+		lines = append(lines, "预估强平 ≈ "+okxorder.FormatPx(p.LiqPx))
+	}
+	if p.TPSL != "" {
+		lines = append(lines, "止盈止损："+p.TPSL)
+	}
+	if p.Note != "" {
+		lines = append(lines, "注意："+p.Note)
+	}
+	lines = append(lines, "理由："+clip(p.Rationale, 600))
+	if p.Invalidation != "" {
+		lines = append(lines, "失效："+clip(p.Invalidation, 200))
+	}
+	lines = append(lines, "来源："+sourceText(p))
 	switch {
 	case p.Status == StatusPending:
 		left := time.UnixMilli(p.ExpiresAt).Sub(now).Round(time.Minute)
@@ -81,6 +189,9 @@ func cardLines(p Proposal, now time.Time) []string {
 		st := "状态：" + statusText[p.Status]
 		if p.Status == StatusExecuted {
 			st = fmt.Sprintf("状态：%s 已执行 @≈%s", modeText(p.Mode), okxorder.FormatPx(p.ExecPx))
+			if os := orderState(p); os != "" {
+				st = fmt.Sprintf("状态：%s %s", modeText(p.Mode), os)
+			}
 			if p.OrdID != "" {
 				st += " · ordId " + p.OrdID
 			}
@@ -115,7 +226,7 @@ func byText(p Proposal) string {
 
 // eventLine is the short push for a state change (the card itself is edited in place).
 func eventLine(kind string, p Proposal) string {
-	head := fmt.Sprintf("%s #%d %s %s", modeText(p.Mode), p.ID, sideText(p.Side), coin(p.InstID))
+	head := fmt.Sprintf("%s #%d %s %s", modeText(p.Mode), p.ID, kindText(p.Kind), posText(p.InstID, p.Side))
 	switch kind {
 	case StatusApproved:
 		return head + " 已同意（" + byText(p) + "），正在复核价格并执行…"
@@ -128,14 +239,30 @@ func eventLine(kind string, p Proposal) string {
 	case StatusFailed:
 		return head + " 下单失败：" + clip(p.Error, 300)
 	case StatusExecuted:
-		if p.Mode == string(okxorder.Live) {
-			return fmt.Sprintf("%s 已成交：市价 %s 张 @≈%s，止损 %s / 止盈 %s 已挂 · ordId %s", head, fmtNum(p.Contracts),
-				okxorder.FormatPx(p.ExecPx), okxorder.FormatPx(p.SL), okxorder.FormatPx(p.TP), p.OrdID)
+		did := fmt.Sprintf("%s %s 张 @≈%s", ordText(p), fmtNum(p.Contracts), okxorder.FormatPx(p.ExecPx))
+		switch {
+		case p.Kind == KindAdjust:
+			did = p.TPSL
+		case p.OrdType == okxorder.Limit:
+			did = fmt.Sprintf("%s %s 张已挂出（%s）", ordText(p), fmtNum(p.Contracts), orderState(p))
+		case p.SL > 0 && p.TP > 0:
+			did += fmt.Sprintf("，止损 %s / 止盈 %s", okxorder.FormatPx(p.SL), okxorder.FormatPx(p.TP))
 		}
-		return fmt.Sprintf("%s 将会下单（未发送）：市价 %s 张 @≈%s，止损 %s / 止盈 %s，逐仓 %d×", head, fmtNum(p.Contracts),
-			okxorder.FormatPx(p.ExecPx), okxorder.FormatPx(p.SL), okxorder.FormatPx(p.TP), p.Leverage)
+		if p.Mode == string(okxorder.Live) {
+			if p.OrdID != "" {
+				did += " · ordId " + p.OrdID
+			}
+			return head + " 已执行：" + did
+		}
+		return head + " 将会执行（未发送）：" + did
+	case OrdFilled:
+		return fmt.Sprintf("%s 限价单已成交 %s 张 @%s", head, fmtNum(p.Filled), okxorder.FormatPx(p.FillPx))
+	case OrdCanceled:
+		return fmt.Sprintf("%s 限价单已撤单（成交 %s/%s 张）", head, fmtNum(p.Filled), fmtNum(p.Contracts))
+	case "partial":
+		return fmt.Sprintf("%s 限价单部分成交 %s/%s 张", head, fmtNum(p.Filled), fmtNum(p.Contracts))
 	case "closed":
-		return fmt.Sprintf("%s %s %s · %+.2f U", head, closeText(p.CloseKind), okxorder.FormatPx(p.ClosePx), p.PnlUSDT)
+		return fmt.Sprintf("%s 仓位%s %s · %+.2f U", head, closeText(p.CloseKind), okxorder.FormatPx(p.ClosePx), p.PnlUSDT)
 	}
 	return head + " " + kind
 }

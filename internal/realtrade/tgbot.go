@@ -18,8 +18,9 @@ import (
 )
 
 // Bot is the dedicated Telegram trade bot (CTG_TRADE_TG_TOKEN, CTG_TRADE_TG_CHAT): one message per
-// proposal with ✅ 同意 / ❌ 拒绝 (同意 asks to confirm first) and a 🔍 查看 link to the K-line with
-// the levels, edited in place as the proposal moves on, plus a short push for every trade event.
+// proposal (开仓 / 补仓 / 减仓 / 平仓 / 调整止盈止损, market or limit, isolated or cross) with ✅ 同意 / ❌ 拒绝
+// (同意 asks to confirm the exact action first) and a 🔍 查看 link to the K-line with the levels, edited
+// in place as the proposal and its order move on, plus a short push for every trade event.
 // Only the configured chat is served, and only the owner (the chat id is his user id) can answer.
 // Messages are queued in memory and retried; a pending proposal whose card was never sent is sent
 // again after a restart.
@@ -238,7 +239,7 @@ func (b *Bot) cardParams(p Proposal, confirming bool) map[string]any {
 	id := strconv.FormatInt(p.ID, 10)
 	if p.Status == StatusPending {
 		if confirming {
-			text += "\n\n<b>" + html.EscapeString(fmt.Sprintf("确认以市价%s %s，保证金 %s U，%d× 逐仓？", sideText(p.Side), coin(p.InstID), fmtNum(p.MarginUSDT), p.Leverage)) + "</b>"
+			text += "\n\n<b>" + html.EscapeString(confirmText(p)) + "</b>"
 			rows = append(rows, []tgButton{{Text: "✅ 确认同意", Data: "go:" + id}, {Text: "↩️ 返回", Data: "back:" + id}})
 		} else {
 			rows = append(rows, []tgButton{{Text: "✅ 同意", Data: "ok:" + id}, {Text: "❌ 拒绝", Data: "no:" + id}})

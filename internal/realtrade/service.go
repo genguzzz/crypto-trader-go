@@ -3,7 +3,6 @@ package realtrade
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"crypto-trader-go/internal/okxacct"
 	"crypto-trader-go/internal/okxorder"
@@ -25,16 +23,20 @@ import (
 type Limits struct {
 	okxorder.Limits
 	MaxOpen       int     `json:"maxOpen"`       // AI positions open (or on their way) at once
-	DailyLossUSDT float64 `json:"dailyLossUsdt"` // realised loss of AI positions today (UTC+8) that stops new ones
-	MaxDriftPct   float64 `json:"maxDriftPct"`   // price move between proposal and approval, %
+	DailyLossUSDT float64 `json:"dailyLossUsdt"` // realised loss of AI positions today (UTC+8) that stops new opens and adds
+	MaxDriftPct   float64 `json:"maxDriftPct"`   // price move between proposal and approval of a market open / add, %
 	ExpiryMin     int     `json:"expiryMin"`     // default time to approve
 	MaxPending    int     `json:"maxPending"`    // proposals waiting at once
+	MaxAdds       int     `json:"maxAdds"`       // adds per position
+	LimitMaxMin   int     `json:"limitMaxMin"`   // the longest a limit order rests before the server cancels it, minutes
 }
 
-var DefaultLimits = Limits{Limits: okxorder.DefaultLimits, MaxOpen: 2, DailyLossUSDT: 50, MaxDriftPct: 1, ExpiryMin: 15, MaxPending: 5}
+var DefaultLimits = Limits{Limits: okxorder.DefaultLimits, MaxOpen: 2, DailyLossUSDT: 50, MaxDriftPct: 1, ExpiryMin: 15, MaxPending: 5,
+	MaxAdds: 2, LimitMaxMin: 1440}
 
-// LimitsFromEnv reads CTG_TRADE_MAX_LEVERAGE, CTG_TRADE_MAX_MARGIN, CTG_TRADE_MIN_RR, CTG_TRADE_MAX_OPEN,
-// CTG_TRADE_DAILY_LOSS, CTG_TRADE_MAX_DRIFT_PCT and CTG_TRADE_EXPIRY_MIN; unset or invalid keeps the default.
+// LimitsFromEnv reads CTG_TRADE_MIN_LEVERAGE, CTG_TRADE_MAX_LEVERAGE, CTG_TRADE_MIN_MARGIN, CTG_TRADE_MAX_MARGIN,
+// CTG_TRADE_MIN_RR, CTG_TRADE_MAX_OPEN, CTG_TRADE_DAILY_LOSS, CTG_TRADE_MAX_DRIFT_PCT, CTG_TRADE_EXPIRY_MIN,
+// CTG_TRADE_MAX_ADDS, CTG_TRADE_LIMIT_MAX_MIN (≤ 1440) and CTG_TRADE_MAX_LIMIT_PCT; unset or invalid keeps the default.
 func LimitsFromEnv() Limits {
 	l := DefaultLimits
 	f := func(k string, dst *float64) {
@@ -56,6 +58,10 @@ func LimitsFromEnv() Limits {
 	f("CTG_TRADE_DAILY_LOSS", &l.DailyLossUSDT)
 	f("CTG_TRADE_MAX_DRIFT_PCT", &l.MaxDriftPct)
 	i("CTG_TRADE_EXPIRY_MIN", &l.ExpiryMin)
+	i("CTG_TRADE_MAX_ADDS", &l.MaxAdds)
+	i("CTG_TRADE_LIMIT_MAX_MIN", &l.LimitMaxMin)
+	l.LimitMaxMin = min(l.LimitMaxMin, 1440)
+	f("CTG_TRADE_MAX_LIMIT_PCT", &l.MaxLimitPct)
 	return l
 }
 
@@ -67,7 +73,7 @@ type Account interface {
 }
 
 // Notifier receives every proposal event (proposed, approved, rejected, expired, invalidated, executed,
-// failed, closed). It must not block.
+// failed, filled / canceled (a limit order), closed). It must not block.
 type Notifier interface {
 	ProposalEvent(kind string, p Proposal)
 }
@@ -80,8 +86,11 @@ type Options struct {
 	Spec  func(instID string) (okxorder.Spec, bool)
 	// PublicURL is the web origin for 🔍 links, e.g. https://ctg.gugenzzz.top.
 	PublicURL string
-	Now       func() time.Time
-	Logf      func(format string, args ...any)
+	// Settle is how long after a live market execution the chat is told (the fill and its TP/SL then show
+	// in the account snapshot); 0 = 3 s, negative = at once.
+	Settle time.Duration
+	Now    func() time.Time
+	Logf   func(format string, args ...any)
 }
 
 const (
@@ -94,6 +103,9 @@ const (
 	execTimeout   = 25 * time.Second
 	closeSettle   = time.Minute // a live position may not show in the snapshot right after the fill
 	closeWaitHist = 5 * time.Minute
+	minOrderMin   = 5  // a limit order rests at least this long
+	defOrderMin   = 60 // and this long unless the proposal says
+	lostOrder     = 10 * time.Minute
 )
 
 var tz8 = time.FixedZone("UTC+8", 8*3600)
@@ -119,6 +131,10 @@ type Service struct {
 	triggers *triggers
 	bot      *Bot
 	signalOf func(chat int64) (label string, ok bool)
+	steerer  Steerer
+	sigBrief func(chat int64, instID string, posID int64) string // the signals linked to a position (internal/signals)
+	onClosed func(posID int64, reason string) []int64            // a position closed: cancel its signals, return their ids
+	steerMu  sync.Mutex                                          // one delivery pass at a time
 }
 
 // New creates the tables and settles proposals a restart interrupted: approved ones are invalidated
@@ -139,12 +155,22 @@ func New(st *store.Store, orders okxorder.Client, opts Options) (*Service, error
 	if opts.Limits.MaxOpen == 0 {
 		opts.Limits = DefaultLimits
 	}
+	if opts.Limits.MaxAdds <= 0 {
+		opts.Limits.MaxAdds = DefaultLimits.MaxAdds
+	}
+	if opts.Limits.LimitMaxMin < minOrderMin {
+		opts.Limits.LimitMaxMin = DefaultLimits.LimitMaxMin
+	}
+	if opts.Settle == 0 {
+		opts.Settle = 3 * time.Second
+	}
 	opts.Limits.Limits = opts.Limits.Limits.WithDefaults()
 	opts.PublicURL = strings.TrimRight(opts.PublicURL, "/")
 	s := &Service{st: st, db: st.DB, orders: orders, opts: opts, now: opts.Now, logf: opts.Logf, missing: map[int64]time.Time{}}
-	if _, err := s.db.Exec(schema); err != nil {
+	if err := migrate(s.db); err != nil {
 		return nil, fmt.Errorf("realtrade schema: %w", err)
 	}
+	s.db.Exec(`UPDATE trade_steers SET state='queued' WHERE state='sending'`) // a restart mid-delivery
 	s.triggers = newTriggers(s)
 	nothing := "服务重启时尚未发送，未下单"
 	if _, err := s.transitionAll(StatusApproved, StatusInvalidated, nothing); err != nil {
@@ -294,163 +320,6 @@ func (s *Service) Link(p Proposal) string {
 	return s.opts.PublicURL + "/go/proposal/" + strconv.FormatInt(p.ID, 10)
 }
 
-// ---------- creation ----------
-
-// ProposeInput is what the agent submits (propose_trade).
-type ProposeInput struct {
-	ChatID       int64
-	InstID       string
-	Side         string
-	MarginUSDT   float64
-	Leverage     int
-	SL, TP       float64
-	Rationale    string
-	Invalidation string
-	ExpiresMin   int
-}
-
-// NormalizeInst accepts "BTC", "btc-usdt" or "BTC-USDT-SWAP".
-func NormalizeInst(s string) string {
-	s = strings.ToUpper(strings.TrimSpace(s))
-	switch {
-	case s == "":
-		return ""
-	case strings.HasSuffix(s, "-USDT-SWAP"):
-		return s
-	case strings.HasSuffix(s, "-USDT"):
-		return s + "-SWAP"
-	case !strings.Contains(s, "-"):
-		return s + "-USDT-SWAP"
-	}
-	return s
-}
-
-// Propose validates the trade against the current price and every cap and stores it as pending. The
-// source is the chat's trigger (signal / schedule) when the chat was started by one, else chat.
-func (s *Service) Propose(ctx context.Context, in ProposeInput) (Proposal, error) {
-	in.InstID = NormalizeInst(in.InstID)
-	in.Side = strings.ToLower(strings.TrimSpace(in.Side))
-	in.Rationale, in.Invalidation = strings.TrimSpace(in.Rationale), strings.TrimSpace(in.Invalidation)
-	switch {
-	case utf8.RuneCountInString(in.Rationale) < 10:
-		return Proposal{}, errors.New("rationale is required (why this trade, why now)")
-	case utf8.RuneCountInString(in.Rationale) > 2000:
-		return Proposal{}, errors.New("rationale is too long (≤ 2000 characters)")
-	case utf8.RuneCountInString(in.Invalidation) < 4:
-		return Proposal{}, errors.New("invalidation is required (what would prove the idea wrong)")
-	case utf8.RuneCountInString(in.Invalidation) > 500:
-		return Proposal{}, errors.New("invalidation is too long (≤ 500 characters)")
-	}
-	px, err := s.freshQuote(in.InstID)
-	if err != nil {
-		return Proposal{}, err
-	}
-	spec, ok := s.opts.Spec(in.InstID)
-	if !ok {
-		return Proposal{}, fmt.Errorf("unknown instrument %s", in.InstID)
-	}
-	o, err := okxorder.Build(s.intent(in.InstID, in.Side, in.MarginUSDT, in.Leverage, in.SL, in.TP, ""), spec, px, okxorder.LongShortMode, s.opts.Limits.Limits)
-	if err != nil {
-		return Proposal{}, err
-	}
-	if err := s.policy(ctx, in.InstID, 0, true); err != nil {
-		return Proposal{}, err
-	}
-	source, label := SourceChat, ""
-	if kind, l, ok := s.triggerRun(in.ChatID); ok {
-		source, label = kind, l
-	} else if l, ok := s.signalSource(in.ChatID); ok {
-		source, label = SourceSignal, l
-	}
-	exp := time.Duration(s.opts.Limits.ExpiryMin) * time.Minute
-	if in.ExpiresMin > 0 {
-		exp = time.Duration(in.ExpiresMin) * time.Minute
-	}
-	exp = min(max(exp, minExpiry), maxExpiry)
-	now := s.now()
-	z := o.Sizing()
-	res, err := s.db.Exec(`INSERT INTO trade_proposals(created, updated, source, trigger_label, chat_id, inst_id, side, margin, leverage,
-		contracts, notional, ref_px, sl, tp, rationale, invalidation, expires_at, status, status_at, mode) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		now.UnixMilli(), now.UnixMilli(), source, label, in.ChatID, in.InstID, in.Side, in.MarginUSDT, in.Leverage, z.Contracts, z.NotionalUSDT,
-		px, in.SL, in.TP, in.Rationale, in.Invalidation, now.Add(exp).UnixMilli(), StatusPending, now.UnixMilli(), string(s.Mode()))
-	if err != nil {
-		return Proposal{}, err
-	}
-	id, _ := res.LastInsertId()
-	p, err := s.get(id)
-	if err != nil {
-		return p, err
-	}
-	s.audit(id, "created", fmt.Sprintf("%s · %s", sourceText(p), summary(p)), sourceText(p))
-	s.emit("proposed", id)
-	return p, nil
-}
-
-func (s *Service) intent(inst, side string, margin float64, lever int, sl, tp float64, clientID string) okxorder.Intent {
-	return okxorder.Intent{InstID: inst, Side: side, MarginUSDT: margin, Leverage: lever, SL: sl, TP: tp, ClientID: clientID}
-}
-
-func (s *Service) freshQuote(inst string) (float64, error) {
-	px, ts, ok := s.opts.Quote(inst)
-	if !ok || !(px > 0) {
-		return 0, fmt.Errorf("no current price for %s", inst)
-	}
-	if ts <= 0 {
-		return 0, fmt.Errorf("the price time of %s is unknown", inst)
-	}
-	if age := s.now().Sub(time.UnixMilli(ts)); age > quoteMaxAge {
-		return 0, fmt.Errorf("the price of %s is %s old", inst, age.Round(time.Second))
-	}
-	return px, nil
-}
-
-// policy checks the account-level caps: no other open proposal or AI position in the instrument, no
-// position of the owner's in it (proposals only open new positions), at most MaxOpen AI positions,
-// the daily loss stop, and (creating) at most MaxPending waiting proposals. self is excluded.
-func (s *Service) policy(ctx context.Context, inst string, self int64, creating bool) error {
-	mode := string(s.Mode())
-	var n int
-	var other int64
-	s.db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(id),0) FROM trade_proposals WHERE inst_id=? AND id<>? AND
-		(status IN ('pending','approved','executing') OR (status='executed' AND closed_at=0 AND mode=?))`, inst, self, mode).Scan(&n, &other)
-	if n > 0 {
-		return fmt.Errorf("proposal #%d for %s is still open; one at a time per instrument", other, inst)
-	}
-	s.db.QueryRow(`SELECT COUNT(*) FROM trade_proposals WHERE id<>? AND mode=? AND
-		(status IN ('approved','executing') OR (status='executed' AND closed_at=0))`, self, mode).Scan(&n)
-	if n >= s.opts.Limits.MaxOpen {
-		return fmt.Errorf("%d AI positions are open; the cap is %d", n, s.opts.Limits.MaxOpen)
-	}
-	if creating {
-		s.db.QueryRow(`SELECT COUNT(*) FROM trade_proposals WHERE status='pending'`).Scan(&n)
-		if n >= s.opts.Limits.MaxPending {
-			return fmt.Errorf("%d proposals are already waiting for the owner; the cap is %d", n, s.opts.Limits.MaxPending)
-		}
-	}
-	if loss := s.dailyPnl(); loss <= -s.opts.Limits.DailyLossUSDT {
-		return fmt.Errorf("daily loss stop: AI positions lost %.2f USDT today (cap %g); no new trades until tomorrow (UTC+8)", -loss, s.opts.Limits.DailyLossUSDT)
-	}
-	if a := s.account(); a != nil {
-		snap, err := a.Snapshot(ctx, inst)
-		if err != nil {
-			return fmt.Errorf("cannot read the OKX account: %v", err)
-		}
-		if len(snap.Positions) > 0 {
-			return fmt.Errorf("the owner already holds a %s position in %s; proposals only open new positions", snap.Positions[0].Side, inst)
-		}
-	}
-	return nil
-}
-
-// dailyPnl sums the P&L of AI positions closed today (UTC+8) in the current mode.
-func (s *Service) dailyPnl() float64 {
-	t := s.now().In(tz8)
-	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, tz8).UnixMilli()
-	var v float64
-	s.db.QueryRow(`SELECT COALESCE(SUM(pnl),0) FROM trade_proposals WHERE mode=? AND closed_at>=?`, string(s.Mode()), day).Scan(&v)
-	return v
-}
-
 // ---------- approval ----------
 
 // Approve resolves a pending proposal as approved (first answer wins; an expired one cannot be
@@ -533,84 +402,6 @@ func (s *Service) expireDue() {
 	}
 }
 
-// execute re-validates an approved proposal against the live price and the caps, then places the order
-// (dry run: builds and records it). Any check failing invalidates it; nothing is sent.
-func (s *Service) execute(ctx context.Context, id int64) (Proposal, error) {
-	s.execMu.Lock()
-	defer s.execMu.Unlock()
-	ok, err := s.transition(id, []string{StatusApproved}, StatusExecuting, nil, "")
-	if err != nil || !ok {
-		p, _ := s.get(id)
-		if err == nil {
-			err = ErrClosed
-		}
-		return p, err
-	}
-	p, err := s.get(id)
-	if err != nil {
-		return p, err
-	}
-	invalid := func(msg string) (Proposal, error) {
-		if ok, _ := s.transition(id, []string{StatusExecuting}, StatusInvalidated, map[string]any{"error": msg}, ""); ok {
-			s.audit(id, StatusInvalidated, msg, "system")
-			s.emit(StatusInvalidated, id)
-		}
-		return s.get(id)
-	}
-	px, err := s.freshQuote(p.InstID)
-	if err != nil {
-		return invalid(err.Error())
-	}
-	if drift := math.Abs(px-p.RefPx) / p.RefPx * 100; drift > s.opts.Limits.MaxDriftPct {
-		return invalid(fmt.Sprintf("price moved %.2f%% since the proposal (%s → %s); the cap is %g%%", drift,
-			okxorder.FormatPx(p.RefPx), okxorder.FormatPx(px), s.opts.Limits.MaxDriftPct))
-	}
-	spec, ok := s.opts.Spec(p.InstID)
-	if !ok {
-		return invalid("instrument metadata unknown")
-	}
-	if err := s.policy(ctx, p.InstID, id, false); err != nil {
-		return invalid(err.Error())
-	}
-	mode, err := s.positionMode(ctx)
-	if err != nil {
-		return invalid(err.Error())
-	}
-	o, err := okxorder.Build(s.intent(p.InstID, p.Side, p.MarginUSDT, p.Leverage, p.SL, p.TP, "ctgp"+strconv.FormatInt(id, 10)), spec, px, mode, s.opts.Limits.Limits)
-	if err != nil {
-		return invalid(err.Error())
-	}
-	ectx, cancel := context.WithTimeout(ctx, execTimeout)
-	defer cancel()
-	res, perr := s.orders.Place(ectx, o)
-	reqJSON, _ := json.Marshal(res.Requests)
-	respJSON := []byte{}
-	if len(res.Responses) > 0 {
-		respJSON, _ = json.Marshal(res.Responses)
-	}
-	z := o.Sizing()
-	set := map[string]any{"request": string(reqJSON), "response": string(respJSON), "exec_px": px, "contracts": z.Contracts, "notional": z.NotionalUSDT}
-	if perr != nil {
-		set["error"] = perr.Error()
-		if ok, _ := s.transition(id, []string{StatusExecuting}, StatusFailed, set, ""); ok {
-			s.audit(id, StatusFailed, perr.Error(), "okx")
-			s.emit(StatusFailed, id)
-		}
-		p, _ = s.get(id)
-		return p, nil
-	}
-	set["mode"], set["ord_id"] = string(res.Mode), res.OrdID
-	if ok, _ := s.transition(id, []string{StatusExecuting}, StatusExecuted, set, ""); ok {
-		text := fmt.Sprintf("%s 市价 %s %s 张 @≈%s", modeText(string(res.Mode)), sideText(p.Side), fmtNum(z.Contracts), okxorder.FormatPx(px))
-		if res.OrdID != "" {
-			text += " · ordId " + res.OrdID
-		}
-		s.audit(id, StatusExecuted, text, "okx")
-		s.emit(StatusExecuted, id)
-	}
-	return s.get(id)
-}
-
 // positionMode reads the account's posMode (cached); without an account it assumes long_short_mode,
 // which only a dry run can get to.
 func (s *Service) positionMode(ctx context.Context) (string, error) {
@@ -648,117 +439,8 @@ func (s *Service) positionMode(ctx context.Context) (string, error) {
 	return m, nil
 }
 
-// ---------- following executed positions ----------
-
-// follow detects executed positions that closed: a dry run when the last price crosses SL or TP
-// (P&L estimated before fees), live when the position is gone from the account (P&L from OKX's
-// positions history).
-func (s *Service) follow(ctx context.Context) {
-	rows, err := s.db.Query(`SELECT ` + cols + ` FROM trade_proposals WHERE status='executed' AND closed_at=0`)
-	if err != nil {
-		s.logf("realtrade: follow: %v", err)
-		return
-	}
-	var ps []Proposal
-	for rows.Next() {
-		if p, err := scan(rows); err == nil {
-			ps = append(ps, p)
-		}
-	}
-	rows.Close()
-	for _, p := range ps {
-		if p.Mode == string(okxorder.DryRun) {
-			s.followDry(p)
-		} else {
-			s.followLive(ctx, p)
-		}
-	}
-}
-
-func (s *Service) followDry(p Proposal) {
-	px, _, ok := s.opts.Quote(p.InstID)
-	if !ok || px <= 0 {
-		return
-	}
-	long := p.Side == "long"
-	kind, at := "", 0.0
-	switch {
-	case (long && px <= p.SL) || (!long && px >= p.SL):
-		kind, at = "sl", p.SL
-	case (long && px >= p.TP) || (!long && px <= p.TP):
-		kind, at = "tp", p.TP
-	default:
-		return
-	}
-	spec, _ := s.opts.Spec(p.InstID)
-	dir := 1.0
-	if !long {
-		dir = -1
-	}
-	s.closed(p, kind, at, (at-p.ExecPx)*dir*p.Contracts*spec.CtVal, "估算，未含手续费")
-}
-
-func (s *Service) followLive(ctx context.Context, p Proposal) {
-	a := s.account()
-	if a == nil || s.now().Sub(time.UnixMilli(p.StatusAt)) < closeSettle {
-		return
-	}
-	snap, err := a.Snapshot(ctx, p.InstID)
-	if err != nil {
-		return
-	}
-	for _, x := range snap.Positions {
-		if x.Side == p.Side {
-			delete(s.missing, p.ID)
-			return
-		}
-	}
-	if _, ok := s.missing[p.ID]; !ok {
-		s.missing[p.ID] = s.now()
-	}
-	v, err := a.Read(ctx, "/api/v5/account/positions-history", url.Values{"instType": {"SWAP"}, "instId": {p.InstID}, "limit": {"20"}})
-	rows, _ := v.([]any)
-	for _, r := range rows {
-		m, _ := r.(map[string]any)
-		str := func(k string) string { x, _ := m[k].(string); return x }
-		ut, _ := strconv.ParseInt(str("uTime"), 10, 64)
-		dir := str("direction")
-		if ut < p.StatusAt || (dir != "" && dir != p.Side) {
-			continue
-		}
-		pnl, _ := strconv.ParseFloat(str("realizedPnl"), 64)
-		cpx, _ := strconv.ParseFloat(str("closeAvgPx"), 64)
-		kind := "other"
-		if t := str("type"); t != "3" && t != "4" && t != "5" && cpx > 0 {
-			kind = "tp"
-			if math.Abs(cpx-p.SL) < math.Abs(cpx-p.TP) {
-				kind = "sl"
-			}
-		}
-		delete(s.missing, p.ID)
-		s.closed(p, kind, cpx, pnl, "OKX 已实现盈亏")
-		return
-	}
-	if err == nil && s.now().Sub(s.missing[p.ID]) > closeWaitHist { // gone, but no history row: close without P&L
-		delete(s.missing, p.ID)
-		s.closed(p, "other", 0, 0, "仓位已不在，未查到平仓记录")
-	}
-}
-
-func (s *Service) closed(p Proposal, kind string, px, pnl float64, note string) {
-	res, err := s.db.Exec(`UPDATE trade_proposals SET closed_at=?, close_kind=?, close_px=?, pnl=?, updated=? WHERE id=? AND closed_at=0`,
-		s.now().UnixMilli(), kind, px, pnl, s.now().UnixMilli(), p.ID)
-	if err != nil {
-		s.logf("realtrade: close %d: %v", p.ID, err)
-		return
-	}
-	if n, _ := res.RowsAffected(); n == 1 {
-		s.audit(p.ID, "closed", fmt.Sprintf("%s %s %+.2f USDT（%s）", closeText(kind), okxorder.FormatPx(px), pnl, note), "system")
-		s.emit("closed", p.ID)
-	}
-}
-
-// Run expires pending proposals, follows executed ones and runs the triggers until ctx ends.
+// Run expires pending proposals, follows resting orders and AI positions, delivers the chat messages
+// (steers) and runs the triggers until ctx ends.
 func (s *Service) Run(ctx context.Context) {
 	go s.triggers.run(ctx)
 	sweep := time.NewTicker(sweepEvery)
@@ -772,6 +454,7 @@ func (s *Service) Run(ctx context.Context) {
 			return
 		case <-sweep.C:
 			s.expireDue()
+			s.deliverSteers(ctx)
 		case <-fol.C:
 			s.follow(ctx)
 		}

@@ -459,27 +459,36 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 	}
 	if s.propose != nil {
 		eps = append(eps, &Endpoint{
-			Name: "propose_trade", Path: "propose-trade", Summary: "Propose one real OKX trade for the owner to approve (never executes)",
-			Desc: "Creates a pending trade proposal on the owner's OKX account and returns its proposalId. Only one shape exists: a market " +
-				"open of a USDT perpetual in isolated margin with BOTH a stop-loss and a take-profit attached (triggered on the last price, " +
-				"closed at market). The owner approves or rejects it (Telegram, web, app); it expires unapproved after expiresMin (default 15) " +
-				"and is re-checked against the live price before it is placed. You cannot execute, change or cancel it, and nothing is traded " +
-				"until the owner approves — never say a trade was placed. Size: marginUsdt is the isolated margin in USDT, contracts = " +
-				"marginUsdt × leverage / (price × contract value), rounded down. The server rejects: sl / tp on the wrong side of the current " +
-				"price, stop closer than 0.3% or farther than 10%, take-profit farther than 40%, reward:risk below the minimum, leverage or " +
-				"margin above the caps, a stop beyond the liquidation distance, an open proposal or position in the same instrument, too many " +
-				"open AI positions, the daily loss stop. The error says which; fix the plan or don't trade. mode=dryrun means an approved " +
-				"trade is only recorded, not sent.",
+			Name: "propose_trade", Path: "propose-trade", Summary: "Propose one action on the owner's OKX account for him to approve (never executes)",
+			Desc: "Creates a pending proposal and returns its proposalId. Nothing is sent until the owner approves it (Telegram, web, app); " +
+				"approval re-checks the price, the position and the caps, then the server sends it and posts the outcome (fill, position, " +
+				"TP/SL on OKX) into this conversation. kind: open — a new position with marginUsdt, leverage, sl and tp (attached; " +
+				"triggered on the last price, closed at market) · add (补仓) — more size on the existing position of that side, same margin " +
+				"mode and leverage, with sl and tp for the whole position · reduce (减仓) — close `fraction` of the position · close (平仓) — " +
+				"all of it · adjust — new sl and tp for the whole position. After add / reduce / adjust the position has one TP/SL covering " +
+				"its whole size. A stop is only ever moved closer (add, adjust). Every kind but adjust: orderType market, or limit with " +
+				"price — it must rest (a buy below / a sell above the price) and the server cancels what is unfilled after orderExpiryMin. " +
+				"contracts = marginUsdt × leverage / (entry × contract value), rounded down. Rejected with the reason: exits on the wrong " +
+				"side, stop 0.3–10% / target ≤ 40% from the entry, reward:risk below minRR (open, add), leverage or margin outside the caps, " +
+				"the stop beyond the estimated liquidation, another proposal or resting order in the coin, an open where a position exists " +
+				"(act on it instead), too many adds or AI positions, the daily loss stop (blocks open and add only). get_trade_proposals " +
+				"shows the mode and caps; mode=dryrun means approved actions are only recorded and simulated.",
 			Params: []Param{
+				{Name: "kind", In: "query", Type: "string", Enum: []string{"open", "add", "reduce", "close", "adjust"}, Default: "open"},
 				instParam("query"),
-				{Name: "side", In: "query", Type: "string", Required: true, Enum: []string{"long", "short"}},
-				{Name: "marginUsdt", In: "query", Type: "number", Required: true, Desc: "isolated margin in USDT (cap in the error / get_trade_proposals limits)"},
-				{Name: "leverage", In: "query", Type: "integer", Required: true, Min: 1, Max: 125, Desc: "isolated leverage (capped by the server)"},
-				{Name: "sl", In: "query", Type: "number", Required: true, Desc: "stop-loss trigger price"},
-				{Name: "tp", In: "query", Type: "number", Required: true, Desc: "take-profit trigger price"},
-				{Name: "rationale", In: "query", Type: "string", Required: true, Desc: "why this trade and why now, in Chinese, 2–6 sentences: the evidence for and against"},
-				{Name: "invalidation", In: "query", Type: "string", Required: true, Desc: "what would prove the idea wrong before the stop, in Chinese, one sentence"},
-				{Name: "expiresMin", In: "query", Type: "integer", Default: 15, Min: 3, Max: 240, Desc: "minutes the owner has to approve: as long as the setup stays valid at roughly this price — short for a fast breakout, longer for a level that holds or when a signal woke you and he may not be looking (approval re-checks price drift anyway)"},
+				{Name: "side", In: "query", Type: "string", Required: true, Enum: []string{"long", "short"}, Desc: "the position's side"},
+				{Name: "orderType", In: "query", Type: "string", Enum: []string{"market", "limit"}, Default: "market"},
+				{Name: "price", In: "query", Type: "number", Desc: "limit price"},
+				{Name: "orderExpiryMin", In: "query", Type: "integer", Min: 5, Max: 1440, Desc: "limit: minutes it rests before the server cancels the unfilled rest (default 60)"},
+				{Name: "marginMode", In: "query", Type: "string", Enum: []string{"isolated", "cross"}, Desc: "open: isolated (default) or cross; other kinds use the position's"},
+				{Name: "marginUsdt", In: "query", Type: "number", Desc: "open / add: margin in USDT"},
+				{Name: "leverage", In: "query", Type: "integer", Min: 1, Max: 125, Desc: "open: leverage (add uses the position's)"},
+				{Name: "sl", In: "query", Type: "number", Desc: "open / add / adjust: stop-loss trigger price (whole position)"},
+				{Name: "tp", In: "query", Type: "number", Desc: "open / add / adjust: take-profit trigger price (whole position)"},
+				{Name: "fraction", In: "query", Type: "number", Desc: "reduce: share of the position to close, e.g. 0.5"},
+				{Name: "rationale", In: "query", Type: "string", Required: true, Desc: "why this action and why now, in Chinese, 2–6 sentences with numbers: the evidence for and against"},
+				{Name: "invalidation", In: "query", Type: "string", Desc: "open / add (required): what proves the idea wrong before the stop, in Chinese, one sentence"},
+				{Name: "expiresMin", In: "query", Type: "integer", Default: 15, Min: 3, Max: 240, Desc: "minutes the owner has to approve: as long as the setup stays valid near this price"},
 			},
 			owner: true,
 			write: true,
@@ -495,11 +504,13 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 	if s.proposals != nil {
 		eps = append(eps, &Endpoint{
 			Name: "get_trade_proposals", Path: "trade-proposals", Summary: "The trade proposals and their status, plus the mode and caps",
-			Desc: "Recent proposals made with propose_trade, newest first: status pending (waiting for the owner) → executed (dryrun = recorded, " +
-				"not sent; live = placed on OKX) / failed / invalidated (re-check failed, nothing sent) / rejected / expired; closeKind tp / sl and " +
-				"pnlUsdt once a position closed. Also mode and limits (maxLeverage, maxMarginUsdt, minRR, maxOpen, dailyLossUsdt, maxDriftPct).",
+			Desc: "Proposals newest first: kind, status pending → executed (dryrun = recorded only) / failed / invalidated / rejected / expired; " +
+				"limit orders' ordState live / partially_filled / filled / canceled with filled and fillPx; posId = the AI position (its open's id) " +
+				"an action belongs to; an open AI position's current size, average and TP/SL (position); closeKind and pnlUsdt once it closed. " +
+				"Also mode and limits.",
 			Params: []Param{
 				{Name: "status", In: "query", Type: "string", Enum: []string{"all", "open", "pending", "executed"}, Default: "all"},
+				{Name: "posId", In: "query", Type: "integer", Desc: "only this AI position and the actions on it"},
 				limitParam(10, 50, "number of proposals"),
 			},
 			owner: true,
@@ -536,13 +547,15 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				"express; test it with test_signal_script first; subscribing runs the same compile + replay check and rejects scripts that error, " +
 				"are slow, would fire more than the daily cap or hold right now; at most one script per subscription, every ≠ tick) · " +
 				`{"type":"all"|"any","of":[…]} (≤ 6 conditions). ` +
-				"Put the invalidation in intent or subscribe it separately. Caps: 5 active per conversation, expiry ≤ 7 days, wake-ups per day are capped.",
+				"Put the invalidation in intent or subscribe it separately. Caps: 5 active per conversation, expiry ≤ 7 days, wake-ups per day are capped. " +
+				"A wake-up while this conversation is answering is injected into the running turn.",
 			Params: []Param{
 				{Name: "spec", In: "query", Type: "object", Required: true, Desc: "the condition, see the description"},
 				{Name: "code", In: "query", Type: "string", Desc: "the Python of a script condition ({\"type\":\"script\"} in spec), exactly as tested with test_signal_script"},
 				{Name: "intent", In: "query", Type: "string", Required: true, Desc: "in Chinese: what you will do when it fires — the plan (side, entry, stop, targets) and its invalidation; you read it back on wake-up"},
 				{Name: "expiresHours", In: "query", Type: "number", Default: 24, Desc: "hours until it lapses unfired (0.25–168)"},
 				{Name: "planId", In: "query", Type: "integer", Desc: "the AI plan (```plan block) this setup belongs to, if any"},
+				{Name: "tradeId", In: "query", Type: "integer", Desc: "the AI position this watch manages (its open's proposal id): its state comes with the wake-up and the watch is cancelled when it closes"},
 				{Name: "maxFires", In: "query", Type: "integer", Default: 1, Min: 1, Max: 5, Desc: "fires before it ends"},
 				{Name: "cooldownMin", In: "query", Type: "integer", Default: 60, Min: 5, Max: 1440, Desc: "minutes between two fires (maxFires > 1)"},
 				{Name: "every", In: "query", Type: "string", Enum: []string{"tick", "1m", "5m", "15m", "1H"}, Desc: "how often the server checks it: " +

@@ -23,8 +23,10 @@ import (
 // Go → worker: config {credential, model} · review {id, request, deadlineMs} · test {id, deadlineMs} ·
 // reflect {id, request, deadlineMs} · chat {id, chatId, sessionId, message, instId, deadlineMs} ·
 // cancel {id} · ping. Worker → Go also: event {id, event} (chat progress, the call stays pending).
+// steer {id, callId, message} → result {id} | error {id, error}: inject a further user message into
+// the running chat call callId (SteerChat); an error means the turn can no longer take it.
 //
-// Additive to §5: reflect/result, cancel, status and the ready/proxy fields.
+// Additive to §5: reflect/result, cancel, status, steer and the ready/proxy fields.
 
 const maxLine = 16 << 20 // one message; review requests carry the full context pack
 

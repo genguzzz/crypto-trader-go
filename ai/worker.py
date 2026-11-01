@@ -138,6 +138,7 @@ class Worker:
         self.sem = asyncio.Semaphore(max_inflight)
         self.chat_sem = asyncio.Semaphore(MAX_CHATS)
         self.tasks: dict[str, asyncio.Task] = {}
+        self.inboxes: dict[str, Any] = {}  # running chat calls: their steer inbox (agent.Inbox)
         self.writer: asyncio.StreamWriter | None = None
         self.wlock = asyncio.Lock()
         self.sdk, self.cli = sdk_versions()
@@ -216,6 +217,14 @@ class Worker:
             t = self.tasks.pop(str(msg.get("id")), None)
             if t:
                 t.cancel()
+        elif kind == "steer":
+            # a further message for a running chat call: answered in it, or refused so Go retries it later
+            cid = str(msg.get("id") or "")
+            inbox = self.inboxes.get(str(msg.get("callId") or ""))
+            if cid and inbox is not None and inbox.put(str(msg.get("message") or "")):
+                await self.send({"type": "result", "id": cid, "result": {"ok": True}})
+            elif cid:
+                await self.send({"type": "error", "id": cid, "error": "the turn is not running or is ending"})
         elif kind in ("review", "reflect", "test", "chat"):
             cid = str(msg.get("id") or "")
             if not cid:
@@ -269,8 +278,16 @@ class Worker:
             async def emit(ev: dict) -> None:
                 await self.send({"type": "event", "id": cid, "event": ev})
 
-            async with self.chat_sem:
-                return {"type": "result", "result": await self.calls.chat(msg, config, self.gate.proxy, emit)}
+            import agent  # lazy: agent imports llm
+
+            inbox = agent.Inbox()
+            self.inboxes[cid] = inbox
+            try:
+                async with self.chat_sem:
+                    return {"type": "result", "result": await self.calls.chat(msg, config, self.gate.proxy, emit, inbox)}
+            finally:
+                inbox.close()
+                self.inboxes.pop(cid, None)
         async with self.sem:
             proxy = self.gate.proxy
             if kind == "review":

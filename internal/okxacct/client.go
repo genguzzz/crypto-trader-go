@@ -1,7 +1,7 @@
 // Package okxacct reads the owner's own OKX account (open swap positions, pending TP/SL, equity) for
 // display in the web, the app and the chat agent. Strictly read-only: the only request it can make is
-// a signed GET to an allow-listed path, and there is no order, cancel or transfer code (the one order
-// the owner approved, a market open with TP/SL, lives in internal/okxorder and signs through Config). Every request
+// a signed GET to an allow-listed path, and there is no order, cancel or transfer code (the orders the
+// owner approved through proposals live in internal/okxorder, which signs through Config). Every request
 // goes through OKX_PRIVATE_PROXY (the API key is bound to that exit IP); without the proxy or any key
 // variable the feature is disabled, never served over a direct connection.
 package okxacct

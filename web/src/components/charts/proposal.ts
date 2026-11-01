@@ -2,7 +2,7 @@ import { ref, watch } from 'vue'
 import { LineStyle, type IPriceLine, type ISeriesApi } from 'lightweight-charts'
 import { C } from '../../theme'
 import { store } from '../../store'
-import { realtradeApi, type TradeProposal } from '../../realtradeApi'
+import { kindText, realtradeApi, type TradeProposal } from '../../realtradeApi'
 
 /**
  * One AI trade proposal on the K-line (server: internal/realtrade), opened from its card, the
@@ -35,18 +35,19 @@ export function useProposalLevels(series: () => ISeriesApi<'Candlestick'> | unde
     const tag = `提案 ${p.side === 'short' ? '空' : '多'}`
     const line = (price: number, color: string, title: string, style = LineStyle.Dashed, width: 1 | 2 = 1) =>
       lines.push(s.createPriceLine({ price, color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title }))
-    line(entry(p), C.lime, `${tag} 入场`, p.execPx ? LineStyle.Solid : LineStyle.Dashed, 2)
-    line(p.sl, C.down, '提案 止损', LineStyle.Solid, 2)
-    line(p.tp, C.up, '提案 止盈')
+    const kind = p.kind && p.kind !== 'open' ? kindText[p.kind] : '入场'
+    if (p.kind !== 'adjust') line(entry(p), C.lime, `${tag} ${kind}`, p.fillPx || p.execPx ? LineStyle.Solid : LineStyle.Dashed, 2)
+    if (p.sl > 0) line(p.sl, C.down, '提案 止损', LineStyle.Solid, 2)
+    if (p.tp > 0) line(p.tp, C.up, '提案 止盈')
   }
 
-  /** Levels the price scale should span (spanLevels): entry, stop and target. */
-  const levels = () => (proposal.value ? [entry(proposal.value), proposal.value.sl, proposal.value.tp] : [])
+  /** Levels the price scale should span (spanLevels): entry, stop and target (those it has). */
+  const levels = () => (proposal.value ? [entry(proposal.value), proposal.value.sl, proposal.value.tp].filter(v => v > 0) : [])
 
   watch([proposalId, id], refresh)
   watch(() => store.realtradeSeq, refresh)
   return { proposal, refresh, draw, levels }
 }
 
-/** Where the trade was (or would be) entered: the fill once executed, else the reference price. */
-export const entry = (p: TradeProposal) => p.execPx || p.refPx
+/** Where the order filled (or would): the fill once filled, else the limit price, else the price at execution or creation. */
+export const entry = (p: TradeProposal) => p.fillPx || (p.orderType === 'limit' ? p.px : 0) || p.execPx || p.refPx
