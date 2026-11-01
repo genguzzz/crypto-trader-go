@@ -24,19 +24,23 @@ import { statusLabel } from '../realtradeApi'
  *  embed: inside the native app's web view (views/EmbedChart.vue): the full-screen button asks the
  *  app (event `fullscreen`) instead of going full screen itself; 'full' = already the app's full-screen chart.
  *  proposal: id of an AI trade proposal whose entry / stop / target to draw (charts/proposal.ts).
- *  signal: id of an agent signal subscription whose levels to draw (charts/signal.ts). */
-const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean; embed?: 'inline' | 'full'; proposal?: number; signal?: number }>()
+ *  signal: id of an agent signal subscription whose levels to draw (charts/signal.ts).
+ *  compact: candles and the proposal's / signal's levels only (the app's signal and proposal popups):
+ *  no layer, overlay or liquidation-map controls, no plan/position bars, the legend only while
+ *  hovering; a period switch stays. Of the AI plans only the one the signal links to is drawn. */
+const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean; embed?: 'inline' | 'full'; proposal?: number; signal?: number; compact?: boolean }>()
 const emit = defineEmits<{ live: [price: number]; fullscreen: [] }>()
 const bar = ref(localStorage.getItem('bar') || '15m')
 type Layer = 'k' | 'delta' | 'foot'
-const layer = ref<Layer>((localStorage.getItem('ctg.chartLayer') as Layer) || 'k')
-const withSpot = ref(localStorage.getItem('ctg.chartSpot') === '1')
-const withOIL = ref(localStorage.getItem('ctg.chartOIL') === '1') // OI level area: off by default
-const withOID = ref(localStorage.getItem('ctg.chartOID') !== '0') // OI change bars: on by default
-const withLiq = ref(localStorage.getItem('ctg.chartLiq') !== '0') // liquidation bars: on by default
-const withMap = ref(localStorage.getItem('ctg.chartLiqMap') === '1') // estimated liquidation map overlay
-const withPlans = ref(localStorage.getItem('ctg.chartAiPlans') !== '0') // the AI's open trade plans: on by default
-const withPos = ref(localStorage.getItem('ctg.chartPositions') !== '0') // the owner's open OKX position: on by default
+const cmp = !!props.compact // compact: every layer and overlay off, without touching the saved choices
+const layer = ref<Layer>(cmp ? 'k' : (localStorage.getItem('ctg.chartLayer') as Layer) || 'k')
+const withSpot = ref(!cmp && localStorage.getItem('ctg.chartSpot') === '1')
+const withOIL = ref(!cmp && localStorage.getItem('ctg.chartOIL') === '1') // OI level area: off by default
+const withOID = ref(!cmp && localStorage.getItem('ctg.chartOID') !== '0') // OI change bars: on by default
+const withLiq = ref(!cmp && localStorage.getItem('ctg.chartLiq') !== '0') // liquidation bars: on by default
+const withMap = ref(!cmp && localStorage.getItem('ctg.chartLiqMap') === '1') // estimated liquidation map overlay
+const withPlans = ref(cmp ? !!props.signal : localStorage.getItem('ctg.chartAiPlans') !== '0') // the AI's open trade plans: on by default
+const withPos = ref(!cmp && localStorage.getItem('ctg.chartPositions') !== '0') // the owner's open OKX position: on by default
 const mapDays = ref(localStorage.getItem('ctg.liqMapDays') || '7') // map look-back
 const mapTiers = ref<number[]>(readTiers()) // leverage tiers drawn on the map
 function readTiers(): number[] {
@@ -52,7 +56,9 @@ const loading = ref(false)
 const el = ref<HTMLElement>()
 let chart: IChartApi | undefined
 let candles: ISeriesApi<'Candlestick'> | undefined
-const aiPlans = useAiPlans(() => candles, () => props.id, () => barMs[bar.value], withPlans)
+// compact: only the plan the signal links to (its planId, else the subscribing chat's open plan)
+const linkedPlan = (p: AiPlan) => { const s = sig.signal.value; return !!s && (s.planId ? p.id === s.planId : !!s.chatId && p.chatId === s.chatId) }
+const aiPlans = useAiPlans(() => candles, () => props.id, () => barMs[bar.value], withPlans, cmp ? linkedPlan : undefined)
 const positions = usePositions(() => candles, () => props.id, withPos)
 const prop = useProposalLevels(() => candles, () => props.id, () => props.proposal)
 const sig = useSignalLevels(() => candles, () => props.id, () => props.signal)
@@ -241,7 +247,7 @@ function layoutBands() {
   if (!chart || !candles) return
   const h = chart.panes()[0]?.getHeight() || el.value?.clientHeight || 300
   legendH ||= legendEl.value?.offsetHeight ?? 0
-  const top = clamp((legendH + 10) / h, 0.06, 0.22)
+  const top = cmp ? 0.08 : clamp((legendH + 10) / h, 0.06, 0.22) // compact: the legend shows only while hovering, over the candles
   const bands = ([['oid', oiD], ['oil', oiL], ['liq', liqS]] as const).filter(([, x]) => x).map(([id]) => id)
   let vol = clamp(h * 0.16, 30, 64), band = clamp(h * 0.1, 22, 48)
   const room = (0.5 - top) * h, need = vol + bands.length * band
@@ -497,9 +503,9 @@ onMounted(() => {
   aiPlans.refresh()
   positions.refresh()
   prop.refresh()
-  sig.refresh()
+  sig.refresh().then(() => aiPlans.draw())
   // the proposal follows SSE `realtrade`; the poll covers embeds, which have no event stream
-  timer = window.setInterval(() => { load(); aiPlans.refresh(); positions.refresh(); if (props.embed && props.proposal) prop.refresh(); if (props.signal) sig.refresh() }, 10_000)
+  timer = window.setInterval(() => { load(); aiPlans.refresh(); positions.refresh(); if (props.embed && props.proposal) prop.refresh(); if (props.signal) sig.refresh().then(() => aiPlans.draw()) }, 10_000)
   hotTimer = window.setInterval(hot, 1000)
 })
 onUnmounted(() => { clearInterval(timer); clearInterval(hotTimer); chart?.remove() })
@@ -523,7 +529,10 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
 
 <template>
   <div ref="root" class="panel pc" :class="{ fill: fill || full, full, pseudo, 'fs-pseudo': pseudo }">
-    <h3>
+    <div v-if="compact" class="cbar">
+      <Segmented v-model="bar" size="sm" aria-label="K 线周期" :options="[{ value: '1m', label: '1m' }, { value: '5m', label: '5m' }, { value: '15m', label: '15m' }, { value: '1H', label: '1H' }, { value: '4H', label: '4H' }]" />
+    </div>
+    <h3 v-else>
       <span>合约 K 线 <InfoTip>
         <b>数据来源</b>：OKX 永续 1m K 线由本机录制（实时 WS + 启动回填）；进过监控池的币额外回补 7 天 1m；1H/4H 来自 1H K 线，保留 30 天。5m/15m/4H 由服务端按 UTC 对齐聚合。<br />
         <b>十字光标</b>：左上角显示所指 K 线的开高低收、涨跌幅（对上一根收盘）、振幅与成交额；右侧价格标签显示光标价位<b>距现价</b>的百分比。手机上长按后拖动。<br />
@@ -561,6 +570,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         </button>
       </span>
     </h3>
+    <template v-if="!compact">
     <div v-for="p in positions.positions.value" :key="p.instId + p.posSide" class="mapbar planbar posbar tnum">
       <b :class="p.side === 'short' ? 'down' : 'up'">持{{ p.side === 'short' ? '空' : '多' }} {{ posSize(p) }}</b>
       <span v-if="p.lever" class="muted">{{ p.lever }}x</span>
@@ -612,12 +622,13 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
       <span class="key"><i class="k-va"></i>价值区 70%</span>
       <span class="key"><i class="k-naked"></i>未回补 POC</span>
     </div>
+    </template>
     <div class="wrap" :class="{ tall: layer !== 'k' }">
       <div ref="el" class="chart" @dblclick="resetView"></div>
       <Loading overlay :show="loading" />
       <div v-if="layer === 'foot' && spacing < 20 && bars.length" class="foot-hint">横向放大（滚轮 / 双指）到足够宽才显示足迹</div>
       <ResetViewButton :right="axisWidth + 6" title="回到最新、自动缩放（PC 也可双击图表）" @reset="resetView" />
-      <div ref="legendEl" class="legend tnum" v-if="shown">
+      <div ref="legendEl" class="legend tnum" v-if="shown && (!compact || !shown.live)">
         <span class="muted">{{ fmtTime(shown.c.t, true) }}</span>
         <span>开 <b>{{ fmtPrice(shown.c.o) }}</b></span><span>高 <b>{{ fmtPrice(shown.c.h) }}</b></span>
         <span>低 <b>{{ fmtPrice(shown.c.l) }}</b></span><span>收 <b :class="tone(shown.c.c - shown.c.o)">{{ fmtPrice(shown.c.c) }}</b></span>
@@ -672,6 +683,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
 @media (hover: hover) { .fs-btn:hover { color: var(--text-1); border-color: var(--accent); } }
 .fs-btn:focus-visible { outline: 2px solid var(--accent); }
 .chart { height: 340px; }
+.cbar { display: flex; justify-content: flex-end; margin: 0 0 4px; }
 .wrap.tall .chart { height: 450px; }
 h3 { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
 .bars { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }

@@ -34,8 +34,10 @@ export function spanLevels(s: ISeriesApi<'Candlestick'>, levels: () => number[])
 const HIDE_KEY = 'ctg.aiPlansHidden'
 const hidden = (): number[] => { try { return JSON.parse(localStorage.getItem(HIDE_KEY) || '[]') } catch { return [] } }
 
-export function useAiPlans(series: () => ISeriesApi<'Candlestick'> | undefined, id: () => string, barMs: () => number, on: Ref<boolean>) {
+/** keep: draw only the plans it accepts (the compact embed shows just the plan a signal links to). */
+export function useAiPlans(series: () => ISeriesApi<'Candlestick'> | undefined, id: () => string, barMs: () => number, on: Ref<boolean>, keep?: (p: AiPlan) => boolean) {
   const plans = ref<AiPlan[]>([])
+  const shown = () => (keep ? plans.value.filter(keep) : plans.value)
   let lines: IPriceLine[] = []
   let markers: ISeriesMarkersPluginApi<Time> | undefined
   let markersOf: ISeriesApi<'Candlestick'> | undefined
@@ -62,7 +64,7 @@ export function useAiPlans(series: () => ISeriesApi<'Candlestick'> | undefined, 
       markersOf = s
     }
     const ms: { time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowDown' | 'arrowUp'; text: string }[] = []
-    for (const p of plans.value) {
+    for (const p of shown()) {
       const short = p.side === 'short', tag = `AI${short ? '空' : '多'}`
       const line = (price: number, color: string, title: string, style = LineStyle.Dashed, width: 1 | 2 = 1) =>
         lines.push(s.createPriceLine({ price, color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title }))
@@ -83,7 +85,7 @@ export function useAiPlans(series: () => ISeriesApi<'Candlestick'> | undefined, 
 
   /** Levels the price scale should span (spanLevels): the entry zone, stop and TP1 (TP2 is often far
    *  enough away to squash the candles, so it only shows when the candles reach it). */
-  const levels = () => plans.value.flatMap(p => [p.entryLo, p.entryHi, p.stop, p.status === 'tp1' && p.tp2 ? p.tp2 : p.tp1])
+  const levels = () => shown().flatMap(p => [p.entryLo, p.entryHi, p.stop, p.status === 'tp1' && p.tp2 ? p.tp2 : p.tp1])
 
   /** Hide a plan here (and close it on the server when the owner key is at hand). */
   async function dismiss(p: AiPlan, key?: string) {
