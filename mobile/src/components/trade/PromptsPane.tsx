@@ -13,6 +13,8 @@ import { modeLabel, promptDeadline } from "@/lib/tradeMeta";
 import { colors, fs, radius, tnum } from "@/lib/theme";
 import { Card, EmptyState, ErrorBox, Loading, PanelTitle, PillButton, Pull, TAB_BAR_SPACE, Tag, toastError, toast } from "../ui";
 import { InfoTip, LTag, Muted } from "./common";
+import { usePendingProposals, useRealtrade, useRecentProposals } from "@/lib/realtrade";
+import { ProposalCard } from "../ai/ProposalCard";
 
 interface PromptsData { open: Prompt[]; history: Prompt[] }
 
@@ -66,7 +68,8 @@ export function PromptsPane() {
       </View>
       {q.error && !q.data ? <ErrorBox text={q.error} onRetry={() => void q.refresh()} /> : null}
       {!q.data && !q.error ? <Loading text="加载待确认" /> : null}
-      {q.data && !q.data.open.length ? <Card><EmptyState icon="file-tray-outline" text="没有需要确认的信号" /></Card> : null}
+      <AiProposals />
+      {q.data && !q.data.open.length ? <Card><EmptyState icon="file-tray-outline" text="没有需要确认的模拟交易信号" /></Card> : null}
       {(q.data?.open ?? []).map((p) => <PromptCard key={p.id} p={p} now={now} busy={busy === p.id} onAnswer={(k, l) => void answer(p, k, l)} />)}
       {q.data?.history.length ? (
         <Card>
@@ -82,6 +85,32 @@ export function PromptsPane() {
         </Card>
       ) : null}
     </ScrollView>
+  );
+}
+
+/** AI-proposed real OKX trades: decided here (or in Telegram / the chat; the first answer wins). */
+function AiProposals() {
+  const owner = useRealtrade((r) => r.owner);
+  const mode = useRealtrade((r) => r.mode);
+  const pending = usePendingProposals();
+  const recent = useRecentProposals();
+  if (!owner) return null;
+  const done = (recent ?? []).filter((p) => p.status !== "pending").slice(0, 3);
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Text style={{ fontSize: fs.lg, fontWeight: "600", color: colors.text }}>AI 交易提议</Text>
+        {mode ? <Tag text={mode === "dryrun" ? "DRY RUN" : "实盘"} tone={mode === "dryrun" ? "warn" : "bad"} /> : null}
+        <InfoTip title="AI 交易提议" items={[
+          "AI 在对话里或信号触发时提出的 OKX 真实交易：市价单，逐仓，必带止盈止损。",
+          "在这里、Telegram 交易机器人或 AI 对话里同意 / 拒绝都可以，先答复的为准，其他地方会同步。",
+          "同意时会按最新价格重新检查偏移、止盈止损方向和各项上限，不满足就作废。",
+          mode === "dryrun" ? "当前是 DRY RUN：同意后只生成并记录下单请求，不会真实下单。" : "当前是实盘：同意后立即在 OKX 下单。",
+        ]} />
+      </View>
+      {pending.length ? pending.map((p) => <ProposalCard key={p.id} p={p} />) : <Card><EmptyState icon="sparkles-outline" text="没有待审核的 AI 交易提议" /></Card>}
+      {done.map((p) => <ProposalCard key={p.id} p={p} />)}
+    </View>
   );
 }
 

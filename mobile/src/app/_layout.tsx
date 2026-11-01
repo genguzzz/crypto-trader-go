@@ -59,7 +59,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (newest <= seen.current) return;
     seen.current = newest;
-    toast("AI 提议了一笔交易", "等你审核", { label: "查看", onPress: () => router.push("/ai?pane=trades") });
+    toast("AI 提议了一笔交易", "等你审核", { label: "去审核", onPress: () => router.push("/trade?pane=prompts") });
   }, [newest]);
 
   useEffect(() => {

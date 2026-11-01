@@ -135,7 +135,16 @@ function start() {
   started = true;
   onStreamEvent((type) => { if (type === "realtrade") kick(); });
   AppState.addEventListener("change", (s) => { if (s === "active") kick(); });
+  // Fallback for a missed stream event (stream reconnecting, answered in Telegram meanwhile): while
+  // something can still change — an open proposal, or one on screen that isn't final — poll every 5 s.
+  setInterval(() => {
+    if (AppState.currentState !== "active" || !getAdminKey()) return;
+    const live = (p?: Proposal | null) => !!p && OPEN.has(p.status);
+    if (st.open.length || [...watched.keys()].some((id) => live(st.byId[id]))) kick();
+  }, 5000);
 }
+
+const OPEN = new Set(["pending", "approved", "executing"]);
 
 /** A slice of the store. The first owner-key-aware caller (the orb) starts the stream listener. */
 export function useRealtrade<T>(pick: (s: RtState) => T): T {

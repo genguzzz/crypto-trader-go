@@ -13,6 +13,7 @@ import { AiPane } from "@/components/trade/AiPane";
 import { PromptsPane } from "@/components/trade/PromptsPane";
 import { StrategiesPane } from "@/components/trade/StrategiesPane";
 import { IconButton, Screen, TabHeader } from "@/components/ui";
+import { usePendingProposals } from "@/lib/realtrade";
 
 type Pane = "accounts" | "strategies" | "prompts" | "ai";
 const PANES: { value: Pane; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
@@ -26,13 +27,13 @@ export default function TradeTab() {
   const router = useRouter();
   const params = useLocalSearchParams<{ pane?: string }>();
   const pane: Pane = PANES.some((p) => p.value === params.pane) ? (params.pane as Pane) : "accounts";
-  const prompts = useOpenPrompts();
+  const prompts = useOpenPrompts() + usePendingProposals().length;
 
   return (
     <Screen>
       <TabHeader
         title="交易"
-        sub="模拟交易：不连接真实账户、不下真实订单"
+        sub={pane === "prompts" ? "模拟交易信号与 AI 实盘交易提议，在这里审核" : "模拟交易：不连接真实账户、不下真实订单"}
         right={pane === "accounts" ? <IconButton name="add-circle-outline" size={26} color={colors.primary} label="新建账户" onPress={() => router.push("/trading/new")} /> : undefined}
       />
       <View style={{ flexDirection: "row", marginHorizontal: 12, marginBottom: 4, padding: 2, gap: 2, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bg }}>
