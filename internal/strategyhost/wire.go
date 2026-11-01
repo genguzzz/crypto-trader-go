@@ -84,6 +84,7 @@ type inMsg struct {
 	Stderr     string           `json:"stderr"`
 	Strategies []describedClass `json:"strategies"`
 	Result     *checkResult     `json:"result"`
+	Reply      json.RawMessage  `json:"reply"` // cond_result
 }
 
 type checkResult struct {

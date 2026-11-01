@@ -26,29 +26,34 @@ import (
 //	alert    {ruleId, instId?}                         an alert rule fires (for that instrument)
 //	time     {at: "2026-11-02 10:00" (UTC+8) | afterMin}
 //	plan     {planId, state: active|tp1|done|stopped|invalid|missed|expired|settled}
+//	script   {code}                                    a ctg.Condition class run on its timeframe's bar close (script.go);
+//	                                                   validation stores what it declares in script; one per subscription
 //	all|any  {of: [...]}                               at most 6 leaves, 2 levels deep
 type Spec struct {
-	Type   string   `json:"type"`
-	InstID string   `json:"instId,omitempty"`
-	Op     string   `json:"op,omitempty"`
-	Level  float64  `json:"level,omitempty"`
-	Bar    string   `json:"bar,omitempty"`
-	Lo     float64  `json:"lo,omitempty"`
-	Hi     float64  `json:"hi,omitempty"`
-	Field  string   `json:"field,omitempty"`
-	Value  *float64 `json:"value,omitempty"`
-	Side   string   `json:"side,omitempty"`
-	Metric string   `json:"metric,omitempty"`
-	RuleID int64    `json:"ruleId,omitempty"`
-	At     string   `json:"at,omitempty"`       // time input (UTC+8 or RFC 3339); normalised to AtMs
-	After  int      `json:"afterMin,omitempty"` // time input: minutes from now; normalised to AtMs
-	AtMs   int64    `json:"atMs,omitempty"`
-	PlanID int64    `json:"planId,omitempty"`
-	State  string   `json:"state,omitempty"`
-	Of     []Spec   `json:"of,omitempty"`
+	Type   string      `json:"type"`
+	InstID string      `json:"instId,omitempty"`
+	Op     string      `json:"op,omitempty"`
+	Level  float64     `json:"level,omitempty"`
+	Bar    string      `json:"bar,omitempty"`
+	Lo     float64     `json:"lo,omitempty"`
+	Hi     float64     `json:"hi,omitempty"`
+	Field  string      `json:"field,omitempty"`
+	Value  *float64    `json:"value,omitempty"`
+	Side   string      `json:"side,omitempty"`
+	Metric string      `json:"metric,omitempty"`
+	RuleID int64       `json:"ruleId,omitempty"`
+	At     string      `json:"at,omitempty"`       // time input (UTC+8 or RFC 3339); normalised to AtMs
+	After  int         `json:"afterMin,omitempty"` // time input: minutes from now; normalised to AtMs
+	AtMs   int64       `json:"atMs,omitempty"`
+	PlanID int64       `json:"planId,omitempty"`
+	State  string      `json:"state,omitempty"`
+	Code   string      `json:"code,omitempty"`   // script: Python source
+	Script *ScriptMeta `json:"script,omitempty"` // script: its declarations, filled by validation
+	Of     []Spec      `json:"of,omitempty"`
 	// Every (root only) is how often it is checked: tick (each ~2 s price broadcast), 1m, 5m, 15m or 1H
-	// (on that confirmed minute). "" = tick when a leaf reads the last price, else 1m. Coarser = cheaper
-	// and calmer; a brief spike between checks can be missed.
+	// (on that confirmed minute). "" = tick when a leaf reads the last price (and there is no script),
+	// else 1m. Coarser = cheaper and calmer; a brief spike between checks can be missed. A script runs
+	// on its own bar close, so its effective cadence is the slower of every and its timeframe.
 	Every string `json:"every,omitempty"`
 }
 
@@ -58,7 +63,7 @@ var everyMs = map[string]int64{"1m": 60_000, "5m": 300_000, "15m": 900_000, "1H"
 // interval is the effective check interval: "tick" or a key of everyMs.
 func (s Spec) interval() string {
 	if s.Every == "" {
-		if s.live() {
+		if s.live() && s.scripts() == 0 {
 			return "tick"
 		}
 		return "1m"
@@ -280,6 +285,28 @@ func (s *Spec) normalize(src Sources, now time.Time, depth int) error {
 		if s.AtMs <= now.UnixMilli() {
 			return errors.New("time: the time is already past")
 		}
+	case "script":
+		if s.InstID != "" || s.Op != "" || s.Value != nil || s.Level != 0 || s.Bar != "" {
+			return errors.New("script takes only code: its instruments and timeframe are declared in the code")
+		}
+		if strings.TrimSpace(s.Code) == "" {
+			return errors.New("script: code is required (a ctg Condition class; test it with test_signal_script)")
+		}
+		if len(s.Code) > MaxScriptBytes {
+			return fmt.Errorf("script: the code is %d bytes; the cap is %d", len(s.Code), MaxScriptBytes)
+		}
+		if s.Script == nil || len(s.Script.InstIDs) == 0 {
+			return errors.New("script: not validated")
+		}
+		if _, ok := barMs[s.Script.Timeframe]; !ok {
+			return errors.New("script: timeframe must be 1m, 5m, 15m, 1H or 4H")
+		}
+		for i, id := range s.Script.InstIDs {
+			s.Script.InstIDs[i] = NormalizeInst(id)
+			if !src.Known(s.Script.InstIDs[i]) {
+				return fmt.Errorf("unknown instrument %s (OKX USDT perpetual ids like AAVE-USDT-SWAP)", id)
+			}
+		}
 	case "plan":
 		p, ok := src.Plan(s.PlanID)
 		if !ok {
@@ -293,7 +320,7 @@ func (s *Spec) normalize(src Sources, now time.Time, depth int) error {
 		}
 		s.InstID = p.InstID
 	default:
-		return fmt.Errorf("unknown signal type %q (price, zone, field, moverisk, alert, time, plan, all, any)", s.Type)
+		return fmt.Errorf("unknown signal type %q (price, zone, field, moverisk, alert, time, plan, script, all, any)", s.Type)
 	}
 	return nil
 }
@@ -341,8 +368,14 @@ func (s Spec) leaves() []Spec {
 func (s Spec) InstIDs() []string {
 	var out []string
 	for _, l := range s.leaves() {
-		if l.InstID != "" && !slices.Contains(out, l.InstID) {
-			out = append(out, l.InstID)
+		ids := []string{l.InstID}
+		if l.Script != nil {
+			ids = l.Script.InstIDs
+		}
+		for _, id := range ids {
+			if id != "" && !slices.Contains(out, id) {
+				out = append(out, id)
+			}
 		}
 	}
 	return out
@@ -444,6 +477,11 @@ func (s Spec) Describe() string {
 		return "到 " + time.UnixMilli(s.AtMs).In(tz8).Format("01-02 15:04")
 	case "plan":
 		return fmt.Sprintf("计划 #%d %s", s.PlanID, planStates[s.State])
+	case "script":
+		if s.Script == nil {
+			return "脚本信号"
+		}
+		return fmt.Sprintf("脚本 %s · %s", s.Script.Timeframe, s.Script.Desc)
 	}
 	return s.Type
 }

@@ -7,6 +7,7 @@ import (
 	"crypto-trader-go/internal/alerts"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/signals"
+	"crypto-trader-go/internal/strategyhost"
 )
 
 // signalSources gives signal conditions their data: the market engine, the AI plans and the alert rules.
@@ -92,4 +93,23 @@ func wakeErr(err error) error {
 		return signals.ErrAgentDown
 	}
 	return err
+}
+
+// signalScripts runs script conditions in the strategy container (through the strategy host's
+// supervisor) on the engine's confirmed bars.
+type signalScripts struct {
+	*strategyhost.Host
+	eng *market.Engine
+}
+
+func (s signalScripts) Bars(id, tf string, n int) ([]signals.Candle, error) {
+	xs, err := s.eng.BarsTF(id, tf, n)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]signals.Candle, len(xs))
+	for i, x := range xs {
+		out[i] = signals.Candle{Ts: x.Ts, O: x.O, H: x.H, L: x.L, C: x.C, Vol: x.Vol, VQ: x.Quote}
+	}
+	return out, nil
 }

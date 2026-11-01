@@ -88,9 +88,10 @@ func triOf(b bool) tri {
 // event is what an evaluation reacts to. Each leaf re-reads its source only for the events that can
 // change it and keeps its last value otherwise.
 type event struct {
-	kind   string // init | tick | minute | alert | settle (right after an alert: alert leaves back to false)
+	kind   string // init | tick | minute | alert | settle (right after an alert: alert leaves back to false) | script
 	minute int64  // minute: open time of the confirmed 1m bar just closed
 	alert  *AlertHit
+	script *ScriptEval // script: the subscription's script result for a bar close
 }
 
 const quoteMaxAge = 2 * time.Minute
@@ -212,8 +213,28 @@ func (n *node) eval(src Sources, ev event, now time.Time) tri {
 			}
 		}
 		return n.val
+	case "script":
+		switch {
+		case ev.kind == "minute" && s.scriptDue(ev.minute):
+			n.val = unknown // its bar just closed: unknown until the script's answer for it arrives
+		case ev.kind == "script" && ev.script != nil:
+			n.setScript(ev.script)
+		}
+		return n.val
 	}
 	return unknown
+}
+
+// setScript puts a script result into the tree's script leaf.
+func (n *node) setScript(r *ScriptEval) {
+	for _, k := range n.kids {
+		k.setScript(r)
+	}
+	if n.spec.Type != "script" || r == nil {
+		return
+	}
+	n.val, n.barT = r.tri(), r.At
+	n.note = fmt.Sprintf("%s 收盘 %s：%s", n.spec.Script.Timeframe, time.UnixMilli(r.At).In(tz8).Format("01-02 15:04"), r.text())
 }
 
 func (n *node) livePrice(src Sources, now time.Time, test func(px float64) bool) {

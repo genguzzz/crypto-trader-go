@@ -398,7 +398,7 @@ func TestSignalTools(t *testing.T) {
 		gotChat, gotArgs = chat, a
 		return map[string]any{"signalId": 3}, nil
 	}
-	s.SetSignals(SignalTools{Subscribe: h, List: h, Unsubscribe: h})
+	s.SetSignals(SignalTools{Subscribe: h, List: h, Unsubscribe: h, TestScript: h})
 	mux := http.NewServeMux()
 	s.Mount(mux, nil, nil)
 	ext, _ := s.Create(CreateInput{Name: "ext", RatePerMin: 60, Burst: 10})
@@ -412,7 +412,7 @@ func TestSignalTools(t *testing.T) {
 		return w.Body.String()
 	}
 	sub := `{"spec":{"type":"price","instId":"AAVE-USDT-SWAP","op":"above","level":140.2},"intent":"站上 140.2 追多"}`
-	for _, tool := range []string{"subscribe_signal", "list_signals", "unsubscribe_signal"} {
+	for _, tool := range []string{"subscribe_signal", "list_signals", "unsubscribe_signal", "test_signal_script"} {
 		if out := call(ext.Secret, tool, `{}`); !strings.Contains(out, "unknown tool") {
 			t.Fatalf("%s served to an external key: %s", tool, out)
 		}
@@ -434,6 +434,18 @@ func TestSignalTools(t *testing.T) {
 	}
 	if out := call(owner, "unsubscribe_signal", `{"id":3,"reason":"失效","ownerAsked":true}`); !strings.Contains(out, "signalId") || gotArgs["ownerAsked"] != "true" {
 		t.Fatalf("unsubscribe: %v %s", gotArgs, out)
+	}
+	code := "from ctg import Condition\nclass S(Condition):\n    pass" // arguments are trimmed
+	b, _ := json.Marshal(map[string]any{"code": code})
+	if out := call(owner, "test_signal_script", string(b)); !strings.Contains(out, "signalId") || gotArgs["code"] != code || gotChat != 12 {
+		t.Fatalf("test script: %v %s", gotArgs, out)
+	}
+	b, _ = json.Marshal(map[string]any{"spec": map[string]any{"type": "script"}, "code": code, "intent": "RSI 收回再评估"})
+	if out := call(owner, "subscribe_signal", string(b)); !strings.Contains(out, "signalId") || gotArgs["code"] != code || gotArgs["spec"] != `{"type":"script"}` {
+		t.Fatalf("subscribe script: %v %s", gotArgs, out)
+	}
+	if !strings.Contains(list, `"name":"test_signal_script"`) {
+		t.Fatal("test_signal_script not listed for the owner")
 	}
 }
 

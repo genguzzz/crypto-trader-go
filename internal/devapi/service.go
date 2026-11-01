@@ -125,10 +125,10 @@ type Service struct {
 	signals    *SignalTools                                                               // the agent's signal subscriptions (optional)
 }
 
-// SignalTools are the owner-only subscribe_signal / list_signals / unsubscribe_signal handlers
-// (internal/signals); chat is the X-Ctg-Chat of the call (0 when absent).
+// SignalTools are the owner-only subscribe_signal / list_signals / unsubscribe_signal / test_signal_script
+// handlers (internal/signals); chat is the X-Ctg-Chat of the call (0 when absent). TestScript is optional.
 type SignalTools struct {
-	Subscribe, List, Unsubscribe func(ctx context.Context, chat int64, args map[string]string) (any, error)
+	Subscribe, List, Unsubscribe, TestScript func(ctx context.Context, chat int64, args map[string]string) (any, error)
 }
 
 // SetSignals enables the signal tools (call before Mount).

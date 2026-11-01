@@ -586,7 +586,7 @@ func TestCheckInterval(t *testing.T) {
 		t.Fatalf("subscribe %+v %v", x, err)
 	}
 	f.set(aave, 141)
-	s.evaluate(event{kind: "tick"}) // not a tick subscription
+	s.evaluate(event{kind: "tick"})                               // not a tick subscription
 	m := time.Date(2026, 11, 1, 6, 1, 0, 0, time.UTC).UnixMilli() // the 06:01 bar closes at 06:02: not a 5-minute mark
 	s.evaluate(event{kind: "minute", minute: m})
 	if f.wokenN() != 0 {

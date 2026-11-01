@@ -111,6 +111,31 @@ per-instrument margin and lot size (`internal/trade/risk.go`). One pending signa
 **ta**: Pine-like, numpy only, NaN-safe: `sma ema rma rsi atr tr macd bbands crossover crossunder
 cross highest lowest stdev change`. **portfolio**: `Watchlist` (candidates in `ctx.state`) and `pick`.
 
+## Script signals (`Condition`)
+
+The same SDK writes conditions for signal subscriptions: a `Condition` subclass that the server runs
+on every close of its `timeframe`; the subscription fires when `check` turns from False to True
+(docs/trading-design.md §8, "Script signals"; in-app help 帮助 → 策略 → 脚本信号).
+
+```python
+from ctg import Condition, Fire, ta
+
+class AaveRsiReclaim(Condition):
+    """AAVE 15m RSI 从 30 以下收回"""
+    instruments = ["AAVE-USDT-SWAP"]   # 1–10
+    timeframe = "15m"                  # 1m 5m 15m 1H 4H
+    lookback = 100                     # bars per instrument, 10–500
+    def check(self, ctx, bars):        # {inst: Bars}
+        r = ta.rsi(bars["AAVE-USDT-SWAP"].c, 14)
+        return Fire(r[-2] < 30 <= r[-1], values={"rsi": r[-1]}, note=f"RSI {r[-1]:.1f}")
+```
+
+`check` returns True / False, `Fire(hit, values, note)` or None (unknown). `ctx`: `now`, `timeframe`,
+`instruments`, `bars(inst, n)`, `factors(inst)`. No state between calls; imports only `ctg`, `numpy`,
+`math`, `statistics`, `collections`, `itertools`, `functools`, `typing`; ≤ 8000 bytes; a CPU budget
+per call (`CTG_SIGNAL_SCRIPT_MS`, 200 ms). Scripts run in one long-lived worker (`ctg/condworker.py`)
+started by the supervisor; `ctg/condition.py` has the class, the static checks and the replay.
+
 ## Limits
 
 Each event must be acknowledged within **5 s** (plus 0.5 s per instrument in a bar batch) or the

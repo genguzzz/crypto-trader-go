@@ -229,6 +229,7 @@ func main() {
 		log.Fatal(err)
 	}
 	sig.SetWaker(signalWaker{gate})
+	sig.SetScripts(signalScripts{Host: host, eng: eng})
 	gate.SetOnChatDone(sig.ChatDone)
 	gate.SetOnPlan(sig.LinkPlan)
 	if tradeBot != nil {
@@ -250,7 +251,7 @@ func main() {
 	sig.SetOnChange(func(kind string, id, chat int64) {
 		eng.Publish("signals", map[string]any{"kind": kind, "id": id, "chatId": chat})
 	})
-	dev.SetSignals(devapi.SignalTools{Subscribe: sig.SubscribeTool, List: sig.ListTool, Unsubscribe: sig.UnsubscribeTool})
+	dev.SetSignals(devapi.SignalTools{Subscribe: sig.SubscribeTool, List: sig.ListTool, Unsubscribe: sig.UnsubscribeTool, TestScript: sig.TestScriptTool})
 	rt.SetSignalSource(func(chat int64) (string, bool) {
 		id, ok := sig.WokenBy(chat)
 		if !ok {

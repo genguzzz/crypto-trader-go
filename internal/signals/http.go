@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // Register mounts the owner routes (the owner key is required under /api/v1, reads included):
 //
 //	GET  /api/v1/signals?status=active|fired|ended|all&instId=&chatId=&kind=chat|owner&limit=   {signals, caps, now}
 //	GET  /api/v1/signals/{id}           with the fire history
-//	POST /api/v1/signals                {spec, intent, expiresHours?, maxFires?, cooldownMin?, planId?} — the owner's own (wakes a new chat)
+//	POST /api/v1/signals                {spec, code?, intent, expiresHours?, maxFires?, cooldownMin?, planId?, every?} — the owner's own (wakes a new chat)
 //	POST /api/v1/signals/{id}/cancel    {reason?}
+//	POST /api/v1/signals/test-script    {code} → ScriptTest (compile + replay; nothing is stored)
+//	GET  /api/v1/signals/script-template {code}
 //	GET  /go/chat/{id}                  public, data-free bounce to okxhelper://ai?chat=<id> (Telegram buttons take http(s) only)
 //
 // Changes are pushed as the stream event "signals" {kind, id, chatId}.
@@ -52,8 +55,31 @@ func (s *Service) Register(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, sub)
 	})
+	mux.HandleFunc("GET /api/v1/signals/script-template", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"code": ScriptTemplate, "limits": s.limits()})
+	})
+	mux.HandleFunc("POST /api/v1/signals/test-script", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
+			httpErr(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		t, err := s.TestScript(r.Context(), in.Code)
+		if err != nil {
+			code := http.StatusBadRequest
+			if errors.Is(err, ErrNoScripts) || strings.HasPrefix(err.Error(), "script runner") {
+				code = http.StatusServiceUnavailable
+			}
+			httpErr(w, code, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, t)
+	})
 	mux.HandleFunc("POST /api/v1/signals", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
+			Code         string          `json:"code"`
 			Spec         json.RawMessage `json:"spec"`
 			Intent       string          `json:"intent"`
 			ExpiresHours float64         `json:"expiresHours"`
@@ -62,16 +88,21 @@ func (s *Service) Register(mux *http.ServeMux) {
 			PlanID       int64           `json:"planId"`
 			Every        string          `json:"every"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 			httpErr(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
-		spec, err := ParseSpec(string(in.Spec))
+		raw := string(in.Spec)
+		if (raw == "" || raw == "null") && in.Code != "" {
+			raw = `{"type":"script"}`
+		}
+		spec, err := ParseSpec(raw)
 		if err != nil {
 			httpErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		sub, err := s.Subscribe(SubscribeInput{Spec: spec, Intent: in.Intent, ExpiresHours: in.ExpiresHours, MaxFires: in.MaxFires,
+		spec.fillCode(in.Code)
+		sub, err := s.SubscribeContext(r.Context(), SubscribeInput{Spec: spec, Intent: in.Intent, ExpiresHours: in.ExpiresHours, MaxFires: in.MaxFires,
 			CooldownMin: in.CooldownMin, PlanID: in.PlanID, Every: in.Every})
 		if err != nil {
 			httpErr(w, http.StatusBadRequest, err.Error())

@@ -33,7 +33,8 @@ SANDBOX_SOCKET = os.environ.get("CTG_SANDBOX_SOCKET", "/run/sbx/sbx.sock")
 # reachable through the shell, where Python reduces them to the numbers the answer needs.
 CTG_DIRECT = ("get_instrument", "get_universe", "search_instruments", "get_orderbook", "get_orderflow", "get_liquidations",
               "list_rules", "list_fields", "get_alert_events", "get_system_status", "get_positions", "okx_api", "okx_history",
-              "propose_trade", "get_trade_proposals", "subscribe_signal", "list_signals", "unsubscribe_signal")
+              "propose_trade", "get_trade_proposals", "subscribe_signal", "list_signals", "unsubscribe_signal",
+              "test_signal_script")
 SHELL_MODEL_LIMIT = 8000  # characters of shell output the model sees; the rest stays in files
 CTG_HIDDEN = ("get_candles", "get_series", "get_liquidation_map", "compare_with_majors", "get_rule_track_record", "get_usage")
 MCP_OUTPUT_TOKENS = "6000"  # hard cap per data-tool result (Claude Code truncates beyond it)
@@ -46,7 +47,7 @@ TOOL_LABELS = {
     "get_orderbook": "盘口", "get_liquidations": "强平记录", "get_liquidation_map": "清算地图",
     "compare_with_majors": "对比 BTC/ETH", "get_universe": "监控池", "search_instruments": "搜索合约",
     "list_rules": "规则", "get_rule_track_record": "规则战绩", "get_alert_events": "告警", "get_system_status": "数据状态",
-    "list_fields": "字段定义", "get_usage": "接口额度", "get_positions": "我的仓位", "memory_save": "记一笔", "memory_search": "翻记忆", "memory_forget": "删掉记忆", "okx_api": "查询 OKX 账户", "okx_history": "OKX 账户统计", "propose_trade": "提交交易提议", "get_trade_proposals": "交易提议", "subscribe_signal": "订阅信号", "unsubscribe_signal": "取消订阅", "list_signals": "查看信号", "list_chats": "查看历史对话", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
+    "list_fields": "字段定义", "get_usage": "接口额度", "get_positions": "我的仓位", "memory_save": "记一笔", "memory_search": "翻记忆", "memory_forget": "删掉记忆", "okx_api": "查询 OKX 账户", "okx_history": "OKX 账户统计", "propose_trade": "提交交易提议", "get_trade_proposals": "交易提议", "subscribe_signal": "订阅信号", "unsubscribe_signal": "取消订阅", "list_signals": "查看信号", "test_signal_script": "测试信号脚本", "list_chats": "查看历史对话", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
 }
 # the analysis CLI's commands, as the owner would call them
 CA_LABELS = {
@@ -110,7 +111,12 @@ def brief_input(name: str, inp: Any) -> str:
                 spec = json.loads(spec)
             except ValueError:
                 spec = {}
-        return signal_brief(spec if isinstance(spec, dict) else {})
+        spec = spec if isinstance(spec, dict) else {}
+        if not spec and inp.get("code"):
+            spec = {"type": "script"}
+        return signal_brief(spec, str(inp.get("code") or ""))
+    if short == "test_signal_script":
+        return script_title(str(inp.get("code") or ""))
     if short == "unsubscribe_signal":
         return f"#{inp.get('id', '')}"
     keep = [str(v) for k, v in inp.items() if k in ("instId", "q")]
@@ -118,11 +124,19 @@ def brief_input(name: str, inp: Any) -> str:
     return " · ".join(keep)[:80]
 
 
-def signal_brief(spec: dict) -> str:
+def script_title(code: str) -> str:
+    """A signal script's one-line description (its docstring), else "脚本"."""
+    m = re.search(r'class\s+\w+\s*\([^)]*\)\s*:\s*\n\s*(?:"""|\'\'\')\s*(.+?)\s*(?:"""|\'\'\'|\n)', code)
+    return m.group(1)[:60] if m else "脚本"
+
+
+def signal_brief(spec: dict, code: str = "") -> str:
     """The condition of a subscribe_signal call in a few words (the server writes the full Chinese description)."""
     kind = spec.get("type", "")
+    if kind == "script":
+        return "脚本：" + script_title(str(spec.get("code") or code))
     if kind in ("all", "any"):
-        parts = [signal_brief(c) for c in spec.get("of") or [] if isinstance(c, dict)]
+        parts = [signal_brief(c, code) for c in spec.get("of") or [] if isinstance(c, dict)]
         return (" 且 " if kind == "all" else " 或 ").join(p for p in parts if p)[:80]
     coin = str(spec.get("instId", "")).split("-")[0].upper()
     if kind == "price":

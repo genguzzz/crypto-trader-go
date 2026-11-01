@@ -86,6 +86,9 @@ Parallel development in several worktrees (separate ports and database copies) i
 | `CTG_TRADE_MAX_RUNS_DAY` | 12 | signal / schedule agent runs per 24 h (triggers are off until enabled on the proposals panel) |
 | `CTG_SIGNAL_MAX_ACTIVE` | 30 | active signal subscriptions at once (5 per chat, fixed; expiry ≤ 7 days) ([trading design §8](trading-design.md#8-signal-subscriptions-the-agent-waits-instead-of-being-asked-again-2026-11-01)) |
 | `CTG_SIGNAL_MAX_WAKES_DAY` | 30 | agent wake-ups by fired subscriptions per 24 h; `0` = none (fires are recorded and pushed only). Separate from `CTG_TRADE_MAX_RUNS_DAY` |
+| `CTG_SIGNAL_SCRIPT_MS` | 200 | CPU budget of one script-signal check (ms); its replay is rejected when a check averages over a quarter of it. Fixed caps: ≤ 8000 bytes, ≤ 10 instruments, lookback ≤ 500, 1m–4H, 10 active script subscriptions, one script per subscription ([trading design §8](trading-design.md#script-signals-2026-11-01)) |
+| `CTG_SIGNAL_SCRIPT_FIRES_DAY` | 6 | a script whose 7-day replay fires (false→true) more often per day is rejected |
+| `CTG_SIGNAL_SCRIPT_ERRORS` | 3 | consecutive live script errors (exceptions, CPU budget, a crash or hang of the script worker) that end the subscription (`cancelled` by `system`, pushed). A runner that is down is not counted; 30 min of it is pushed once |
 | `CTG_PUBLIC_URL` | `https://ctg.gugenzzz.top` | origin of the trade bot's 🔍 查看 links |
 | `CTG_SECRET_KEY` | — | at-rest key for the AI credential (else stored plain, noted on the AI page). Lives in `ctg.env` |
 | `GOMEMLIMIT` | 1536MiB in compose | resident heap is ~180 MB (with the full perpetual catalog and caches); container `mem_limit: 2g`. The limit must stay above the resident heap or the GC spins: 180MiB once caused ~20 GCs per second and 1.4 cores of constant CPU |

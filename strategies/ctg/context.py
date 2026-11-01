@@ -67,6 +67,21 @@ class Bars:
     def __len__(self) -> int:
         return len(self.c)
 
+    @classmethod
+    def from_array(cls, a: np.ndarray) -> "Bars":
+        """Bars over an (n, 7) array of rows ts o h l c vol volq, sharing its memory."""
+        b = cls.__new__(cls)
+        b.ts = a[:, 0].astype(np.int64)
+        b.o, b.h, b.l, b.c, b.vol, b.volq = (a[:, i] for i in range(1, 7))
+        return b
+
+    def tail(self, n: int) -> "Bars":
+        """The last n bars."""
+        b = Bars.__new__(Bars)
+        for k in Bars.__slots__:
+            setattr(b, k, getattr(self, k)[max(0, len(self) - int(n)):])
+        return b
+
 
 class Series:
     """A data series, oldest first: numpy arrays ts (bucket open, ms) and v."""

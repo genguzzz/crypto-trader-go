@@ -3,6 +3,7 @@ package signals
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -11,19 +12,24 @@ import (
 // The agent's tools (devapi, owner key only; chat = the X-Ctg-Chat of the call).
 
 // SubscribeTool is subscribe_signal.
-func (s *Service) SubscribeTool(_ context.Context, chat int64, a map[string]string) (any, error) {
+func (s *Service) SubscribeTool(ctx context.Context, chat int64, a map[string]string) (any, error) {
 	if chat <= 0 {
 		return nil, errors.New("subscribe_signal works only inside a conversation (no chat id on this call)")
 	}
-	spec, err := ParseSpec(a["spec"])
+	raw := a["spec"]
+	if strings.TrimSpace(raw) == "" && a["code"] != "" {
+		raw = `{"type":"script"}`
+	}
+	spec, err := ParseSpec(raw)
 	if err != nil {
 		return nil, err
 	}
+	spec.fillCode(a["code"])
 	hours, _ := strconv.ParseFloat(a["expiresHours"], 64)
 	plan, _ := strconv.ParseInt(a["planId"], 10, 64)
 	fires, _ := strconv.Atoi(a["maxFires"])
 	cool, _ := strconv.Atoi(a["cooldownMin"])
-	sub, err := s.Subscribe(SubscribeInput{ChatID: chat, Spec: spec, Intent: a["intent"], ExpiresHours: hours, PlanID: plan, MaxFires: fires, CooldownMin: cool, Every: a["every"]})
+	sub, err := s.SubscribeContext(ctx, SubscribeInput{ChatID: chat, Spec: spec, Intent: a["intent"], ExpiresHours: hours, PlanID: plan, MaxFires: fires, CooldownMin: cool, Every: a["every"]})
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +91,16 @@ func toolRow(x Subscription) map[string]any {
 	}
 	if x.Status != StatusActive {
 		r["endedBy"], r["reason"] = x.EndedBy, x.Reason
+	}
+	if sc := x.Script; sc != nil {
+		info := map[string]any{"timeframe": sc.Timeframe, "instIds": sc.InstIDs, "checks": sc.Checks}
+		if sc.Replay != nil {
+			info["replay"] = fmt.Sprintf("%d fires in %.1f days", sc.Replay.FireCount, sc.Replay.Days)
+		}
+		if sc.Errors > 0 || sc.LastError != "" {
+			info["consecutiveErrors"], info["lastError"] = sc.Errors, sc.LastError
+		}
+		r["script"] = info
 	}
 	return r
 }

@@ -4,6 +4,8 @@ package strategyhost
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -159,5 +161,61 @@ func TestPythonRunner(t *testing.T) {
 	}
 	if !chk.Fatal() || len(chk.Strategies) != 1 || chk.Strategies[0].Name != "bad" {
 		t.Fatalf("check: %+v", chk)
+	}
+
+	// signal scripts: check, a batch with a good, a failing and a runaway script, and a replay
+	const script = "from ctg import Condition, Fire, ta\n" +
+		"class Up(Condition):\n" +
+		"    \"\"\"ETH 收盘高于 EMA5\"\"\"\n" +
+		"    instruments = ['ETH-USDT-SWAP']\n" +
+		"    timeframe = '4H'\n" +
+		"    lookback = 30\n" +
+		"    def check(self, ctx, bars):\n" +
+		"        c = bars['ETH-USDT-SWAP'].c\n" +
+		"        e = ta.ema(c, 5)[-1]\n" +
+		"        return Fire(c[-1] > e, values={'ema': e}, note='close %.1f' % c[-1])\n"
+	cond := func(req map[string]any) map[string]any {
+		t.Helper()
+		raw, err := h.Conditions(ctx, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		return m
+	}
+	if m := cond(map[string]any{"op": "check", "code": script}); m["ok"] != true || m["meta"].(map[string]any)["timeframe"] != "4H" {
+		t.Fatalf("script check: %v", m)
+	}
+	var rows [][7]float64
+	for _, b := range bars {
+		rows = append(rows, [7]float64{float64(b.Ts), b.O, b.H, b.L, b.C, b.Vol, b.VolQ})
+	}
+	now := bars[len(bars)-1].Ts + 4*3_600_000
+	item := func(key int, code string) map[string]any {
+		return map[string]any{"key": key, "code": code, "now": now, "bars": map[string]any{"ETH-USDT-SWAP": rows[len(rows)-30:]}}
+	}
+	broken := strings.Replace(script, "return Fire", "return 1 / 0 or Fire", 1)
+	runaway := strings.Replace(script, "c = bars", "while True:\n            pass\n        c = bars", 1)
+	m := cond(map[string]any{"op": "eval", "budgetMs": 100, "items": []any{item(1, script), item(2, broken), item(3, runaway), item(4, script)}})
+	items := m["items"].([]any)
+	if len(items) != 4 {
+		t.Fatalf("eval: %v", m)
+	}
+	first := items[0].(map[string]any)
+	if first["fire"] != true || first["note"] == "" || items[3].(map[string]any)["fire"] != true {
+		t.Fatalf("eval good: %v", items)
+	}
+	if e := items[1].(map[string]any)["error"]; !strings.Contains(fmt.Sprint(e), "ZeroDivisionError") {
+		t.Fatalf("eval broken: %v", items[1])
+	}
+	if e := items[2].(map[string]any)["error"]; !strings.Contains(fmt.Sprint(e), "预算") {
+		t.Fatalf("eval runaway: %v", items[2])
+	}
+	m = cond(map[string]any{"op": "replay", "code": script, "bars": map[string]any{"ETH-USDT-SWAP": rows}, "start": rows[29][0] + 4*3_600_000, "end": now, "budgetMs": 100})
+	if st, _ := m["states"].(string); len(st) != len(rows)-29 || m["errors"] != float64(0) || m["edgeCount"].(float64) < 1 {
+		t.Fatalf("replay: %v", m)
 	}
 }

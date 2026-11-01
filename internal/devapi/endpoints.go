@@ -531,10 +531,15 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				"value 0 (leaves the extended state) / 1 (enters it) (rev's continuation risk on confirmed 1H bars) · " +
 				`{"type":"alert","ruleId":12,"instId":…?} (an alert rule fires) · {"type":"time","afterMin":120} or {"type":"time","at":"2026-11-02 10:00"} ` +
 				`(UTC+8; a re-check) · {"type":"plan","planId":34,"state":"active"|"tp1"|"done"|"stopped"|"invalid"|"missed"|"expired"|"settled"} ` +
-				`(an AI plan from a plan block reaches that state; active = entry zone touched) · {"type":"all"|"any","of":[…]} (≤ 6 conditions). ` +
+				`(an AI plan from a plan block reaches that state; active = entry zone touched) · {"type":"script"} with the Python in code (a ctg ` +
+				"Condition class run on every close of its timeframe — for indicator, multi-condition or relative logic the built-ins cannot " +
+				"express; test it with test_signal_script first; subscribing runs the same compile + replay check and rejects scripts that error, " +
+				"are slow, would fire more than the daily cap or hold right now; at most one script per subscription, every ≠ tick) · " +
+				`{"type":"all"|"any","of":[…]} (≤ 6 conditions). ` +
 				"Put the invalidation in intent or subscribe it separately. Caps: 5 active per conversation, expiry ≤ 7 days, wake-ups per day are capped.",
 			Params: []Param{
 				{Name: "spec", In: "query", Type: "object", Required: true, Desc: "the condition, see the description"},
+				{Name: "code", In: "query", Type: "string", Desc: "the Python of a script condition ({\"type\":\"script\"} in spec), exactly as tested with test_signal_script"},
 				{Name: "intent", In: "query", Type: "string", Required: true, Desc: "in Chinese: what you will do when it fires — the plan (side, entry, stop, targets) and its invalidation; you read it back on wake-up"},
 				{Name: "expiresHours", In: "query", Type: "number", Default: 24, Desc: "hours until it lapses unfired (0.25–168)"},
 				{Name: "planId", In: "query", Type: "integer", Desc: "the AI plan (```plan block) this setup belongs to, if any"},
@@ -572,6 +577,33 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			write: true,
 			run:   func(ctx context.Context, a Args) (any, error) { return s.signals.Unsubscribe(ctx, chatOf(ctx), a) },
 		})
+		if s.signals.TestScript != nil {
+			eps = append(eps, &Endpoint{
+				Name: "test_signal_script", Path: "test-signal-script", Summary: "Compile a script signal and replay it over recent history (stores nothing)",
+				Desc: "Checks a script condition before subscribe_signal: compiles it (imports only ctg, numpy, math, statistics, collections, " +
+					"itertools, functools, typing; no files or network), reads what it declares and replays check on every close of its timeframe " +
+					"over the last 7 days (≤ 1000 bars incl. lookback). Returns ok, or problem (compile | error | slow | often | unknown | holds | nodata) " +
+					"with the reason; the replay: closes, fires (false→true changes) and fires per day, the last fires with their values, " +
+					"unknown closes, errors, average / max ms, holdsShare, and now (the newest close). Format:\n" +
+					"from ctg import Condition, Fire, ta\n" +
+					"class AaveRsiReclaim(Condition):\n" +
+					"    \"\"\"AAVE 15m RSI 从 30 以下收回\"\"\"          # one line shown with the signal\n" +
+					"    instruments = [\"AAVE-USDT-SWAP\"]           # 1–10\n" +
+					"    timeframe = \"15m\"                          # 1m 5m 15m 1H 4H: check runs on each confirmed close\n" +
+					"    lookback = 100                               # bars per instrument, 10–500\n" +
+					"    def check(self, ctx, bars):                  # bars = {instId: Bars}, numpy ts o h l c vol volq, newest last\n" +
+					"        r = ta.rsi(bars[\"AAVE-USDT-SWAP\"].c, 14)\n" +
+					"        return Fire(r[-2] < 30 <= r[-1], values={\"rsi\": r[-1]}, note=f\"RSI {r[-1]:.1f}\")\n" +
+					"check returns True / False, Fire(hit, values={…≤12 numbers}, note=\"one line\") or None (unknown: never fires). ctx.now (ms, the close), " +
+					"ctx.bars(inst, n), ctx.factors(inst) (fact-panel fields live; NaN in replays). It must be a pure function of the bars: " +
+					"nothing persists between calls. ta: sma ema rma rsi atr tr macd bbands crossover crossunder cross highest lowest stdev change.",
+				Params: []Param{
+					{Name: "code", In: "query", Type: "string", Required: true, Desc: "the Python source (≤ 8000 bytes)"},
+				},
+				owner: true,
+				run:   func(ctx context.Context, a Args) (any, error) { return s.signals.TestScript(ctx, chatOf(ctx), a) },
+			})
+		}
 	}
 	if s.okxRead != nil {
 		eps = append(eps, &Endpoint{

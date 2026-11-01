@@ -9,7 +9,9 @@
 //
 //	active → fired      (maxFires reached)
 //	active → expired    (expiresAt passed)
-//	active → cancelled  (the subscriber, or the owner; by whom and why are kept)
+//	active → cancelled  (the subscriber, or the owner; by whom and why are kept; "system" when a script keeps failing)
+//
+// Script conditions (a Python ctg.Condition run by the strategy container) are in script.go.
 package signals
 
 import (
@@ -24,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -36,7 +39,8 @@ CREATE TABLE IF NOT EXISTS signal_subs(id INTEGER PRIMARY KEY AUTOINCREMENT, cre
   spec TEXT NOT NULL, descr TEXT NOT NULL, intent TEXT NOT NULL DEFAULT '', plan_id INTEGER NOT NULL DEFAULT 0,
   expires_at INTEGER NOT NULL, max_fires INTEGER NOT NULL DEFAULT 1, cooldown_min INTEGER NOT NULL DEFAULT 60,
   fires INTEGER NOT NULL DEFAULT 0, last_fired_at INTEGER NOT NULL DEFAULT 0, state INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL, status_at INTEGER NOT NULL, ended_by TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '');
+  status TEXT NOT NULL, status_at INTEGER NOT NULL, ended_by TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '',
+  script TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS signal_subs_status ON signal_subs(status, expires_at);
 CREATE INDEX IF NOT EXISTS signal_subs_chat ON signal_subs(chat_id);
 CREATE TABLE IF NOT EXISTS signal_fires(id INTEGER PRIMARY KEY AUTOINCREMENT, sub_id INTEGER NOT NULL, ts INTEGER NOT NULL,
@@ -103,11 +107,14 @@ type Notifier func(text, link string)
 
 // Options wire the service.
 type Options struct {
-	MaxActive   int // CTG_SIGNAL_MAX_ACTIVE
-	WakesPerDay int // CTG_SIGNAL_MAX_WAKES_DAY; 0 = the default, negative = none (fires are recorded and pushed only)
-	PublicURL   string
-	Now         func() time.Time
-	Logf        func(format string, args ...any)
+	MaxActive    int     // CTG_SIGNAL_MAX_ACTIVE
+	WakesPerDay  int     // CTG_SIGNAL_MAX_WAKES_DAY; 0 = the default, negative = none (fires are recorded and pushed only)
+	ScriptMs     int     // CTG_SIGNAL_SCRIPT_MS: CPU budget of one script check
+	ScriptPerDay float64 // CTG_SIGNAL_SCRIPT_FIRES_DAY: a script that would fire more often in its replay is rejected
+	ScriptErrors int     // CTG_SIGNAL_SCRIPT_ERRORS: consecutive live errors that end a script subscription
+	PublicURL    string
+	Now          func() time.Time
+	Logf         func(format string, args ...any)
 }
 
 // OptionsFromEnv reads the caps; unset or invalid keeps the default.
@@ -115,6 +122,15 @@ func OptionsFromEnv() Options {
 	o := Options{MaxActive: DefaultMaxActive, WakesPerDay: DefaultWakesPerDay}
 	if v, err := strconv.Atoi(os.Getenv("CTG_SIGNAL_MAX_ACTIVE")); err == nil && v > 0 {
 		o.MaxActive = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("CTG_SIGNAL_SCRIPT_MS")); err == nil && v > 0 {
+		o.ScriptMs = v
+	}
+	if v, err := strconv.ParseFloat(os.Getenv("CTG_SIGNAL_SCRIPT_FIRES_DAY"), 64); err == nil && v > 0 {
+		o.ScriptPerDay = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("CTG_SIGNAL_SCRIPT_ERRORS")); err == nil && v > 0 {
+		o.ScriptErrors = v
 	}
 	if v, err := strconv.Atoi(os.Getenv("CTG_SIGNAL_MAX_WAKES_DAY")); err == nil && v >= 0 {
 		o.WakesPerDay = v
@@ -127,30 +143,31 @@ func OptionsFromEnv() Options {
 
 // Subscription is one stored subscription (the list and detail views).
 type Subscription struct {
-	ID          int64     `json:"id"`
-	Created     int64     `json:"created"`
-	Updated     int64     `json:"updated"`
-	Kind        string    `json:"kind"` // chat | owner
-	ChatID      int64     `json:"chatId,omitempty"`
-	Label       string    `json:"label"`      // the chat's title when subscribed
-	Subscriber  string    `json:"subscriber"` // AI 对话 #12 · 标题 | 主人
-	InstIDs     []string  `json:"instIds"`
-	Spec        Spec      `json:"spec"`
-	Desc        string    `json:"desc"`
-	Intent      string    `json:"intent"`
-	PlanID      int64     `json:"planId,omitempty"`
-	ExpiresAt   int64     `json:"expiresAt"`
-	MaxFires    int       `json:"maxFires"`
-	CooldownMin int       `json:"cooldownMin"`
-	FireCount   int       `json:"fireCount"`
-	LastFiredAt int64     `json:"lastFiredAt,omitempty"`
-	Status      string    `json:"status"`
-	StatusAt    int64     `json:"statusAt"`
-	EndedBy     string    `json:"endedBy,omitempty"`
-	Reason      string    `json:"reason,omitempty"`
-	Levels      []Level   `json:"levels,omitempty"`
-	Progress    *Progress `json:"progress,omitempty"` // active only
-	History     []Fire    `json:"history,omitempty"`  // detail only
+	ID          int64       `json:"id"`
+	Created     int64       `json:"created"`
+	Updated     int64       `json:"updated"`
+	Kind        string      `json:"kind"` // chat | owner
+	ChatID      int64       `json:"chatId,omitempty"`
+	Label       string      `json:"label"`      // the chat's title when subscribed
+	Subscriber  string      `json:"subscriber"` // AI 对话 #12 · 标题 | 主人
+	InstIDs     []string    `json:"instIds"`
+	Spec        Spec        `json:"spec"`
+	Desc        string      `json:"desc"`
+	Intent      string      `json:"intent"`
+	PlanID      int64       `json:"planId,omitempty"`
+	ExpiresAt   int64       `json:"expiresAt"`
+	MaxFires    int         `json:"maxFires"`
+	CooldownMin int         `json:"cooldownMin"`
+	FireCount   int         `json:"fireCount"`
+	LastFiredAt int64       `json:"lastFiredAt,omitempty"`
+	Status      string      `json:"status"`
+	StatusAt    int64       `json:"statusAt"`
+	EndedBy     string      `json:"endedBy,omitempty"`
+	Reason      string      `json:"reason,omitempty"`
+	Levels      []Level     `json:"levels,omitempty"`
+	Progress    *Progress   `json:"progress,omitempty"` // active only
+	History     []Fire      `json:"history,omitempty"`  // detail only
+	Script      *ScriptInfo `json:"script,omitempty"`   // script conditions: code, declarations, replay, live checks
 	state       tri
 }
 
@@ -180,17 +197,33 @@ type Service struct {
 	waker    Waker
 	notify   Notifier
 	onChange func(kind string, id, chat int64)
+	scripts  ScriptBackend
 
 	ticks   chan struct{}
 	minutes chan int64
 	alerts  chan AlertHit
 	wakes   chan struct{}
 	evalMu  sync.Mutex // one evaluation at a time (loop, subscribe)
+
+	scriptRes  chan scriptBatch
+	scriptBusy atomic.Bool
+	infraSince time.Time // first of consecutive script batches that could not run (evalMu)
+	infraNoted bool
 }
 
 type liveSub struct {
-	sub  Subscription
-	root *node
+	sub    Subscription
+	root   *node
+	script *ScriptState // script subscriptions only
+}
+
+func newLive(sub Subscription, root *node) *liveSub {
+	l := &liveSub{sub: sub, root: root}
+	if sub.Script != nil {
+		st := sub.Script.ScriptState
+		l.script = &st
+	}
+	return l
 }
 
 // New creates the tables and loads the active subscriptions.
@@ -204,6 +237,15 @@ func New(st *store.Store, src Sources, opts Options) (*Service, error) {
 	case opts.WakesPerDay < 0:
 		opts.WakesPerDay = 0
 	}
+	if opts.ScriptMs <= 0 {
+		opts.ScriptMs = DefaultScriptMs
+	}
+	if opts.ScriptPerDay <= 0 {
+		opts.ScriptPerDay = DefaultScriptPerDay
+	}
+	if opts.ScriptErrors <= 0 {
+		opts.ScriptErrors = DefaultScriptErrors
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -212,16 +254,24 @@ func New(st *store.Store, src Sources, opts Options) (*Service, error) {
 	}
 	opts.PublicURL = strings.TrimRight(opts.PublicURL, "/")
 	s := &Service{st: st, db: st.DB, src: src, opts: opts, now: opts.Now, logf: opts.Logf, live: map[int64]*liveSub{},
-		ticks: make(chan struct{}, 1), minutes: make(chan int64, 8), alerts: make(chan AlertHit, 64), wakes: make(chan struct{}, 1)}
+		ticks: make(chan struct{}, 1), minutes: make(chan int64, 8), alerts: make(chan AlertHit, 64), wakes: make(chan struct{}, 1),
+		scriptRes: make(chan scriptBatch, 4)}
 	if _, err := s.db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("signals schema: %w", err)
+	}
+	var has int // script (2026-11-01): tables made before it get the column
+	s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('signal_subs') WHERE name='script'`).Scan(&has)
+	if has == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE signal_subs ADD COLUMN script TEXT NOT NULL DEFAULT ''`); err != nil {
+			return nil, fmt.Errorf("signals schema: %w", err)
+		}
 	}
 	subs, err := s.query(`status='active'`, nil, 1000)
 	if err != nil {
 		return nil, err
 	}
 	for _, sub := range subs {
-		s.live[sub.ID] = &liveSub{sub: sub, root: build(sub.Spec)}
+		s.live[sub.ID] = newLive(sub, build(sub.Spec))
 	}
 	return s, nil
 }
@@ -288,6 +338,7 @@ func (s *Service) Run(ctx context.Context) {
 	s.evaluate(event{kind: "init"}) // catch up on what changed while the server was down
 	s.keep()
 	s.processQueue()
+	s.startScripts(ctx, s.scriptsDue(s.now().UnixMilli()/60_000*60_000-120_000, true)) // scripts: their newest close
 	for {
 		select {
 		case <-ctx.Done():
@@ -297,7 +348,10 @@ func (s *Service) Run(ctx context.Context) {
 		case m := <-s.minutes:
 			s.expireDue()
 			s.evaluate(event{kind: "minute", minute: m})
+			s.startScripts(ctx, s.scriptsDue(m, false))
 			s.processQueue()
+		case b := <-s.scriptRes:
+			s.applyScripts(b)
 		case h := <-s.alerts:
 			s.evaluate(event{kind: "alert", alert: &h})
 		case <-s.wakes:
@@ -325,22 +379,27 @@ func (s *Service) evaluate(ev event) {
 		if ev.kind == "minute" && !l.sub.Spec.due(ev.minute) {
 			continue
 		}
-		if now.UnixMilli() >= l.sub.ExpiresAt {
-			continue // expireDue ends it
-		}
-		v := l.root.eval(s.src, ev, now)
-		if v == unknown {
-			continue
-		}
-		prev := l.sub.state
-		s.setState(l, v)
-		if v == yes && prev == no && (l.sub.LastFiredAt == 0 || now.Sub(time.UnixMilli(l.sub.LastFiredAt)) >= time.Duration(l.sub.CooldownMin)*time.Minute) {
-			s.fire(l, now)
-		}
-		if ev.kind == "alert" && l.sub.Status == StatusActive { // an alert is a moment: its leaves are false again right after
-			if v := l.root.eval(s.src, event{kind: "settle"}, now); v != unknown {
-				s.setState(l, v)
-			}
+		s.check(l, ev, now)
+	}
+}
+
+// check evaluates one subscription on an event and fires it on the edge from false to true. Caller holds evalMu.
+func (s *Service) check(l *liveSub, ev event, now time.Time) {
+	if now.UnixMilli() >= l.sub.ExpiresAt {
+		return // expireDue ends it
+	}
+	v := l.root.eval(s.src, ev, now)
+	if v == unknown {
+		return
+	}
+	prev := l.sub.state
+	s.setState(l, v)
+	if v == yes && prev == no && (l.sub.LastFiredAt == 0 || now.Sub(time.UnixMilli(l.sub.LastFiredAt)) >= time.Duration(l.sub.CooldownMin)*time.Minute) {
+		s.fire(l, now)
+	}
+	if ev.kind == "alert" && l.sub.Status == StatusActive { // an alert is a moment: its leaves are false again right after
+		if v := l.root.eval(s.src, event{kind: "settle"}, now); v != unknown {
+			s.setState(l, v)
 		}
 	}
 }
@@ -630,6 +689,11 @@ type SubscribeInput struct {
 
 // Subscribe validates the condition (it must be known and false right now), checks the caps and stores it.
 func (s *Service) Subscribe(in SubscribeInput) (Subscription, error) {
+	return s.SubscribeContext(context.Background(), in)
+}
+
+// SubscribeContext is Subscribe; ctx bounds a script's validation (compile + replay, seconds).
+func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subscription, error) {
 	now := s.now()
 	in.Intent = strings.TrimSpace(in.Intent)
 	switch {
@@ -641,6 +705,10 @@ func (s *Service) Subscribe(in SubscribeInput) (Subscription, error) {
 	spec := in.Spec
 	if in.Every != "" {
 		spec.Every = in.Every
+	}
+	replay, err := s.prepareScript(ctx, &spec)
+	if err != nil {
+		return Subscription{}, err
 	}
 	if err := spec.normalize(s.src, now, 0); err != nil {
 		return Subscription{}, err
@@ -700,6 +768,11 @@ func (s *Service) Subscribe(in SubscribeInput) (Subscription, error) {
 	s.evalMu.Lock()
 	defer s.evalMu.Unlock()
 	root := build(spec)
+	var script *ScriptState
+	if replay != nil {
+		script = &ScriptState{Replay: replay, Last: replay.Now}
+		root.setScript(replay.Now)
+	}
 	switch root.eval(s.src, event{kind: "init"}, now) {
 	case unknown:
 		return Subscription{}, fmt.Errorf("no current data for: %s — cannot watch it yet", strings.Join(root.unknowns(), "；"))
@@ -708,6 +781,11 @@ func (s *Service) Subscribe(in SubscribeInput) (Subscription, error) {
 			"Act on it now, or subscribe to the next level", strings.Join(root.observed(), "；"))
 	}
 	raw, _ := json.Marshal(spec)
+	scriptRaw := ""
+	if script != nil {
+		b, _ := json.Marshal(script)
+		scriptRaw = string(b)
+	}
 	desc := spec.Describe()
 	auto := spec
 	auto.Every = ""
@@ -715,9 +793,9 @@ func (s *Service) Subscribe(in SubscribeInput) (Subscription, error) {
 		desc += "（" + everyText[spec.Every] + "检查）"
 	}
 	res, err := s.db.Exec(`INSERT INTO signal_subs(created, updated, kind, chat_id, label, inst_ids, spec, descr, intent, plan_id, expires_at,
-		max_fires, cooldown_min, state, status, status_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		max_fires, cooldown_min, state, status, status_at, script) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now.UnixMilli(), now.UnixMilli(), kind, in.ChatID, label, strings.Join(spec.InstIDs(), ","), string(raw), desc, in.Intent, in.PlanID,
-		now.Add(exp).UnixMilli(), maxFires, cool, int(no), StatusActive, now.UnixMilli())
+		now.Add(exp).UnixMilli(), maxFires, cool, int(no), StatusActive, now.UnixMilli(), scriptRaw)
 	if err != nil {
 		return Subscription{}, err
 	}
@@ -727,7 +805,7 @@ func (s *Service) Subscribe(in SubscribeInput) (Subscription, error) {
 		return sub, err
 	}
 	s.mu.Lock()
-	s.live[id] = &liveSub{sub: sub, root: root}
+	s.live[id] = newLive(sub, root)
 	s.mu.Unlock()
 	s.keep()
 	s.changed("subscribed", id, in.ChatID)
@@ -780,19 +858,20 @@ func (s *Service) CancelFor(chat, id int64, reason string, ownerAsked bool) (Sub
 // ---------- reads ----------
 
 const subCols = `id, created, updated, kind, chat_id, label, spec, descr, intent, plan_id, expires_at, max_fires, cooldown_min,
-  fires, last_fired_at, state, status, status_at, ended_by, reason`
+  fires, last_fired_at, state, status, status_at, ended_by, reason, script`
 
 func scanSub(row interface{ Scan(...any) error }) (Subscription, error) {
 	var x Subscription
-	var raw string
+	var raw, script string
 	var st int
 	err := row.Scan(&x.ID, &x.Created, &x.Updated, &x.Kind, &x.ChatID, &x.Label, &raw, &x.Desc, &x.Intent, &x.PlanID, &x.ExpiresAt,
-		&x.MaxFires, &x.CooldownMin, &x.FireCount, &x.LastFiredAt, &st, &x.Status, &x.StatusAt, &x.EndedBy, &x.Reason)
+		&x.MaxFires, &x.CooldownMin, &x.FireCount, &x.LastFiredAt, &st, &x.Status, &x.StatusAt, &x.EndedBy, &x.Reason, &script)
 	if err != nil {
 		return x, err
 	}
 	x.state = tri(st)
 	json.Unmarshal([]byte(raw), &x.Spec)
+	x.Script = scriptInfo(x.Spec, script)
 	x.InstIDs = x.Spec.InstIDs()
 	if x.InstIDs == nil {
 		x.InstIDs = []string{}
@@ -833,7 +912,7 @@ func (s *Service) Get(id int64) (Subscription, error) {
 		x.History = append(x.History, f)
 	}
 	if x.Status == StatusActive {
-		x.Progress = progress(x.Spec, s.src, s.now())
+		x.Progress = s.progress(x)
 	}
 	return x, rows.Err()
 }
@@ -899,25 +978,37 @@ func (s *Service) query(where string, args []any, limit int) ([]Subscription, er
 	if s.src != nil {
 		for i := range out {
 			if out[i].Status == StatusActive {
-				out[i].Progress = progress(out[i].Spec, s.src, now)
+				out[i].Progress = s.progressAt(out[i], now)
 			}
 		}
 	}
 	return out, nil
 }
 
+func (s *Service) progress(x Subscription) *Progress { return s.progressAt(x, s.now()) }
+
+// progressAt is the distance to firing; a script without a price leaf shows its newest check.
+func (s *Service) progressAt(x Subscription, now time.Time) *Progress {
+	if p := progress(x.Spec, s.src, now); p != nil || x.Script == nil {
+		return p
+	}
+	return scriptProgress(x.Script)
+}
+
 // Caps is the configured limits and today's use.
 type Caps struct {
-	MaxActive   int `json:"maxActive"`
-	PerChat     int `json:"perChat"`
-	WakesPerDay int `json:"wakesPerDay"`
-	WakesToday  int `json:"wakesToday"`
-	Active      int `json:"active"`
-	MaxDays     int `json:"maxDays"`
+	MaxActive   int          `json:"maxActive"`
+	PerChat     int          `json:"perChat"`
+	WakesPerDay int          `json:"wakesPerDay"`
+	WakesToday  int          `json:"wakesToday"`
+	Active      int          `json:"active"`
+	MaxDays     int          `json:"maxDays"`
+	Scripts     ScriptLimits `json:"scripts"`
 }
 
 func (s *Service) Caps() Caps {
-	c := Caps{MaxActive: s.opts.MaxActive, PerChat: MaxPerChat, WakesPerDay: s.opts.WakesPerDay, WakesToday: s.wakesToday(s.now()), MaxDays: int(MaxExpiry.Hours() / 24)}
+	c := Caps{MaxActive: s.opts.MaxActive, PerChat: MaxPerChat, WakesPerDay: s.opts.WakesPerDay, WakesToday: s.wakesToday(s.now()), MaxDays: int(MaxExpiry.Hours() / 24),
+		Scripts: s.limits()}
 	s.db.QueryRow(`SELECT COUNT(*) FROM signal_subs WHERE status='active'`).Scan(&c.Active)
 	return c
 }
