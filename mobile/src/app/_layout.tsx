@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { ActivityIndicator, AppState, Platform, View } from "react-native";
 import { Stack, router, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -10,6 +10,7 @@ import { FloatingOrb } from "@/components/ai/FloatingOrb";
 import { ToastHost, toast } from "@/components/ui";
 import { loadAdminKey } from "@/lib/adminKey";
 import { initAi, useAiSelect } from "@/lib/ai";
+import { usePendingProposals } from "@/lib/realtrade";
 import { appVersion } from "@/lib/api";
 import { flush, installGlobalHandlers, logger, pruneLogs, sessionId } from "@/lib/log";
 import { startLive } from "@/lib/market";
@@ -51,6 +52,15 @@ export default function RootLayout() {
   useEffect(() => {
     if (unread) toast("AI 回答好了", undefined, { label: "查看", onPress: () => router.push("/ai") });
   }, [unread]);
+
+  // AI trade proposals: a new pending one says so once (the orb carries the count)
+  const newest = usePendingProposals().reduce((m, p) => Math.max(m, p.id), 0);
+  const seen = useRef(0);
+  useEffect(() => {
+    if (newest <= seen.current) return;
+    seen.current = newest;
+    toast("AI 提议了一笔交易", "等你审核", { label: "查看", onPress: () => router.push("/ai?pane=trades") });
+  }, [newest]);
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => {

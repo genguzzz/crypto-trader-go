@@ -1,21 +1,25 @@
 // History and memory as panes inside the AI sheet (they slide over the chat). They used to be modal
 // routes pushed from the sheet, and a modal presented from a form sheet showed but took no touches.
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { addNote, deleteChat, deleteNote, loadChats, loadNotes, openChat, useAi } from "@/lib/ai";
 import { colors, fs, radius } from "@/lib/theme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { copy } from "@/lib/device";
-import { EmptyState, ErrorBox, Loading, Pull, confirm, tap, toast, toastError, styles } from "@/components/ui";
+import { EmptyState, ErrorBox, Loading, Pull, Tag, confirm, tap, toast, toastError, styles } from "@/components/ui";
+import { ProposalCard } from "@/components/ai/ProposalCard";
+import { useQuery } from "@/lib/query";
+import { refreshProposals, rtApi, usePendingProposals, useRealtrade, useRecentProposals, type RtConfig } from "@/lib/realtrade";
 
-function PaneHeader({ title, onClose }: { title: string; onClose: () => void }) {
+function PaneHeader({ title, onClose, right }: { title: string; onClose: () => void; right?: ReactNode }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingTop: Platform.OS === "web" ? 12 : 18, paddingHorizontal: 8, paddingBottom: 8, borderBottomWidth: 1, borderColor: colors.border }}>
       <Pressable hitSlop={10} accessibilityLabel="返回对话" onPress={() => { tap(); onClose(); }} style={{ width: 40, height: 36, justifyContent: "center", alignItems: "center" }}>
         <Ionicons name="chevron-back" size={24} color={colors.text} />
       </Pressable>
       <Text style={{ flex: 1, fontSize: 17, fontWeight: "600", color: colors.text }}>{title}</Text>
+      {right ? <View style={{ paddingRight: 8 }}>{right}</View> : null}
     </View>
   );
 }
@@ -146,6 +150,42 @@ export function NotesPane({ onClose }: { onClose: () => void }) {
           ))}
         </ScrollView>
       </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+/** AI trade proposals: pending first, then recent ones, with the server's mode and limits. Owner only. */
+export function ProposalsPane({ onClose }: { onClose: () => void }) {
+  const owner = useRealtrade((r) => r.owner);
+  const mode = useRealtrade((r) => r.mode);
+  const pending = usePendingProposals();
+  const recent = useRecentProposals();
+  const cfg = useQuery<RtConfig>(owner ? "rt:config" : null, () => rtApi.config(), { staleMs: 60_000 });
+  const list = [...pending, ...(recent ?? []).filter((p) => p.status !== "pending" && !pending.some((x) => x.id === p.id))];
+  const lim = cfg.data?.limits;
+  const tg = cfg.data?.telegram;
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <PaneHeader title="交易提议" onClose={onClose} right={mode ? <Tag text={mode === "dryrun" ? "DRY RUN" : "LIVE"} tone={mode === "dryrun" ? "warn" : "bad"} /> : null} />
+      {!owner ? (
+        <EmptyState icon="key-outline" text="交易提议只对所有者可见，在设置里填入所有者密钥。" />
+      ) : (
+        <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 40 }} refreshControl={<Pull onRefresh={() => Promise.all([refreshProposals(), cfg.refresh()])} />}>
+          <Text style={[styles.note, { marginHorizontal: 4, marginBottom: 4 }]}>
+            {mode === "live" ? "LIVE：同意后以市价在 OKX 真实下单（逐仓，带止盈止损）。" : "DRY RUN：同意后只生成并记录下单请求，不会真实下单。"}
+            {"AI 在对话或信号触发时提议，Telegram、网页、App 任一处先答复为准。"}
+          </Text>
+          {lim ? (
+            <Text style={[styles.note, { marginHorizontal: 4, marginBottom: 6 }]}>
+              {`杠杆 ≤ ${lim.maxLeverage}× · 单笔保证金 ≤ ${lim.maxMarginUsdt} U · 同时 ≤ ${lim.maxOpen} 笔 · 日亏损上限 ${lim.dailyLossUsdt} U · 盈亏比 ≥ ${lim.minRR} · ${lim.expiryMin} 分钟未审核自动过期`}
+              {tg ? ` · Telegram ${tg.enabled ? tg.state || "已开启" : "未开启"}` : ""}
+            </Text>
+          ) : null}
+          {recent === null && !pending.length ? <Loading text="加载提议" /> : null}
+          {recent !== null && !list.length ? <EmptyState icon="receipt-outline" text="还没有交易提议" /> : null}
+          {list.map((p) => <ProposalCard key={p.id} p={p} />)}
+        </ScrollView>
+      )}
     </View>
   );
 }

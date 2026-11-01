@@ -1,12 +1,13 @@
 // AI research assistant (native port of web components/ai/AiPanel.vue): streamed answers with
 // Claude-style step lists, generative-UI blocks and Markdown; model switch; history and memory
 // (pushed screens); one-click analysis of the instrument opened from its page; tap-to-talk mic in
-// the composer and hold-to-talk on the orb. State and the connection live in lib/ai.ts.
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+// the composer and hold-to-talk on the orb; AI trade proposals (cards under their propose_trade step,
+// the 交易提议 pane, `?pane=trades` opens it). State and the connection live in lib/ai.ts.
+import { Fragment, memo, useCallback, useEffect, useRef, useState } from "react";
 import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View, type ScrollViewInstance, type TextInputInstance } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AI_MODELS, ai, clearContext, newChat, retry, send, setModel, setOpen, stop, textOf, useAi, type Msg } from "@/lib/ai";
 import { copy, haptic } from "@/lib/device";
@@ -17,7 +18,9 @@ import { AiBlock } from "@/components/ai/AiBlock";
 import { AiSteps, type StepItem } from "@/components/ai/AiSteps";
 import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
-import { HistoryPane, NotesPane, SelectPane, plainText } from "@/components/ai/AiPanes";
+import { HistoryPane, NotesPane, ProposalsPane, SelectPane, plainText } from "@/components/ai/AiPanes";
+import { ProposalById, ProposalChartHost, proposalIds } from "@/components/ai/ProposalCard";
+import { usePendingProposals, useRealtrade } from "@/lib/realtrade";
 import { VoiceWave } from "@/components/ai/VoiceWave";
 import { segments } from "@/components/ai/blocks";
 
@@ -49,6 +52,7 @@ function phaseOf(m: Msg, now: number): "thinking" | "typing" | "tool" | "reasoni
 }
 
 const flash = (m: string) => toast(m, undefined, undefined, true);
+type Pane = "history" | "notes" | "select" | "trades";
 
 export default function AiScreen() {
   const { width } = useWindowDimensions();
@@ -57,10 +61,12 @@ export default function AiScreen() {
   const insets = useSafeAreaInsets();
   const [input, setInput] = useState("");
   // history / memory slide over the chat inside this sheet (a modal pushed from the sheet took no touches)
-  const [pane, setPane] = useState<"history" | "notes" | "select" | null>(null);
+  // ?pane=trades (the 「AI 提议了一笔交易」 toast) opens with the proposals pane in place
+  const { pane: paneParam } = useLocalSearchParams<{ pane?: string }>();
+  const [pane, setPane] = useState<Pane | null>(paneParam === "trades" ? "trades" : null);
   const [selText, setSelText] = useState("");
-  const [slide] = useState(() => new Animated.Value(0));
-  const showPane = (p: "history" | "notes" | "select" | null) => {
+  const [slide] = useState(() => new Animated.Value(paneParam === "trades" ? 1 : 0));
+  const showPane = (p: Pane | null) => {
     if (p) {
       setPane(p);
       slide.setValue(0);
@@ -77,6 +83,9 @@ export default function AiScreen() {
     showPane("select");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // owner only: pending trade proposals → badge on the header button
+  const owner = useRealtrade((r) => r.owner);
+  const pendingN = usePendingProposals().length;
   const [kb, setKb] = useState(false);
   const scroller = useRef<ScrollViewInstance>(null);
   const inputRef = useRef<TextInputInstance>(null);
@@ -169,6 +178,7 @@ export default function AiScreen() {
             <Ionicons name="swap-horizontal" size={11} color={colors.textFaint} />
           </Pressable>
         </View>
+        {owner ? <HeadButton icon="receipt-outline" label="交易提议" badge={pendingN} onPress={() => showPane("trades")} /> : null}
         <HeadButton icon="bulb-outline" label="偏好与记忆" onPress={() => showPane("notes")} />
         <HeadButton icon="time-outline" label="历史对话" onPress={() => showPane("history")} />
         <HeadButton icon="create-outline" label="新对话" onPress={fresh} />
@@ -297,17 +307,26 @@ export default function AiScreen() {
       {pane ? (
         <Animated.View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 10, backgroundColor: colors.bg,
           transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [width, 0] }) }] }}>
-          {pane === "history" ? <HistoryPane onClose={() => showPane(null)} /> : pane === "select" ? <SelectPane text={selText} onClose={() => showPane(null)} /> : <NotesPane onClose={() => showPane(null)} />}
+          {pane === "history" ? <HistoryPane onClose={() => showPane(null)} />
+            : pane === "select" ? <SelectPane text={selText} onClose={() => showPane(null)} />
+            : pane === "trades" ? <ProposalsPane onClose={() => showPane(null)} />
+            : <NotesPane onClose={() => showPane(null)} />}
         </Animated.View>
       ) : null}
+      <ProposalChartHost />
     </GestureHandlerRootView>
   );
 }
 
-function HeadButton({ icon, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void }) {
+function HeadButton({ icon, label, onPress, badge }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void; badge?: number }) {
   return (
-    <Pressable hitSlop={4} accessibilityLabel={label} onPress={() => { tap(); onPress(); }} style={({ pressed }) => ({ width: 32, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.cardMuted : undefined })}>
-      <Ionicons name={icon} size={19} color={colors.textSoft} />
+    <Pressable hitSlop={4} accessibilityLabel={badge ? `${label}，${badge} 条待审核` : label} onPress={() => { tap(); onPress(); }} style={({ pressed }) => ({ width: 32, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.cardMuted : undefined })}>
+      <Ionicons name={icon} size={19} color={badge ? colors.warn : colors.textSoft} />
+      {badge ? (
+        <View pointerEvents="none" style={{ position: "absolute", top: 1, right: -1, minWidth: 15, height: 15, paddingHorizontal: 3, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.warn }}>
+          <Text style={{ fontSize: 10, fontWeight: "700", color: "#000" }}>{badge}</Text>
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -352,7 +371,10 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
     <Pressable onLongPress={!live && text ? () => onSelect(text) : undefined} delayLongPress={350} style={{ marginTop: 8, marginBottom: 4 }}>
       {gs.map((g, gi) =>
         g.k === "tools" ? (
-          <AiSteps key={gi} items={g.items} live={live} tail={gi === gs.length - 1} />
+          <Fragment key={gi}>
+            <AiSteps items={g.items} live={live} tail={gi === gs.length - 1} />
+            {proposalIds(g.items).map((id) => <ProposalById key={id} id={id} />)}
+          </Fragment>
         ) : (
           <View key={gi}>
             {(() => {

@@ -1,6 +1,7 @@
 // The global AI orb (web AiOrb.vue): floats centred above the tab bar on every screen. Tap opens
 // the chat sheet (with the coin of an instrument page as context); press and hold talks — a capsule
-// with a live waveform shows above it, slide up to cancel, release to transcribe and send.
+// with a live waveform shows above it, slide up to cancel, release to transcribe and send. A count
+// badge marks AI trade proposals waiting for the owner (lib/realtrade.ts).
 import { useEffect, useState } from "react";
 import { Animated, Easing, Text, View } from "react-native";
 import { router, usePathname } from "expo-router";
@@ -12,6 +13,7 @@ import { newChat, send, setContext, useAiSelect } from "@/lib/ai";
 import { colors, fs, tnum } from "@/lib/theme";
 import { VoiceWave } from "@/components/ai/VoiceWave";
 import { useHoldToTalk } from "@/lib/voice";
+import { usePendingProposals } from "@/lib/realtrade";
 
 const SIZE = 54; // web .orb
 const NEW_DX = 96; // centre of the 新对话 bubble, left of the orb centre (the zone starts at 70 px, lib/voice.ts)
@@ -29,6 +31,7 @@ export function FloatingOrb() {
   const insets = useSafeAreaInsets();
   const running = useAiSelect((a) => a.running);
   const unread = useAiSelect((a) => a.unread);
+  const pending = usePendingProposals().length;
   const talk = useHoldToTalk({
     newChat: true,
     onTap: () => open(pathname),
@@ -116,7 +119,12 @@ export function FloatingOrb() {
           </Animated.View>
           {rec ? <NewChatBubble on={talk.newZone} /> : null}
           {running ? <Satellite /> : null}
-          {unread && !running ? <View pointerEvents="none" style={{ position: "absolute", top: 2, right: 2, width: 11, height: 11, borderRadius: 6, backgroundColor: colors.warn, borderWidth: 2, borderColor: "#000" }} /> : null}
+          {pending ? (
+            <View pointerEvents="none" style={{ position: "absolute", top: -3, right: -5, minWidth: 19, height: 19, paddingHorizontal: 4, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.warn, borderWidth: 2, borderColor: "#000" }}>
+              <Text style={[{ fontSize: 10, fontWeight: "800", color: "#000" }, tnum]}>{pending}</Text>
+            </View>
+          ) : null}
+          {unread && !running ? <View pointerEvents="none" style={{ position: "absolute", top: pending ? undefined : 2, bottom: pending ? 2 : undefined, right: 2, width: 11, height: 11, borderRadius: 6, backgroundColor: colors.warn, borderWidth: 2, borderColor: "#000" }} /> : null}
         </View>
       </Animated.View>
     </>
