@@ -205,3 +205,21 @@ func TestLiveSendsThroughProxy(t *testing.T) {
 		t.Fatal("live without a key")
 	}
 }
+
+func TestLeverageRange(t *testing.T) {
+	lim := Limits{MinLeverage: 5, MaxLeverage: 8}
+	for lev, ok := range map[int]bool{4: false, 5: true, 8: true, 9: false} {
+		in := intent()
+		in.Leverage = lev
+		_, err := Build(in, btc, 100000, LongShortMode, lim)
+		if (err == nil) != ok {
+			t.Errorf("%d×: %v", lev, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "5–8×") {
+			t.Errorf("%d×: message %v", lev, err)
+		}
+	}
+	if l := (Limits{MinLeverage: 10, MaxLeverage: 8}).WithDefaults(); l.MinLeverage != 1 {
+		t.Fatalf("a floor above the cap is ignored: %+v", l)
+	}
+}

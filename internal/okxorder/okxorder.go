@@ -49,6 +49,7 @@ type Spec struct {
 
 // Limits bound a single order. Zero fields take the conservative defaults (DefaultLimits).
 type Limits struct {
+	MinLeverage   int     `json:"minLeverage"` // the owner's floor (0 = 1×)
 	MaxLeverage   int     `json:"maxLeverage"`
 	MaxMarginUSDT float64 `json:"maxMarginUsdt"` // isolated margin per trade
 	MinStopPct    float64 `json:"minStopPct"`    // stop distance from the mark, % (noise floor)
@@ -64,6 +65,9 @@ func (l Limits) WithDefaults() Limits {
 	d := DefaultLimits
 	if l.MaxLeverage <= 0 {
 		l.MaxLeverage = d.MaxLeverage
+	}
+	if l.MinLeverage <= 0 || l.MinLeverage > l.MaxLeverage {
+		l.MinLeverage = 1
 	}
 	if l.MaxMarginUSDT <= 0 {
 		l.MaxMarginUSDT = d.MaxMarginUSDT
@@ -128,8 +132,8 @@ func Check(in Intent, mark float64, lim Limits) (Sizing, error) {
 	if in.Side != "long" && in.Side != "short" {
 		return z, errors.New("side must be long or short")
 	}
-	if in.Leverage < 1 || in.Leverage > lim.MaxLeverage {
-		return z, fmt.Errorf("leverage must be 1–%d×", lim.MaxLeverage)
+	if in.Leverage < max(lim.MinLeverage, 1) || in.Leverage > lim.MaxLeverage {
+		return z, fmt.Errorf("leverage must be %d–%d×", max(lim.MinLeverage, 1), lim.MaxLeverage)
 	}
 	if !(in.MarginUSDT > 0) || in.MarginUSDT > lim.MaxMarginUSDT {
 		return z, fmt.Errorf("margin must be above 0 and at most %g USDT", lim.MaxMarginUSDT)
