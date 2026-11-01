@@ -13,10 +13,14 @@ import re
 import json
 import os
 import time
+import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import llm
+
+TZ8 = timezone(timedelta(hours=8))
 
 AGENT_DIR = Path(__file__).resolve().parent / "agent"  # cwd: holds .claude/skills
 CHAT_PROMPT = "chat_v2"
@@ -40,7 +44,7 @@ TOOL_LABELS = {
     "get_orderbook": "盘口", "get_liquidations": "强平记录", "get_liquidation_map": "清算地图",
     "compare_with_majors": "对比 BTC/ETH", "get_universe": "监控池", "search_instruments": "搜索合约",
     "list_rules": "规则", "get_rule_track_record": "规则战绩", "get_alert_events": "告警", "get_system_status": "数据状态",
-    "list_fields": "字段定义", "get_usage": "接口额度", "remember": "记住偏好", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
+    "list_fields": "字段定义", "get_usage": "接口额度", "remember": "记住偏好", "list_chats": "查看历史对话", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
 }
 # the analysis CLI's commands, as the owner would call them
 CA_LABELS = {
@@ -92,6 +96,10 @@ def brief_input(name: str, inp: Any) -> str:
         return ""
     if short == "remember":
         return str(inp.get("text", ""))[:80]
+    if short == "read_chat":
+        return f"#{inp.get('id', '')}"
+    if short == "list_chats":
+        return str(inp.get("query", ""))[:40]
     keep = [str(v) for k, v in inp.items() if k in ("instId", "q")]
     keep += [f"{v}" for k, v in inp.items() if k in ("bar", "field", "days")]
     return " · ".join(keep)[:80]
@@ -156,6 +164,68 @@ def sandbox_server(chat: str, key: str):
     return create_sdk_mcp_server(name="sandbox", version="1.0.0", tools=[shell])
 
 
+def sessions_server(base: str, current: str):
+    """The owner's other AI conversations: a list and one conversation's messages (questions and answers,
+    not the tool steps). Read from ctg's own API on loopback; the current chat is marked, not hidden."""
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # loopback: never through the LLM proxy
+
+    def fetch(path: str):
+        with opener.open(base + path, timeout=15) as r:
+            return json.load(r)
+
+    def when(ms: int) -> str:
+        return datetime.fromtimestamp(ms / 1000, TZ8).strftime("%m-%d %H:%M")
+
+    @tool("list_chats", "List the owner's AI conversations, newest first: id, last update, title (his first question), "
+          "the coin page it started on, and whether it is still running. Use when he refers to an earlier conversation "
+          "(\"上次/之前/另一个对话里…\") or asks what was discussed; then read_chat the one you need.",
+          {"type": "object", "properties": {"query": {"type": "string", "description": "filter: words in the title or a coin, e.g. SOL"},
+                                            "limit": {"type": "integer", "description": "default 20, max 50"}}})
+    async def list_chats(args: dict) -> dict:
+        try:
+            cs = fetch("/api/v1/ai/chats")
+        except (OSError, ValueError) as e:
+            return {"content": [{"type": "text", "text": f"chats unavailable: {e}"}], "is_error": True}
+        q = str(args.get("query") or "").strip().upper()
+        if q:
+            cs = [c for c in cs if q in (c.get("title") or "").upper() or q in (c.get("instId") or "")]
+        lim = max(1, min(int(args.get("limit") or 20), 50))
+        lines = []
+        for c in cs[:lim]:
+            tag = "（当前对话）" if str(c["id"]) == current else ""
+            inst = f" · {c['instId'].split('-')[0]}" if c.get("instId") else ""
+            run = " · 进行中" if c.get("running") else ""
+            lines.append(f"#{c['id']} {when(c['updated'])}{inst}{run} {c.get('title', '')[:60]}{tag}")
+        text = "\n".join(lines) or "没有匹配的对话"
+        return {"content": [{"type": "text", "text": f"共 {len(cs)} 个对话，显示 {min(lim, len(cs))} 个：\n{text}"}]}
+
+    @tool("read_chat", "Read one AI conversation by id: each question and answer with its time (answers' component JSON kept, "
+          "tool steps left out). Long answers are cut; raise max_chars (default 6000, max 20000) only if you need more.",
+          {"type": "object", "properties": {"id": {"type": "integer"},
+                                            "max_chars": {"type": "integer", "description": "default 6000, max 20000"}},
+           "required": ["id"]})
+    async def read_chat(args: dict) -> dict:
+        try:
+            c = fetch(f"/api/v1/ai/chats/{int(args['id'])}")
+        except (OSError, ValueError, KeyError) as e:
+            return {"content": [{"type": "text", "text": f"chat not found: {e}"}], "is_error": True}
+        cap = max(1000, min(int(args.get("max_chars") or 6000), 20000))
+        msgs = c.get("messages") or []
+        per = max(400, cap // max(1, len(msgs)))
+        out = [f"#{c['id']} {c.get('title', '')}" + (f" · {c['instId']}" if c.get("instId") else "") + f" · {len(msgs)} 条消息"]
+        for m in msgs:
+            who = "他" if m["role"] == "user" else "你"
+            body = (m.get("content") or "").strip()
+            if len(body) > per:
+                body = body[:per] + f"…（截断，原文 {len(body)} 字）"
+            out.append(f"[{when(m['ts'])}] {who}：{body}")
+        return {"content": [{"type": "text", "text": "\n\n".join(out)[:cap + 400]}]}
+
+    return create_sdk_mcp_server(name="sessions", version="1.0.0", tools=[list_chats, read_chat])
+
+
 def memory_server(emit: Emit):
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
@@ -194,6 +264,11 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
         mcp["memory"] = memory_server(emit)
         allowed.append("mcp__memory__remember")
     ctg_tools: list[str] = []
+    if agent.get("mcpUrl"):
+        # the owner's other conversations, from ctg's API on the same loopback host as the MCP endpoint
+        base = agent["mcpUrl"].split("/mcp")[0]
+        mcp["sessions"] = sessions_server(base, chat)
+        allowed += ["mcp__sessions__list_chats", "mcp__sessions__read_chat"]
     if agent.get("mcpUrl") and agent.get("mcpToken"):
         mcp["ctg"] = {"type": "http", "url": agent["mcpUrl"], "headers": {"Authorization": "Bearer " + agent["mcpToken"]}}
         ctg_tools = [f"mcp__ctg__{t}" for t in CTG_DIRECT]
