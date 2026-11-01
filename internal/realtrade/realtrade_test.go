@@ -463,3 +463,32 @@ func TestProposalFromSignalWake(t *testing.T) {
 		t.Fatalf("source %s %q", p.Source, p.Trigger)
 	}
 }
+
+// noSend stands in for the live client: any order it is asked to send fails the test.
+type noSend struct{ t *testing.T }
+
+func (noSend) Mode() okxorder.Mode { return okxorder.Live }
+func (n noSend) Place(context.Context, okxorder.Order) (okxorder.Result, error) {
+	n.t.Fatal("a dry-run proposal reached the live client")
+	return okxorder.Result{}, nil
+}
+
+func TestModeSwitchVoidsWaitingProposals(t *testing.T) {
+	e := newEnv(t, okxorder.NewDryRun())
+	p, err := e.s.Propose(context.Background(), input())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// approving a dry-run proposal on a live service (as if made just before the switch) is refused
+	live, err := New(e.s.st, noSend{t}, e.s.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := live.get(p.ID); got.Status != StatusInvalidated || !strings.Contains(got.Error, "已切换为实盘") {
+		t.Fatalf("after switching to live: %+v", got)
+	}
+	e.s.db.Exec(`UPDATE trade_proposals SET status='pending', error='' WHERE id=?`, p.ID) // made while this process runs
+	if got, err := live.Approve(context.Background(), p.ID, "owner", "test"); !errors.Is(err, ErrClosed) || got.Status != StatusInvalidated {
+		t.Fatalf("approve across modes: %+v %v", got, err)
+	}
+}

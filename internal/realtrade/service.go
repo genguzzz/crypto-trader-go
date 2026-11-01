@@ -151,10 +151,43 @@ func New(st *store.Store, orders okxorder.Client, opts Options) (*Service, error
 	if orders.Mode() == okxorder.Live {
 		nothing = "执行中服务重启，请在 OKX 核对是否已成交（不会自动重试）"
 	}
+	// a proposal is approved in the mode it was made in: after a switch (dry run → live) the waiting
+	// ones are void, so approving one made as a dry run can never send a real order
+	if _, err := s.voidOtherMode(); err != nil {
+		return nil, err
+	}
 	if _, err := s.transitionAll(StatusExecuting, StatusFailed, nothing); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *Service) voidOtherMode() (int, error) {
+	rows, err := s.db.Query(`SELECT id FROM trade_proposals WHERE status=? AND mode<>?`, StatusPending, string(s.Mode()))
+	if err != nil {
+		return 0, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	rows.Close()
+	msg := modeSwitched(s.Mode())
+	for _, id := range ids {
+		if ok, _ := s.transition(id, []string{StatusPending}, StatusInvalidated, map[string]any{"error": msg}, "mode<>?", string(s.Mode())); ok {
+			s.audit(id, StatusInvalidated, msg, "system")
+		}
+	}
+	return len(ids), nil
+}
+
+func modeSwitched(m okxorder.Mode) string {
+	if m == okxorder.Live {
+		return "已切换为实盘，演练时的提议作废，请让 AI 重新提议"
+	}
+	return "执行模式已切换，提议作废，请让 AI 重新提议"
 }
 
 func (s *Service) transitionAll(from, to, msg string) (int, error) {
@@ -423,7 +456,7 @@ func (s *Service) dailyPnl() float64 {
 // current state) when someone else answered first or it expired.
 func (s *Service) Approve(ctx context.Context, id int64, by, via string) (Proposal, error) {
 	now := s.now().UnixMilli()
-	ok, err := s.transition(id, []string{StatusPending}, StatusApproved, map[string]any{"resolved_by": by, "via": via}, "expires_at > ?", now)
+	ok, err := s.transition(id, []string{StatusPending}, StatusApproved, map[string]any{"resolved_by": by, "via": via}, "expires_at > ? AND mode = ?", now, string(s.Mode()))
 	if err != nil {
 		return Proposal{}, err
 	}
@@ -434,6 +467,13 @@ func (s *Service) Approve(ctx context.Context, id int64, by, via string) (Propos
 		}
 		if p.Status == StatusPending && p.ExpiresAt <= now {
 			s.expire(id)
+			p, _ = s.get(id)
+		} else if p.Status == StatusPending && p.Mode != string(s.Mode()) {
+			msg := modeSwitched(s.Mode())
+			if ok, _ := s.transition(id, []string{StatusPending}, StatusInvalidated, map[string]any{"error": msg}, "mode<>?", string(s.Mode())); ok {
+				s.audit(id, StatusInvalidated, msg, "system")
+				s.emit(StatusInvalidated, id)
+			}
 			p, _ = s.get(id)
 		}
 		return p, ErrClosed
