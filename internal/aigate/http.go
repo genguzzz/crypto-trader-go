@@ -22,6 +22,7 @@ import (
 //	GET    /api/v1/ai/memory/{strategy}?version=
 //	POST   /api/v1/ai/memory/{strategy}/reflect
 //	POST   /api/v1/ai/chat                  {chatId?, message, instId?} → SSE of the new turn
+//	GET    /api/v1/ai/busy                  {running} — public (no owner key): checked before deploys
 //	GET    /api/v1/ai/chats                 recent conversations
 //	GET    /api/v1/ai/chats/{id}            messages (+ running)
 //	GET    /api/v1/ai/chats/{id}/stream     SSE: re-attach to a running turn (replays its events)
@@ -53,6 +54,9 @@ func (g *Gate) Register(mux *http.ServeMux) {
 			return
 		}
 		g.streamChat(w, r, id)
+	})
+	mux.HandleFunc("GET /api/v1/ai/busy", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]bool{"running": g.Busy()})
 	})
 	mux.HandleFunc("GET /api/v1/ai/chats", func(w http.ResponseWriter, r *http.Request) {
 		cs, err := g.Chats(100)

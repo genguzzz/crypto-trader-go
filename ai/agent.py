@@ -162,15 +162,17 @@ def sandbox_server(chat: str, key: str):
     return create_sdk_mcp_server(name="sandbox", version="1.0.0", tools=[shell])
 
 
-def sessions_server(base: str, current: str):
+def sessions_server(base: str, current: str, token: str):
     """The owner's other AI conversations: a list and one conversation's messages (questions and answers,
-    not the tool steps). Read from ctg's own API on loopback; the current chat is marked, not hidden."""
+    not the tool steps). Read from ctg's own API on loopback with the per-process sessions token
+    (header X-CTG-Agent; /api/v1 needs the owner key otherwise); the current chat is marked, not hidden."""
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # loopback: never through the LLM proxy
 
     def fetch(path: str):
-        with opener.open(base + path, timeout=15) as r:
+        req = urllib.request.Request(base + path, headers={"X-CTG-Agent": token})
+        with opener.open(req, timeout=15) as r:
             return json.load(r)
 
     def when(ms: int) -> str:
@@ -265,7 +267,7 @@ def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes:
     if agent.get("mcpUrl"):
         # the owner's other conversations, from ctg's API on the same loopback host as the MCP endpoint
         base = agent["mcpUrl"].split("/mcp")[0]
-        mcp["sessions"] = sessions_server(base, chat)
+        mcp["sessions"] = sessions_server(base, chat, agent.get("sessionsToken", ""))
         allowed += ["mcp__sessions__list_chats", "mcp__sessions__read_chat"]
     if agent.get("mcpUrl") and agent.get("mcpToken"):
         # X-Ctg-Chat links a propose_trade call to this conversation (honoured for the owner key only)

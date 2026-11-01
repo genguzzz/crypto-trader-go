@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -199,8 +201,9 @@ func main() {
 	if strings.HasPrefix(mcpHost, ":") || strings.HasPrefix(mcpHost, "0.0.0.0:") {
 		mcpHost = "127.0.0.1:" + mcpHost[strings.LastIndex(mcpHost, ":")+1:]
 	}
+	agentKey := randomToken()
 	gate.SetAgent(aigate.Agent{MCPURL: "http://" + mcpHost + devapi.MCPPath, MCPToken: dev.OwnerKey("ai-agent", 600, 120),
-		SandboxToken: dev.InternalKey("ai-sandbox", 120, 30)})
+		SandboxToken: dev.InternalKey("ai-sandbox", 120, 30), SessionsToken: agentKey})
 	gate.SetCandles(func(inst string, limit int) ([]aigate.Bar, error) { // AI plans followed on 1m candles
 		cs, err := eng.Candles(inst, "1m", limit)
 		out := make([]aigate.Bar, len(cs))
@@ -244,19 +247,29 @@ func main() {
 	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al, Dev: dev,
 		Icons:    &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()},
 		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, acct.Register, rt.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
-		AdminKey: os.Getenv("CTG_ADMIN_KEY")}).Handler(), ReadHeaderTimeout: 10 * time.Second}
+		AdminKey: os.Getenv("CTG_ADMIN_KEY"), AgentKey: agentKey, WebUI: os.Getenv("CTG_WEB_UI") == "on"}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		srv.Shutdown(sctx)
 	}()
+	log.Printf("owner key configured %v (required for /api/v1/), web UI %v (CTG_WEB_UI)", os.Getenv("CTG_ADMIN_KEY") != "", os.Getenv("CTG_WEB_UI") == "on")
 	log.Printf("listening on http://%s (threshold %.0f, top %d, db %s)", *addr, *threshold, *topN, *dbPath)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 	time.Sleep(500 * time.Millisecond) // let the writer flush
 	st.DB.Close()
+}
+
+// randomToken is a per-process secret (never stored or logged).
+func randomToken() string {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func envOr(k, d string) string {

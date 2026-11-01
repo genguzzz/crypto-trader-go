@@ -4,7 +4,7 @@
 
 | Item | Value |
 |---|---|
-| URL | https://ctg.gugenzzz.top (no login yet, publicly reachable; login is on the roadmap) |
+| URL | https://ctg.gugenzzz.top (no login yet; every `/api/v1/` route needs the owner key `CTG_ADMIN_KEY`, and the web UI is paused unless `CTG_WEB_UI=on`; login is on the roadmap) |
 | Host | ctg-prod (SSH alias `ctg-prod`; the address lives only in `~/.ssh/config` and GitHub Secrets; Debian 13, 2C/4G, x86_64, VPS Tokyo, direct access to OKX; moved from old-server on 2026-09-27) |
 | Process | Docker container `ctg` (compose project `/opt/ctg`), `network_mode: host`, listening on `127.0.0.1:8686` |
 | Ingress | nginx stream routes `*.gugenzzz.top` by SNI (default) to `127.0.0.1:8444` → `/etc/nginx/conf.d/gateway-ctg.conf` proxies to 8686 (buffering off for SSE); 80 redirects to 443; existing `*.gugenzzz.top` wildcard certificate |
@@ -76,7 +76,8 @@ Parallel development in several worktrees (separate ports and database copies) i
 | `-web` | true | false serves the API only |
 | `CTG_PROXY` / `-doh` | — / off | networks without direct OKX access: outbound HTTP proxy (credentials allowed), DNS-over-HTTPS |
 | `CTG_RUN_DIR` | `data/run` (`/data/run` in compose) | Unix sockets `strategy.sock` / `ai.sock` shared with the sidecars |
-| `CTG_ADMIN_KEY` | — | owner key required (header `X-CTG-Admin`) for writes under `/api/v1/trade|interact|ai` and for any request under `/api/v1/account/` and `/api/v1/realtrade/`; unset = only direct loopback requests may pass. Lives in `ctg.env` |
+| `CTG_ADMIN_KEY` | — | owner key required for every request under `/api/v1/` (all methods, SSE included): header `X-CTG-Admin`, or `?key=` only on `GET /api/v1/stream` and `/api/v1/icons/*` (EventSource, `<img>`; nginx access logs record query strings, so the native app always uses the header). Public: `GET /api/v1/health`, `/api/v1/status` (deploy checks), `/api/v1/ai/busy` (`{running}`, check before a deploy), `/api/v1/expo/manifest` and `/api/v1/expo/assets/*` (expo-updates). `/api/open/v1` and `/mcp` keep their own bearer keys. More than 10 distinct wrong keys from one client IP within a minute → 429 for 5 minutes (logged without the key). Unset = only direct loopback requests may pass. The AI worker reads chats with a per-process key instead (`X-CTG-Agent`, `GET /api/v1/ai/chats[/id]` only). Lives in `ctg.env` |
+| `CTG_WEB_UI` | off | `on` serves the full web app; otherwise only `/embed/*` (the native app's chart WebViews), static files (`/assets`, icons, `/research/*.html`) and a "网页版已暂停，请使用 App" page (503) for every other page |
 | `OKX_API_KEY` / `OKX_API_SECRET` / `OKX_API_PASSPHRASE` / `OKX_PRIVATE_PROXY` | — | the owner's OKX API key and the HTTP or SOCKS5 proxy its IP is bound to: open swap positions with TP/SL on the K-line, in the app and for the chat agent (`get_positions`), `GET /api/v1/account/positions` (owner key required even for reads). `internal/okxacct` sends signed GETs only; the same key signs approved trade proposals in live mode (needs trade permission on the key). Always through the proxy; any variable missing = disabled, never a direct connection. Lives in `ctg.env` |
 | `CTG_TRADE_MODE` | dryrun | `live` (exactly) sends approved trade proposals to OKX; anything else builds, validates and records them only ([trading design §7](trading-design.md#7-real-trades-via-approved-proposals-2026-11-01)). Live without the OKX variables above fails at start. Lives in `ctg.env` |
 | `CTG_TRADE_TG_TOKEN` / `CTG_TRADE_TG_CHAT` | — | the dedicated Telegram trade bot and the owner's user id (only he can approve); either missing = no trade bot (web / app approval only). Lives in `ctg.env` |

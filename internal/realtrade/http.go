@@ -3,6 +3,7 @@ package realtrade
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 )
@@ -19,6 +20,21 @@ import (
 //
 // There is no route that changes the mode or the limits: only CTG_TRADE_MODE / CTG_TRADE_* can.
 func (s *Service) Register(mux *http.ServeMux) {
+	// Public on purpose and data-free: only the id, which the app then loads with the owner key.
+	mux.HandleFunc("GET /go/proposal/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			http.NotFound(w, r)
+			return
+		}
+		app := fmt.Sprintf("okxhelper://proposal/%d", id)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`+
+			`<title>交易提议 #%d</title><body style="background:#0b0b0b;color:#eee;font:16px -apple-system,sans-serif;text-align:center;padding:30vh 20px">`+
+			`<p>正在打开 OKX Helper…</p><p><a style="color:#bcff2f" href="%s">没有自动跳转？点这里在 App 中查看 #%d</a></p>`+
+			`<script>location.href=%q</script>`, id, app, id, app)
+	})
 	mux.HandleFunc("GET /api/v1/realtrade/proposals", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		chat, _ := strconv.ParseInt(q.Get("chatId"), 10, 64)

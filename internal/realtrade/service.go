@@ -231,12 +231,13 @@ func (s *Service) emit(kind string, id int64) {
 	}
 }
 
-// Link is the web page that shows the proposal's levels on the instrument's K-line.
+// Link opens the proposal (K-line with its levels, approve / reject) in the app: Telegram URL buttons
+// take only http(s), so it points at a public bounce page that hands over to okxhelper://proposal/<id>.
 func (s *Service) Link(p Proposal) string {
 	if s.opts.PublicURL == "" {
 		return ""
 	}
-	return s.opts.PublicURL + "/instrument/" + url.PathEscape(p.InstID) + "?proposal=" + strconv.FormatInt(p.ID, 10)
+	return s.opts.PublicURL + "/go/proposal/" + strconv.FormatInt(p.ID, 10)
 }
 
 // ---------- creation ----------

@@ -27,8 +27,13 @@ type Server struct {
 	Dev    *devapi.Service // external API keys, open REST API and MCP server (optional)
 	// Mounts registers extra route groups (trading, interaction, AI) on the same mux.
 	Mounts []func(*http.ServeMux)
-	// AdminKey guards writes to trading / interaction / AI routes (see admin.go).
+	// AdminKey (CTG_ADMIN_KEY) guards every /api/v1/ route except a few probes (see admin.go).
 	AdminKey string
+	// AgentKey is the AI worker's in-memory key for reading chats (see agentPath in admin.go).
+	AgentKey string
+	// WebUI serves the full web app; off (default, CTG_WEB_UI != "on") serves only /embed/* pages for
+	// the native app, the static files and /research/, and a "use the app" page elsewhere.
+	WebUI bool
 }
 
 func (s *Server) Handler() http.Handler {
@@ -126,12 +131,12 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Web != nil {
 		mux.HandleFunc("GET /api/v1/app/bundle", s.appBundle(bundleManifest(s.Web)))
-		mux.Handle("/", spa(s.Web))
+		mux.Handle("/", spa(s.Web, s.WebUI))
 	}
 	for _, m := range s.Mounts {
 		m(mux)
 	}
-	return logRequests(withAppCORS(withGzip(adminGate(s.AdminKey, mux))))
+	return logRequests(withAppCORS(withGzip(adminGate(s.AdminKey, s.AgentKey, mux))))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -355,7 +360,19 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func spa(web fs.FS) http.Handler {
+// webOffPage replaces the web app while CTG_WEB_UI is off (self-contained: no assets).
+const webOffPage = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>OKX Helper</title><style>html,body{margin:0;height:100%;background:#0e0e0e;color:#e8e8e8;
+font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif}main{min-height:100%;display:flex;flex-direction:column;
+align-items:center;justify-content:center;padding:24px;box-sizing:border-box;text-align:center}h1{font-size:20px;font-weight:600;margin:0 0 8px}
+p{margin:0;color:#8a8a8a;font-size:14px}i{display:block;width:10px;height:10px;border-radius:50%;background:#bcff2f;margin:0 auto 18px}</style></head>
+<body><main><i></i><h1>OKX Helper 网页版已暂停，请使用 App</h1><p>The web version is paused; please use the app.</p></main></body></html>
+`
+
+// spa serves the built web app: existing files as they are, every other path as index.html (client
+// routing). With webUI off, index.html is served only for /embed/* (the native app's web views) and
+// the other routes get webOffPage; static files (assets, icons, /research/ reports) stay available.
+func spa(web fs.FS, webUI bool) http.Handler {
 	files := http.FileServer(http.FS(web))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
@@ -363,7 +380,14 @@ func spa(web fs.FS) http.Handler {
 			httpErr(w, http.StatusNotFound, "not found")
 			return
 		}
-		if p != "" {
+		if !webUI && !strings.HasPrefix(p, "embed/") && (p == "" || p == "index.html" || !fileExists(web, p)) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(webOffPage))
+			return
+		}
+		if p != "" && p != "index.html" {
 			if _, err := fs.Stat(web, p); err == nil {
 				if strings.HasPrefix(p, "assets/") {
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -381,6 +405,11 @@ func spa(web fs.FS) http.Handler {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(b)
 	})
+}
+
+func fileExists(web fs.FS, p string) bool {
+	st, err := fs.Stat(web, p)
+	return err == nil && !st.IsDir()
 }
 
 func logRequests(h http.Handler) http.Handler {

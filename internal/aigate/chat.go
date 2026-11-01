@@ -43,6 +43,9 @@ type Agent struct {
 	MCPToken string `json:"mcpToken"`
 	// SandboxToken is the same kind of key, handed to the sandboxed shell for the public ctg API.
 	SandboxToken string `json:"sandboxToken"`
+	// SessionsToken lets the worker read the owner's chats (GET /api/v1/ai/chats[/id], header
+	// X-CTG-Agent) for its list_chats / read_chat tools; random per process, memory only.
+	SessionsToken string `json:"sessionsToken"`
 }
 
 // SetNotify sets where "answer ready" messages go when nobody was watching a chat finish.
@@ -339,6 +342,13 @@ func (g *Gate) run(id int64) *chatRun {
 	g.runMu.Lock()
 	defer g.runMu.Unlock()
 	return g.runs[id]
+}
+
+// Busy reports whether any chat turn is running (a restart would interrupt it).
+func (g *Gate) Busy() bool {
+	g.runMu.Lock()
+	defer g.runMu.Unlock()
+	return len(g.runs) > 0
 }
 
 // StopChat cancels a running turn.

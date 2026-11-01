@@ -86,7 +86,7 @@ func TestProposeApproveDryRun(t *testing.T) {
 		p.RR < 1.99 || p.ExpiresAt != e.clock().Add(15*time.Minute).UnixMilli() {
 		t.Fatalf("proposal %+v", p)
 	}
-	if link := e.s.Link(p); link != "https://ctg.example/instrument/BTC-USDT-SWAP?proposal=1" {
+	if link := e.s.Link(p); link != "https://ctg.example/go/proposal/1" {
 		t.Fatalf("link %s", link)
 	}
 	e.setPx(100500) // 0.5% drift: within the 1% cap
@@ -383,7 +383,7 @@ func TestBot(t *testing.T) {
 		return false
 	}
 	waitFor("card", func() bool { return find("sendMessage", "ok:1") })
-	if !find("sendMessage", "proposal=1") || !find("sendMessage", "[DRY RUN]") {
+	if !find("sendMessage", "/go/proposal/1") || !find("sendMessage", "[DRY RUN]") {
 		t.Fatal("card without link or dry-run marker")
 	}
 	cb := func(from int64, data string) map[string]any {

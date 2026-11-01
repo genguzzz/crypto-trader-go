@@ -27,9 +27,9 @@ import (
 //     files under /api/v1/expo/assets/{runtime}/{id}/…. mobile/scripts/ota.sh exports a bundle and
 //     copies it over ssh into <Dir>/updates/<runtimeVersion>/<updateId>/ (expo export output plus
 //     update.json); the newest directory for the requested runtime is served. Update directories are
-//     immutable, so their manifests are cached.
+//     immutable, so their manifests are cached. These two are public (expo-updates sends no owner key).
 //   - usage events (POST /api/v1/app/events, appended to <Dir>/events/YYYY-MM-DD.jsonl) and
-//     log uploads (POST /api/v1/app/logs, owner key, <Dir>/logs/<id>.log).
+//     log uploads (POST /api/v1/app/logs, <Dir>/logs/<id>.log); owner key, like all of /api/v1/.
 type Mobile struct {
 	Dir string // e.g. data/mobile next to the database
 
