@@ -13,6 +13,12 @@ import { tap } from "@/components/ui";
 const mono = Platform.select({ ios: "Menlo", default: "monospace" });
 export type StepItem = ToolPart | ThinkPart;
 const key = (s: StepItem, i: number) => (s.t === "tool" ? s.id : `think${i}`);
+/** Shell steps show the command itself (older chats stored only a generic "计算" label and no subject). */
+const isShell = (s: ToolPart) => s.name.endsWith("__shell");
+const oneLine = (cmd: string) =>
+  cmd.replace(/\s*2>&1/g, "").replace(/\s*\|\s*head(\s+-n?\s*\d+)?\s*$/gm, "").split("\n").map((x) => x.trim()).filter(Boolean).join(" ⏎ ");
+const toolLabel = (s: ToolPart) => (isShell(s) && /^(Python )?计算$/.test(s.label) ? "命令" : s.label);
+const toolSub = (s: ToolPart) => (isShell(s) && !s.input && s.args ? oneLine(s.args) : s.input);
 const secs = (ms: number) => (ms < 10_000 ? (ms / 1000).toFixed(1) : Math.round(ms / 1000).toString()) + "s";
 
 function thinkMs(s: ThinkPart, now: number) {
@@ -95,9 +101,9 @@ export function AiSteps({ items, live, tail }: { items: StepItem[]; live: boolea
     tools.length ? `${tools.length} 步` : "",
     thinkTotal ? secs(thinkTotal) : "",
   ].filter(Boolean).join(" · ");
-  const labels = [...new Set(tools.map((s) => s.label))].slice(0, 4).join("、");
-  const headLabel = busy ? (current.t === "think" ? "思考中" : current.label) : summary;
-  const headSub = busy ? (current.t === "think" ? secs(thinkMs(current, now)) : current.input) : labels;
+  const labels = [...new Set(tools.map(toolLabel))].slice(0, 4).join("、");
+  const headLabel = busy ? (current.t === "think" ? "思考中" : toolLabel(current)) : summary;
+  const headSub = busy ? (current.t === "think" ? secs(thinkMs(current, now)) : toolSub(current)) : labels;
 
   return (
     <View style={{ marginTop: 6, marginBottom: 8, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.025)", borderWidth: 1, borderColor: colors.border, overflow: "hidden" }}>
@@ -119,8 +125,8 @@ export function AiSteps({ items, live, tail }: { items: StepItem[]; live: boolea
               <View key={key(s, i)}>
                 <Pressable onPress={() => { tap(); setDetail(on ? null : s.id); }} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 7, paddingRight: 12, paddingLeft: s.sub ? 30 : 12, backgroundColor: pressed ? colors.raised : undefined })}>
                   <Status s={s} size={13} />
-                  <Text style={{ fontSize: fs.sm, color: colors.text }}>{s.label}</Text>
-                  <Text numberOfLines={1} style={{ flex: 1, fontSize: fs.xs, color: colors.textFaint }}>{s.input}</Text>
+                  <Text style={{ fontSize: fs.sm, color: colors.text }}>{toolLabel(s)}</Text>
+                  <Text numberOfLines={1} style={{ flex: 1, fontSize: fs.xs, color: colors.textFaint, fontFamily: isShell(s) ? mono : undefined }}>{toolSub(s)}</Text>
                   <Ionicons name="chevron-forward" size={13} color={colors.textDim} style={{ transform: [{ rotate: on ? "90deg" : "0deg" }] }} />
                 </Pressable>
                 {on ? (
