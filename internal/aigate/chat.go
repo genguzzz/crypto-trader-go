@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS ai_chats(id INTEGER PRIMARY KEY AUTOINCREMENT, create
   cost_usd REAL NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS ai_chat_msgs(id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, ts INTEGER NOT NULL,
   role TEXT NOT NULL, content TEXT NOT NULL, steps TEXT NOT NULL DEFAULT '[]', cost_usd REAL NOT NULL DEFAULT 0,
-  latency_ms INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '');
+  latency_ms INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', usage TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS ai_chat_msgs_chat ON ai_chat_msgs(chat_id, id);
 `
 
@@ -86,6 +86,8 @@ type ChatMsg struct {
 	Content   string          `json:"content"`
 	Steps     json.RawMessage `json:"steps"`
 	CostUSD   float64         `json:"costUsd,omitempty"`
+	// Usage: the turn's tokens {input, output, cacheWrite, cacheRead, searches} (the agent's result), as in 影库.
+	Usage     json.RawMessage `json:"usage,omitempty"`
 	LatencyMs int64           `json:"latencyMs,omitempty"`
 	Error     string          `json:"error,omitempty"`
 }
@@ -319,6 +321,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 			Text      string          `json:"text"`
 			SessionID string          `json:"sessionId"`
 			Cost      float64         `json:"cost"`
+			Usage     json.RawMessage `json:"usage"`
 			Steps     json.RawMessage `json:"steps"`
 		}
 		errText := ""
@@ -334,8 +337,8 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 			out.Steps = json.RawMessage("[]")
 		}
 		ts := g.now().UnixMilli()
-		g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content, steps, cost_usd, latency_ms, error) VALUES(?,?,?,?,?,?,?,?)`,
-			in.ChatID, ts, "assistant", out.Text, string(out.Steps), out.Cost, lat, errText)
+		g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content, steps, cost_usd, latency_ms, error, usage) VALUES(?,?,?,?,?,?,?,?,?)`,
+			in.ChatID, ts, "assistant", out.Text, string(out.Steps), out.Cost, lat, errText, string(out.Usage))
 		if out.SessionID != "" {
 			g.st.DB.Exec(`UPDATE ai_chats SET updated=?, session_id=?, cost_usd=cost_usd+? WHERE id=?`, ts, out.SessionID, out.Cost, in.ChatID)
 		} else {
@@ -351,7 +354,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 			run.publish(evJSON(map[string]any{"type": "error", "error": errText}))
 		} else {
 			g.savePlans(in.ChatID, out.Text, confidenceOf(out.Text))
-			run.publish(evJSON(map[string]any{"type": "done", "text": out.Text, "cost": out.Cost, "latencyMs": lat}))
+			run.publish(evJSON(map[string]any{"type": "done", "text": out.Text, "cost": out.Cost, "usage": out.Usage, "latencyMs": lat}))
 		}
 		if !run.finish() && errText != "已停止" {
 			g.notifyDone(in.ChatID, out.Text, errText)
@@ -548,7 +551,7 @@ func (g *Gate) ChatByID(id int64) (*Chat, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := g.st.DB.Query(`SELECT id, ts, role, content, steps, cost_usd, latency_ms, error FROM ai_chat_msgs WHERE chat_id=? ORDER BY id`, id)
+	rows, err := g.st.DB.Query(`SELECT id, ts, role, content, steps, cost_usd, latency_ms, error, usage FROM ai_chat_msgs WHERE chat_id=? ORDER BY id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -556,11 +559,14 @@ func (g *Gate) ChatByID(id int64) (*Chat, error) {
 	c.Messages = []ChatMsg{}
 	for rows.Next() {
 		var m ChatMsg
-		var steps string
-		if err := rows.Scan(&m.ID, &m.Ts, &m.Role, &m.Content, &steps, &m.CostUSD, &m.LatencyMs, &m.Error); err != nil {
+		var steps, usage string
+		if err := rows.Scan(&m.ID, &m.Ts, &m.Role, &m.Content, &steps, &m.CostUSD, &m.LatencyMs, &m.Error, &usage); err != nil {
 			return nil, err
 		}
 		m.Steps = json.RawMessage(steps)
+		if usage != "" {
+			m.Usage = json.RawMessage(usage)
+		}
 		c.Messages = append(c.Messages, m)
 	}
 	c.Running = g.run(id) != nil

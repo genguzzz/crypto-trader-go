@@ -34,15 +34,16 @@ class AgentSteer(unittest.TestCase):
         self.sdk.messages = [
             fakesdk.text_delta("先看看仓位。"),
             lambda: accepted.append(inbox.put("✅ #3 已成交 · 开仓做多 BTC")),  # arrives mid-turn
-            fakesdk.ResultMessage(total_cost_usd=0.02, num_turns=2),
+            fakesdk.ResultMessage(total_cost_usd=0.02, num_turns=2, usage={"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 5000, "server_tool_use": {"web_search_requests": 1}}),
         ]
-        self.sdk.followups = [[fakesdk.text_delta("止盈止损已核对。"), fakesdk.ResultMessage(total_cost_usd=0.01, num_turns=1)]]
+        self.sdk.followups = [[fakesdk.text_delta("止盈止损已核对。"), fakesdk.ResultMessage(total_cost_usd=0.01, num_turns=1, usage={"input_tokens": 50, "output_tokens": 10})]]
         out = asyncio.run(asyncio.wait_for(agent.chat({"chatId": 7, "message": "BTC 开多", "sessionId": "s1"}, CHAT_CONFIG, "http://p", no_emit, inbox), 5))
         self.assertEqual(accepted, [True])
         self.assertEqual(self.sdk.calls[0]["inputs"], ["BTC 开多", "✅ #3 已成交 · 开仓做多 BTC"])
         self.assertIn("先看看仓位", out["text"])
         self.assertIn("止盈止损已核对", out["text"])
         self.assertAlmostEqual(out["cost"], 0.03)
+        self.assertEqual(out["usage"], {"input": 150, "output": 30, "cacheWrite": 0, "cacheRead": 5000, "searches": 1})
         self.assertEqual(out["turns"], 3)
         self.assertEqual(self.sdk.calls[0]["options"].kw["resume"], "s1")
         self.assertFalse(inbox.put("too late"), "a steer after the call must be refused")

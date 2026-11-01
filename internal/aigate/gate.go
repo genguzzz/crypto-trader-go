@@ -143,6 +143,14 @@ func New(st *store.Store, opts Options) (*Gate, error) {
 	if _, err := st.DB.Exec(schema + chatSchema + planSchema); err != nil {
 		return nil, fmt.Errorf("aigate schema: %w", err)
 	}
+	// columns added after the table existed
+	var hasUsage int
+	st.DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_chat_msgs') WHERE name='usage'`).Scan(&hasUsage)
+	if hasUsage == 0 {
+		if _, err := st.DB.Exec(`ALTER TABLE ai_chat_msgs ADD COLUMN usage TEXT NOT NULL DEFAULT ''`); err != nil {
+			return nil, fmt.Errorf("aigate schema: %w", err)
+		}
+	}
 	g := &Gate{st: st, opts: opts, sock: SocketPath(opts), sealer: newSealer(opts.SecretKey), model: opts.Model}
 	g.opts.SecretKey = "" // only the derived cipher is kept
 	if raw, ok := st.Setting(credSetting); ok && raw != "" {

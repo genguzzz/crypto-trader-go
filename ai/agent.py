@@ -507,6 +507,7 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
     started = time.monotonic()
     result = None
     cost, turns = 0.0, 0
+    usage = {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0, "searches": 0}
 
     def text_part() -> dict:
         if not parts or parts[-1]["t"] != "text":
@@ -577,6 +578,13 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
                 inbox.close()
                 result = m
                 cost += float(m.total_cost_usd or 0)
+                # tokens, as the app shows them (影库 has the same shape)
+                u = m.usage or {}
+                usage["input"] += int(u.get("input_tokens") or 0)
+                usage["output"] += int(u.get("output_tokens") or 0)
+                usage["cacheWrite"] += int(u.get("cache_creation_input_tokens") or 0)
+                usage["cacheRead"] += int(u.get("cache_read_input_tokens") or 0)
+                usage["searches"] += int((u.get("server_tool_use") or {}).get("web_search_requests") or 0)
                 turns += int(m.num_turns or 0)
     except Exception as e:  # noqa: BLE001
         inbox.close()
@@ -595,6 +603,6 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
     parts = [p for p in parts if p["t"] != "think" or p["v"].strip()]  # empty (omitted) thinking blocks
     final = "\n\n".join(p["v"].strip() for p in parts if p["t"] == "text" and p["v"].strip()) or (result.result or "")
     return {
-        "text": final, "sessionId": result.session_id, "cost": cost,
+        "text": final, "sessionId": result.session_id, "cost": cost, "usage": usage,
         "steps": parts, "turns": turns, "latencyMs": int((time.monotonic() - started) * 1000),
     }
