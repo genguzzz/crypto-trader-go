@@ -46,6 +46,7 @@ export interface Signal {
 export interface SignalCaps { maxActive: number; perChat: number; wakesPerDay: number; wakesToday: number; active: number; maxDays: number }
 interface SignalList { signals: Signal[] | null; caps: SignalCaps; now: number }
 export type SignalFilter = "active" | "fired" | "ended";
+export interface SignalCreate { spec: Record<string, unknown>; intent: string; expiresHours: number; maxFires?: number }
 
 export const STATUS_LABEL: Record<SignalStatus, string> = { active: "等待触发", fired: "已触发", expired: "已过期", cancelled: "已取消" };
 export const statusTone = (s: SignalStatus): "good" | "warn" | "info" | undefined => (s === "active" ? "info" : s === "fired" ? "good" : undefined);
@@ -66,6 +67,8 @@ const base = "/api/v1/signals";
 export const sigApi = {
   list: (status: SignalFilter | "all", limit = 100) => req<SignalList>(`${base}?status=${status}&limit=${limit}`, quiet),
   get: (id: number) => req<Signal>(`${base}/${id}`, quiet),
+  /** the owner's own subscription: when it fires it starts a new chat with `intent` as the instructions */
+  create: (b: SignalCreate) => req<Signal>(base, { method: "POST", body: b }),
   cancel: (id: number, reason = "主人取消") => req<Signal>(`${base}/${id}/cancel`, { method: "POST", body: { reason } }),
 };
 
@@ -206,6 +209,43 @@ export async function cancelSignal(id: number): Promise<{ s: Signal; ended: bool
     kick();
     return { s, ended: true };
   }
+}
+
+/** Create an owner subscription and refresh the lists. Errors carry the server's reason in Chinese (zhSignalError). */
+export async function createSignal(b: SignalCreate): Promise<Signal> {
+  try {
+    const s = await sigApi.create(b);
+    set({ byId: { ...st.byId, [s.id]: s } });
+    kick();
+    return s;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 400) throw new ApiError(zhSignalError(e.message), 400, e.code);
+    throw e;
+  }
+}
+
+// The server's validation messages are written for the agent (English); the owner reads them in Chinese.
+const ZH: [RegExp, (m: RegExpMatchArray) => string][] = [
+  [/condition already holds now \((.*)\)/, (m) => `条件已经成立（${m[1]}）。订阅只在条件从不成立变为成立时触发：现在就行动，或换下一个价位。`],
+  [/no current data for: (.*?) — /, (m) => `暂时没有数据（${m[1]}），还无法监控`],
+  [/more than 50% away from the current price (\S+)/, (m) => `离现价 ${m[1]} 超过 50%`],
+  [/wider than 20%/, () => "区间宽度超过 20%，请改用价格突破/跌破"],
+  [/time is already past/, () => "这个时间已经过了"],
+  [/cannot read at/, () => "时间格式应为 2026-11-02 10:00（UTC+8）"],
+  [/intent is required/, () => "请写清触发后让 AI 做什么（至少 6 个字）"],
+  [/intent is too long \(≤ (\d+)/, (m) => `说明太长（最多 ${m[1]} 字）`],
+  [/expiresHours must be between (\S+) and (\S+)/, (m) => `有效期需在 ${m[1]}–${m[2]} 小时之间`],
+  [/maxFires must be between 1 and (\d+)/, (m) => `触发次数需在 1–${m[1]} 之间`],
+  [/(\d+) subscriptions are active; the cap is (\d+)/, (m) => `已有 ${m[1]} 个活跃订阅，上限 ${m[2]} 个，先取消一个`],
+  [/unknown instrument (\S+)/, (m) => `未知合约 ${m[1]}`],
+  [/unknown field/, () => "不支持这个字段"],
+];
+export function zhSignalError(msg: string) {
+  for (const [re, f] of ZH) {
+    const m = msg.match(re);
+    if (m) return f(m);
+  }
+  return msg;
 }
 
 /** "3 小时 12 分" until ms. */

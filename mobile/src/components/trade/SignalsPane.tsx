@@ -1,11 +1,12 @@
 // 交易 → 信号: the AI's (and the owner's) signal subscriptions (lib/signals.ts). 活跃 sorts by how close
 // each is to firing (or groups by coin); 已触发 / 已结束 are the history. Each row is a SignalCard:
 // the subscriber opens that chat in the AI sheet, 查看 opens the detail sheet (K-line with the levels,
-// intent, fire history), 取消 asks first.
+// intent, fire history), 取消 asks first. + opens 新建信号 (NewSignalSheet) for the owner's own subscription.
 import { useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { Card, Chip, EmptyState, Loading, Pull, Segmented, TAB_BAR_SPACE } from "../ui";
+import { Card, Chip, EmptyState, IconButton, Loading, Pull, Segmented, TAB_BAR_SPACE } from "../ui";
 import { InfoTip } from "./common";
+import { NewSignalSheet } from "./NewSignalSheet";
 import { SignalCard, SignalSheet } from "../ai/SignalCard";
 import { refreshSignals, useSignalList, useSignals, type Signal, type SignalFilter } from "@/lib/signals";
 import { sym } from "@/lib/fmt";
@@ -30,6 +31,7 @@ export function SignalsPane() {
   const [filter, setFilter] = useState<SignalFilter>("active");
   const [group, setGroup] = useState<"close" | "coin">("close");
   const [open, setOpen] = useState(0);
+  const [creating, setCreating] = useState(false);
   const list = useSignalList(filter);
   const counts: Record<SignalFilter, number | undefined> = {
     active: useSignals((s) => s.lists.active?.length),
@@ -65,6 +67,7 @@ export function SignalsPane() {
         {filter === "active" ? (
           <Segmented small value={group} onChange={setGroup} options={[{ value: "close", label: "按接近度" }, { value: "coin", label: "按币种" }]} />
         ) : null}
+        {owner ? <IconButton name="add" label="新建信号" color={colors.primary} onPress={() => setCreating(true)} /> : null}
       </View>
       <View style={{ flexDirection: "row", gap: 8 }}>
         {FILTERS.map((f) => <Chip key={f.value} label={f.label} active={filter === f.value} count={counts[f.value]} onPress={() => setFilter(f.value)} />)}
@@ -72,7 +75,7 @@ export function SignalsPane() {
       {!owner && list === undefined ? <Loading text="加载信号" /> : null}
       {list && !list.length ? (
         <Card>
-          <EmptyState icon="flash-outline" text={filter === "active" ? "没有在等待的信号。AI 在条件未到时会自己订阅，也可以在对话里让它“到了再叫我”。" : filter === "fired" ? "还没有触发过的信号" : "没有已结束的信号"} />
+          <EmptyState icon="flash-outline" text={filter === "active" ? "没有在等待的信号。AI 在条件未到时会自己订阅，也可以在对话里让它“到了再叫我”，或点右上角 + 自己订阅。" : filter === "fired" ? "还没有触发过的信号" : "没有已结束的信号"} />
         </Card>
       ) : null}
       {sections.map((sec) => (
@@ -84,6 +87,7 @@ export function SignalsPane() {
         </View>
       ))}
       <SignalSheet id={open} onClose={() => setOpen(0)} />
+      <NewSignalSheet visible={creating} onClose={() => setCreating(false)} />
     </ScrollView>
   );
 }

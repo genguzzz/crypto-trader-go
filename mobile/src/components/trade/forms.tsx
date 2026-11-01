@@ -197,32 +197,58 @@ export function ParamsForm({ specs, params, onChange, readonly }: { specs: Param
   );
 }
 
-const MAJORS = ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"];
+export const MAJORS = ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"];
 const symOf = (id: string) => id.replace("-USDT-SWAP", "");
+
+/** Catalog search box + up to 8 matches (pool rank first); `empty` shows while nothing is typed. */
+export function InstSearch({ onPick, exclude, empty, icon = "add", autoFocus }: { onPick: (instId: string) => void; exclude?: string[]; empty?: ReactNode; icon?: keyof typeof Ionicons.glyphMap; autoFocus?: boolean }) {
+  const [q, setQ] = useState("");
+  const cat = useQuery<{ items: CatalogItem[] }>(q ? "catalog" : null, () => api.catalog(), { staleMs: 10 * 60_000 });
+  const results = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return [];
+    const have = new Set(exclude ?? []);
+    return (cat.data?.items ?? [])
+      .filter((c) => !have.has(c.instId) && c.instId.toLowerCase().includes(s))
+      .sort((a, b) => Number(!a.instId.toLowerCase().startsWith(s)) - Number(!b.instId.toLowerCase().startsWith(s)) || (a.rank ?? 999) - (b.rank ?? 999))
+      .slice(0, 8);
+  }, [q, cat.data, exclude]);
+  return (
+    <>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, height: 36, paddingHorizontal: 10, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.cardMuted }}>
+        <Ionicons name="search" size={15} color={colors.textFaint} />
+        <TextInput value={q} onChangeText={setQ} autoFocus={autoFocus} placeholder="搜索合约，如 BTC" placeholderTextColor={colors.textDim} autoCapitalize="characters" autoCorrect={false} style={{ flex: 1, color: colors.text, fontSize: fs.lg, padding: 0 }} />
+      </View>
+      {q ? (
+        <View style={{ borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 4, gap: 2 }}>
+          {results.map((c) => (
+            <Pressable key={c.instId} onPress={() => { tap(); onPick(c.instId); setQ(""); }} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 8, padding: 8, borderRadius: 6, backgroundColor: pressed ? colors.raised : "transparent" })}>
+              <CoinIcon instId={c.instId} size={16} />
+              <Text style={{ fontWeight: "600", color: colors.text, fontSize: fs.md }}>{symOf(c.instId)}</Text>
+              <Text style={{ flex: 1, fontSize: fs.xs, color: colors.textFaint }} numberOfLines={1}>{c.instId}</Text>
+              {c.rank ? <Tag text={`池内 #${c.rank}`} /> : null}
+              <Ionicons name={icon} size={16} color={colors.textFaint} />
+            </Pressable>
+          ))}
+          {!results.length ? <Muted style={{ padding: 6 }}>{cat.data ? "没有匹配的合约" : "加载合约列表…"}</Muted> : null}
+        </View>
+      ) : empty}
+    </>
+  );
+}
 
 /** Instrument universe: a fixed list (catalog search) or a screener query (web UniversePicker). */
 export function UniversePicker({ u, onChange }: { u: Universe; onChange: Upd<Universe> }) {
   const meta = useMeta().data;
   const ruleId = useRuleId(meta);
-  const [q, setQ] = useState("");
   const [rulePick, setRulePick] = useState(false);
-  const cat = useQuery<{ items: CatalogItem[] }>(q ? "catalog" : null, () => api.catalog(), { staleMs: 10 * 60_000 });
   const kind = u.screener ? "screener" : "static";
   const setKind = (k: string) => {
     if (k === "screener") onChange({ screener: u.screener ?? { rule: ruleId || undefined, side: "long", top: 20, refresh: "1H" } });
     else onChange({ static: u.static ?? [] });
   };
   const picked = useMemo(() => u.static ?? [], [u.static]);
-  const results = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return [];
-    const have = new Set(picked);
-    return (cat.data?.items ?? [])
-      .filter((c) => !have.has(c.instId) && c.instId.toLowerCase().includes(s))
-      .sort((a, b) => Number(!a.instId.toLowerCase().startsWith(s)) - Number(!b.instId.toLowerCase().startsWith(s)) || (a.rank ?? 999) - (b.rank ?? 999))
-      .slice(0, 8);
-  }, [q, cat.data, picked]);
-  const add = (id: string) => { onChange({ static: [...picked, id] }); setQ(""); };
+  const add = (id: string) => onChange({ static: [...picked, id] });
   const remove = (id: string) => onChange({ static: picked.filter((x) => x !== id) });
   const sc = u.screener;
   const setSc = (p: Partial<NonNullable<Universe["screener"]>>) => {
@@ -254,29 +280,12 @@ export function UniversePicker({ u, onChange }: { u: Universe; onChange: Upd<Uni
             ))}
             {!picked.length ? <Muted>还没有选择合约</Muted> : null}
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, height: 36, paddingHorizontal: 10, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.cardMuted }}>
-            <Ionicons name="search" size={15} color={colors.textFaint} />
-            <TextInput value={q} onChangeText={setQ} placeholder="搜索合约，如 BTC" placeholderTextColor={colors.textDim} autoCapitalize="characters" autoCorrect={false} style={{ flex: 1, color: colors.text, fontSize: fs.lg, padding: 0 }} />
-          </View>
-          {q ? (
-            <View style={{ borderRadius: 8, borderWidth: 1, borderColor: colors.border, padding: 4, gap: 2 }}>
-              {results.map((c) => (
-                <Pressable key={c.instId} onPress={() => { tap(); add(c.instId); }} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 8, padding: 8, borderRadius: 6, backgroundColor: pressed ? colors.raised : "transparent" })}>
-                  <CoinIcon instId={c.instId} size={16} />
-                  <Text style={{ fontWeight: "600", color: colors.text, fontSize: fs.md }}>{symOf(c.instId)}</Text>
-                  <Text style={{ flex: 1, fontSize: fs.xs, color: colors.textFaint }} numberOfLines={1}>{c.instId}</Text>
-                  {c.rank ? <Tag text={`池内 #${c.rank}`} /> : null}
-                  <Ionicons name="add" size={16} color={colors.textFaint} />
-                </Pressable>
-              ))}
-              {!results.length ? <Muted style={{ padding: 6 }}>{cat.data ? "没有匹配的合约" : "加载合约列表…"}</Muted> : null}
-            </View>
-          ) : !picked.length ? (
+          <InstSearch onPick={add} exclude={picked} empty={!picked.length ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
               <Muted>常用</Muted>
               {MAJORS.map((id) => <Chip key={id} label={symOf(id)} onPress={() => add(id)} />)}
             </View>
-          ) : null}
+          ) : null} />
         </>
       ) : sc ? (
         <View style={{ gap: 12 }}>
