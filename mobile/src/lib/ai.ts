@@ -23,7 +23,7 @@ export type Part = { t: "text"; v: string } | ThinkPart | ToolPart;
  *  inside a running answer too (stream event `steer`). */
 export type MsgRole = "user" | "assistant" | "signal" | "trade";
 export interface Usage { input: number; output: number; cacheWrite: number; cacheRead: number; searches: number }
-export interface Msg { id?: number; role: MsgRole; parts: Part[]; error?: string; costUsd?: number; usage?: Usage; latencyMs?: number; live?: boolean }
+export interface Msg { id?: number; ts?: number; role: MsgRole; parts: Part[]; error?: string; costUsd?: number; usage?: Usage; latencyMs?: number; live?: boolean }
 export interface ChatSummary { id: number; title: string; instId?: string; updated: number; costUsd: number; running: boolean }
 export interface Note { id: number; ts: number; text: string; by: "ai" | "owner" }
 
@@ -166,7 +166,7 @@ async function errorOf(r: Response) {
 function last(): Msg {
   let m = ai.msgs[ai.msgs.length - 1];
   if (!m || m.role !== "assistant" || !m.live) {
-    m = { role: "assistant", parts: [], live: true };
+    m = { ts: Date.now(), role: "assistant", parts: [], live: true };
     ai.msgs.push(m);
   }
   return m;
@@ -191,7 +191,7 @@ function apply(ev: any) {
     case "steer": { // a server message injected into the running answer: shown where it arrived; the answer continues below it
       const m = ai.msgs[ai.msgs.length - 1];
       if (m?.role === "assistant" && m.live && !m.parts.length) ai.msgs.pop();
-      ai.msgs.push({ role: ev.role === "trade" ? "trade" : "signal", parts: [{ t: "text", v: String(ev.text ?? "") }] });
+      ai.msgs.push({ ts: Date.now(), role: ev.role === "trade" ? "trade" : "signal", parts: [{ t: "text", v: String(ev.text ?? "") }] });
       return emit();
     }
     case "think_start":
@@ -387,7 +387,7 @@ export async function send(text: string, retrying = false) {
     const m = ai.msgs[ai.msgs.length - 1];
     if (m?.role === "assistant") ai.msgs.pop(); // the failed answer is replaced
   } else {
-    ai.msgs.push({ role: "user", parts: [{ t: "text", v: text }] });
+    ai.msgs.push({ ts: Date.now(), role: "user", parts: [{ t: "text", v: text }] });
     if (!ai.chatId) ai.title = text.slice(0, 40);
   }
   ai.interrupted = false;
@@ -430,11 +430,11 @@ export async function stop() {
   await kfetch(`/api/v1/ai/chats/${ai.chatId}/stop`, { method: "POST" }).catch((e) => log.warn("stop failed", e));
 }
 
-interface StoredMsg { id: number; role: MsgRole; content: string; steps: any[]; costUsd?: number; usage?: Usage; latencyMs?: number; error?: string }
+interface StoredMsg { id: number; ts?: number; role: MsgRole; content: string; steps: any[]; costUsd?: number; usage?: Usage; latencyMs?: number; error?: string }
 function fromStored(m: StoredMsg): Msg {
   const parts: Part[] =
     Array.isArray(m.steps) && m.steps.length ? m.steps.map((s: any) => (s.t === "text" ? { t: "text", v: s.v } : s.t === "think" ? { t: "think", v: s.v, ms: s.ms } : { ...s, t: "tool" })) : m.content ? [{ t: "text", v: m.content }] : [];
-  return { id: m.id, role: m.role, parts, error: m.error, costUsd: m.costUsd, usage: m.usage, latencyMs: m.latencyMs };
+  return { id: m.id, ts: m.ts, role: m.role, parts, error: m.error, costUsd: m.costUsd, usage: m.usage, latencyMs: m.latencyMs };
 }
 
 /** Load a chat from the server and, while it is answering, follow it to the end. Throws on HTTP errors. */

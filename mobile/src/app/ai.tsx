@@ -13,6 +13,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ai, clearContext, newChat, openChat, retry, send, setOpen, stop, textOf, tokensLabel, useAi, type Msg } from "@/lib/ai";
 import { copy, haptic } from "@/lib/device";
+import { time } from "@/lib/fmt";
 import { useHoldToTalk, useTapToTalk } from "@/lib/voice";
 import { colors, fs } from "@/lib/theme";
 import { Screen, tap, toast, toastError } from "@/components/ui";
@@ -118,7 +119,7 @@ export default function AiScreen() {
     const k = String(m.id ?? "m" + mi);
     const y = railY[k];
     if (y == null || (m.role !== "user" && m.role !== "signal" && m.role !== "trade")) return [];
-    return [{ key: k, y, kind: m.role, label: railLabel(textOf(m)) }];
+    return [{ key: k, y, kind: m.role, label: railLabel(textOf(m)), ts: m.ts }];
   }), [s.msgs, railY]);
   // a finger in a step's scroll box (InnerScroll) stops the chat list so the box gets the drag
   const [innerHeld, setInnerHeld] = useState(false);
@@ -275,9 +276,9 @@ export default function AiScreen() {
           {s.msgs.map((m, mi) => {
             const k = String(m.id ?? "m" + mi);
             const at = (e: { nativeEvent: { layout: { y: number } } }) => railAt(k, e.nativeEvent.layout.y);
-            return m.role === "user" ? <View key={k} onLayout={at}><UserBubble text={textOf(m)} onSelect={selectText} /></View>
-              : m.role === "signal" ? <View key={k} onLayout={at}><SignalBubble text={textOf(m)} onSelect={selectText} /></View>
-              : m.role === "trade" ? <View key={k} onLayout={at}><TradeBubble text={textOf(m)} onSelect={selectText} /></View>
+            return m.role === "user" ? <View key={k} onLayout={at}><UserBubble text={textOf(m)} ts={m.ts} onSelect={selectText} /></View>
+              : m.role === "signal" ? <View key={k} onLayout={at}><Stamp ts={m.ts} align="flex-start" /><SignalBubble text={textOf(m)} onSelect={selectText} /></View>
+              : m.role === "trade" ? <View key={k} onLayout={at}><Stamp ts={m.ts} align="flex-start" /><TradeBubble text={textOf(m)} onSelect={selectText} /></View>
               : <Answer key={k} m={m} now={now} onSelect={selectText} />;
           })}
 
@@ -398,8 +399,21 @@ function Spinner() {
   return <Animated.View style={{ width: 13, height: 13, borderRadius: 7, borderWidth: 2, borderColor: colors.borderStrong, borderTopColor: colors.primary, transform: [{ rotate: a.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] }) }] }} />;
 }
 
-const UserBubble = memo(function UserBubble({ text, onSelect }: { text: string; onSelect: (t: string) => void }) {
+/** "14:05" for today, "11-1 14:05" for earlier days. */
+function stampText(ts: number) {
+  const d = time(ts, true);
+  return d.split(" ")[0] === time(Date.now(), true).split(" ")[0] ? time(ts) : d;
+}
+
+function Stamp({ ts, align }: { ts?: number; align: "flex-start" | "flex-end" }) {
+  if (!ts) return null;
+  return <Text style={{ alignSelf: align, marginTop: 12, marginBottom: -8, fontSize: fs.xs, color: colors.textFaint }}>{stampText(ts)}</Text>;
+}
+
+const UserBubble = memo(function UserBubble({ text, ts, onSelect }: { text: string; ts?: number; onSelect: (t: string) => void }) {
   return (
+    <>
+    <Stamp ts={ts} align="flex-end" />
     <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 14, marginBottom: 6 }}>
       <Pressable
         onLongPress={() => onSelect(text)}
@@ -408,6 +422,7 @@ const UserBubble = memo(function UserBubble({ text, onSelect }: { text: string; 
         <Text selectable style={{ fontSize: fs.lg, lineHeight: 21, color: colors.text }}>{text}</Text>
       </Pressable>
     </View>
+    </>
   );
 });
 
@@ -457,7 +472,8 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
           <Pressable hitSlop={8} accessibilityLabel="选择文本" onPress={() => { tap(); onSelect(text); }} style={({ pressed }) => ({ width: 26, height: 26, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.cardMuted : undefined })}>
             <Ionicons name="text-outline" size={14} color={colors.textSoft} />
           </Pressable>
-          {m.latencyMs ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{(m.latencyMs / 1000).toFixed(0)}s</Text> : null}
+          {m.ts ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{stampText(m.ts)}</Text> : null}
+          {m.latencyMs ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>· {(m.latencyMs / 1000).toFixed(0)}s</Text> : null}
           {tokensLabel(m.usage) ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>· {tokensLabel(m.usage)}</Text> : null}
           {m.costUsd ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>· ${m.costUsd.toFixed(3)}</Text> : null}
         </View>
