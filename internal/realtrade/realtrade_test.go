@@ -72,7 +72,7 @@ func newEnv(t *testing.T, orders okxorder.Client) *env {
 }
 
 func input() ProposeInput {
-	return ProposeInput{ChatID: 7, InstID: "btc", Side: "long", MarginUSDT: 20, Leverage: 5, SL: 98000, TP: 104000,
+	return ProposeInput{ChatID: 7, InstID: "btc", Side: "long", MarginMode: "isolated", MarginUSDT: 20, Leverage: 5, SL: 98000, TP: 104000,
 		Rationale: "breakout above the range with rising OI", Invalidation: "back below 99k"}
 }
 

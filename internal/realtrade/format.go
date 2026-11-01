@@ -50,7 +50,7 @@ func closeText(kind string) string {
 	return "已平仓"
 }
 
-var kindTexts = map[string]string{KindOpen: "开仓", KindAdd: "补仓", KindReduce: "减仓", KindClose: "平仓", KindAdjust: "调整止盈止损"}
+var kindTexts = map[string]string{KindOpen: "开仓", KindAdd: "补仓", KindReduce: "减仓", KindClose: "平仓", KindAdjust: "调整止盈止损", KindCancel: "撤销挂单", KindAmend: "修改挂单"}
 
 func kindText(kind string) string {
 	if t := kindTexts[kind]; t != "" {
@@ -110,6 +110,8 @@ func sourceText(p Proposal) string {
 func summary(p Proposal) string {
 	head := fmt.Sprintf("%s %s %s · %s", kindText(p.Kind), sideText(p.Side), coin(p.InstID), ordText(p))
 	switch p.Kind {
+	case KindCancel, KindAmend:
+		return fmt.Sprintf("%s %s %s · %s", kindText(p.Kind), sideText(p.Side), coin(p.InstID), p.TPSL)
 	case KindReduce:
 		return fmt.Sprintf("%s · %.0f%%（%s 张）· 参考 %s", head, p.Fraction*100, fmtNum(p.Contracts), okxorder.FormatPx(p.RefPx))
 	case KindClose:
@@ -124,6 +126,8 @@ func summary(p Proposal) string {
 // confirmText is the order the owner is asked to confirm, in one sentence.
 func confirmText(p Proposal) string {
 	switch p.Kind {
+	case KindCancel, KindAmend:
+		return fmt.Sprintf("确认%s %s %s？%s", kindText(p.Kind), coin(p.InstID), sideText(p.Side), p.TPSL)
 	case KindReduce:
 		return fmt.Sprintf("确认以%s减仓 %s %s %.0f%%（%s 张）？", ordText(p), coin(p.InstID), sideText(p.Side), p.Fraction*100, fmtNum(p.Contracts))
 	case KindClose:
@@ -145,6 +149,9 @@ func cardLines(p Proposal, now time.Time) []string {
 		entry = fmt.Sprintf("入场 限价 %s（现价 %s，挂单 %d 分钟）", okxorder.FormatPx(p.Px), okxorder.FormatPx(p.RefPx), p.OrderMin)
 	}
 	switch p.Kind {
+	case KindCancel, KindAmend:
+		return []string{fmt.Sprintf("%s %s · %s %s", modeText(p.Mode), kindText(p.Kind), sideText(p.Side), coin(p.InstID)), p.TPSL,
+			fmt.Sprintf("现价 %s", okxorder.FormatPx(p.RefPx))}
 	case KindOpen, KindAdd:
 		lines = append(lines, fmt.Sprintf("保证金 %s U · %s 张（名义 ≈ %.0f U）", fmtNum(p.MarginUSDT), fmtNum(p.Contracts), p.NotionalUSDT), entry)
 		if p.Kind == KindAdd {
@@ -241,7 +248,7 @@ func eventLine(kind string, p Proposal) string {
 	case StatusExecuted:
 		did := fmt.Sprintf("%s %s 张 @≈%s", ordText(p), fmtNum(p.Contracts), okxorder.FormatPx(p.ExecPx))
 		switch {
-		case p.Kind == KindAdjust:
+		case p.Kind == KindAdjust, p.Kind == KindCancel, p.Kind == KindAmend:
 			did = p.TPSL
 		case p.OrdType == okxorder.Limit:
 			did = fmt.Sprintf("%s %s 张已挂出（%s）", ordText(p), fmtNum(p.Contracts), orderState(p))

@@ -133,7 +133,7 @@ The worker uses `claude_agent_sdk.query` with no built-in tools (`tools=[]`, no 
 
 ## 7. Real trades via approved proposals (2026-11-01)
 
-The owner approved real orders on his OKX account under one rule: the agent proposes, the owner approves every action, and only the shapes below exist. Dry run until he sets `CTG_TRADE_MODE=live`. First approval (2026-11-01): market opens, isolated, TP + SL attached. Extended the same day: cross margin, limit orders, adds (补仓), partial and full closes (减仓 / 平仓) and TP/SL adjustments — each one a proposal he approves — and the agent manages each position over its life, told after every execution.
+The owner approved real orders on his OKX account under one rule: the agent proposes, the owner approves every action, and only the shapes below exist. Dry run until he sets `CTG_TRADE_MODE=live`. First approval (2026-11-01): market opens, isolated (the default margin mode of an open is now cross, the owner's preference; isolated only on request), TP + SL attached. Extended the same day: cross margin, limit orders, adds (补仓), partial and full closes (减仓 / 平仓) and TP/SL adjustments — each one a proposal he approves — and the agent manages each position over its life, told after every execution.
 
 | Piece | Owns |
 |---|---|
@@ -151,6 +151,8 @@ The owner approved real orders on his OKX account under one rule: the agent prop
 | `reduce` | if ctg's TP/SL on the position are size-bound: one whole-position TP/SL at the same levels + cancel the old ones → `POST trade/order` reduce-only {opposite side, posSide (long/short mode) or `reduceOnly: true` (net mode), sz = ⌊position × fraction⌋ lots, ≥ minSz, < all} |
 | `close` | market: `POST trade/close-position` {instId, mgnMode, posSide, `autoCxl: false`, `ctgp<id>`} → `POST trade/cancel-algos` for ctg's TP/SL on it (optional); limit: a reduce-only order for the whole size, ctg's TP/SL cancelled once it filled. ctg's resting orders in the coin are cancelled first (an add must never fill after the close) |
 | `adjust` | TP/SL for the whole position only |
+| `cancel` | ctg's resting limit order in a coin and side: `cancel-order` by client id (a partial fill stays a position; settled by the order tracker) |
+| `amend` | that resting order: `amend-order` with a new price and, for an open, new TP/SL on its attached algo (`ctga<id>`); a new rest time (`orderExpiryMin`) is bookkeeping only. Size never changes; a partly filled order takes only a new rest time. Re-checked at approval; fails if the order no longer rests |
 
 TP/SL for the whole position: OKX allows one whole-position TP/SL (`closeFraction: "1"`) per position, which closes whatever size the position has when it triggers — so it stays right through adds, partial closes and partial fills. If the position has one (ctg's, or the owner's — then the proposal names its algoId, which the owner approves), `POST trade/amend-algos` {algoId, newTp/SlTriggerPx, ordPx −1, trigger type last}; otherwise `POST trade/order-algo` {ordType oco, `closeFraction: "1"`, opposite side, posSide / `reduceOnly` (net mode), tp/sl, `algoClOrdId=ctgt<id>`}. Then ctg's own size-bound TP/SL (client id `ctga…`) are cancelled (optional: a failure is a warning, the new one already covers the position). The owner's own size-bound TP/SL are never touched; the proposal says they stay. This step runs before the add / reduce order, so size is never added without the stop on it; if it fails nothing else is sent.
 

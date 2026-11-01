@@ -33,6 +33,7 @@ var allowed = map[string]map[string]bool{
 	pathOrder:       keys("instId", "tdMode", "side", "posSide", "ordType", "sz", "px", "reduceOnly", "clOrdId", "attachAlgoOrds"),
 	pathClosePos:    keys("instId", "mgnMode", "posSide", "autoCxl", "clOrdId"),
 	pathCancelOrder: keys("instId", "clOrdId"),
+	pathAmendOrder:  keys("instId", "clOrdId", "newPx", "attachAlgoOrds"),
 	pathOrderAlgo: keys("instId", "tdMode", "side", "posSide", "ordType", "closeFraction", "reduceOnly", "tpTriggerPx", "tpOrdPx",
 		"tpTriggerPxType", "slTriggerPx", "slOrdPx", "slTriggerPxType", "algoClOrdId"),
 	pathAmendAlgos: keys("instId", "algoId", "newTpTriggerPx", "newTpOrdPx", "newTpTriggerPxType", "newSlTriggerPx", "newSlOrdPx",
@@ -88,9 +89,9 @@ func checkRequest(rq Request) error {
 			if !Owned(str("clOrdId")) || !strings.HasPrefix(str("clOrdId"), "ctgp") {
 				return fmt.Errorf("okxorder: %s without a ctg client id", rq.Path)
 			}
-		case pathCancelOrder:
+		case pathCancelOrder, pathAmendOrder:
 			if !Owned(str("clOrdId")) || !strings.HasPrefix(str("clOrdId"), "ctgp") {
-				return errors.New("okxorder: only ctg's own orders can be cancelled")
+				return errors.New("okxorder: only ctg's own orders can be cancelled or amended")
 			}
 		case pathOrderAlgo:
 			if !Owned(str("algoClOrdId")) || str("closeFraction") != "1" {

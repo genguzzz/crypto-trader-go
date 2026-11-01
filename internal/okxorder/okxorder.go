@@ -63,6 +63,8 @@ const (
 	KindReduce = "reduce"
 	KindClose  = "close"
 	KindAdjust = "adjust"
+	KindCancel = "cancel" // cancel a resting limit order of ctg's
+	KindAmend  = "amend"  // change a resting limit order: price, and for an open its TP/SL
 
 	Isolated = "isolated"
 	Cross    = "cross"
@@ -638,6 +640,48 @@ func CancelOrder(instID, clOrdID string) (Order, error) {
 	return Order{kind: "cancel", instID: instID, reqs: []Request{{Method: "POST", Path: pathCancelOrder, Body: body}}}, nil
 }
 
+type amendedAlgo struct {
+	AttachAlgoClOrdID string `json:"attachAlgoClOrdId"`
+	NewTpTriggerPx    string `json:"newTpTriggerPx,omitempty"`
+	NewTpOrdPx        string `json:"newTpOrdPx,omitempty"`
+	NewSlTriggerPx    string `json:"newSlTriggerPx,omitempty"`
+	NewSlOrdPx        string `json:"newSlOrdPx,omitempty"`
+}
+
+type amendOrderBody struct {
+	InstID         string        `json:"instId"`
+	ClOrdID        string        `json:"clOrdId"`
+	NewPx          string        `json:"newPx,omitempty"`
+	AttachAlgoOrds []amendedAlgo `json:"attachAlgoOrds,omitempty"`
+}
+
+// AmendOrder changes one of ctg's resting limit orders by its client id: the price (px > 0) and, when
+// algoClID is set, the TP/SL attached to it (sl, tp > 0 = new trigger). The size never changes.
+func AmendOrder(instID, clOrdID, algoClID string, px, sl, tp float64, spec Spec) (Order, error) {
+	if !strings.HasPrefix(clOrdID, "ctgp") || !Owned(clOrdID) || !strings.HasSuffix(instID, "-USDT-SWAP") {
+		return Order{}, errors.New("only ctg's own orders can be amended")
+	}
+	b := amendOrderBody{InstID: instID, ClOrdID: clOrdID}
+	if px > 0 {
+		b.NewPx = formatStep(px, spec.TickSz)
+	}
+	if algoClID != "" && (sl > 0 || tp > 0) {
+		a := amendedAlgo{AttachAlgoClOrdID: algoClID}
+		if tp > 0 {
+			a.NewTpTriggerPx, a.NewTpOrdPx = formatStep(tp, spec.TickSz), "-1"
+		}
+		if sl > 0 {
+			a.NewSlTriggerPx, a.NewSlOrdPx = formatStep(sl, spec.TickSz), "-1"
+		}
+		b.AttachAlgoOrds = []amendedAlgo{a}
+	}
+	if b.NewPx == "" && len(b.AttachAlgoOrds) == 0 {
+		return Order{}, errors.New("nothing to amend")
+	}
+	body, _ := json.Marshal(b)
+	return Order{kind: KindAmend, instID: instID, reqs: []Request{{Method: "POST", Path: pathAmendOrder, Body: body}}}, nil
+}
+
 // CancelAlgos cancels ctg's own TP/SL orders by algo id (after a full close by limit filled). The ids
 // come from Sizing.AlgoIDs, which only lists algos with a ctg client id.
 func CancelAlgos(instID string, ids []string) (Order, error) {
@@ -802,6 +846,7 @@ const (
 	pathOrder       = "/api/v5/trade/order"
 	pathClosePos    = "/api/v5/trade/close-position"
 	pathCancelOrder = "/api/v5/trade/cancel-order"
+	pathAmendOrder  = "/api/v5/trade/amend-order"
 	pathOrderAlgo   = "/api/v5/trade/order-algo"
 	pathAmendAlgos  = "/api/v5/trade/amend-algos"
 	pathCancelAlgos = "/api/v5/trade/cancel-algos"

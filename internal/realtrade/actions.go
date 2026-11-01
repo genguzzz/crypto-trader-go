@@ -20,10 +20,10 @@ import (
 // ProposeInput is what the agent submits (propose_trade).
 type ProposeInput struct {
 	ChatID     int64
-	Kind       string // open (default) | add | reduce | close | adjust
+	Kind       string // open (default) | add | reduce | close | adjust | cancel | amend (a resting order)
 	InstID     string
 	Side       string // the position's side
-	MarginMode string // open: isolated (default) | cross; other kinds take the position's
+	MarginMode string // open: cross (default) | isolated; other kinds take the position's
 	OrdType    string // market (default) | limit
 	Px         float64
 	MarginUSDT float64
@@ -53,7 +53,7 @@ func NormalizeInst(s string) string {
 	return s
 }
 
-var kinds5 = map[string]bool{KindOpen: true, KindAdd: true, KindReduce: true, KindClose: true, KindAdjust: true}
+var kinds5 = map[string]bool{KindOpen: true, KindAdd: true, KindReduce: true, KindClose: true, KindAdjust: true, KindCancel: true, KindAmend: true}
 
 // Propose validates the action against the current price, the position it acts on and every cap and
 // stores it as pending. The source is the chat's trigger (signal / schedule) when the chat was started
@@ -74,7 +74,7 @@ func (s *Service) Propose(ctx context.Context, in ProposeInput) (Proposal, error
 	risky := in.Kind == KindOpen || in.Kind == KindAdd
 	switch {
 	case !kinds5[in.Kind]:
-		return Proposal{}, errors.New("kind must be open, add, reduce, close or adjust")
+		return Proposal{}, errors.New("kind must be open, add, reduce, close, adjust, cancel or amend")
 	case utf8.RuneCountInString(in.Rationale) < 10:
 		return Proposal{}, errors.New("rationale is required (why this action, why now)")
 	case utf8.RuneCountInString(in.Rationale) > 2000:
@@ -85,6 +85,12 @@ func (s *Service) Propose(ctx context.Context, in ProposeInput) (Proposal, error
 		return Proposal{}, errors.New("invalidation is too long (≤ 500 characters)")
 	case in.OrdType != okxorder.Market && in.OrdType != okxorder.Limit:
 		return Proposal{}, errors.New("orderType must be market or limit")
+	}
+	if in.Kind == KindCancel || in.Kind == KindAmend {
+		return s.proposeOrderOp(ctx, in)
+	}
+	if in.Kind == KindOpen && in.MarginMode == "" {
+		in.MarginMode = okxorder.Cross
 	}
 	if in.OrdType == okxorder.Limit {
 		if in.OrderMin == 0 {
@@ -117,6 +123,12 @@ func (s *Service) Propose(ctx context.Context, in ProposeInput) (Proposal, error
 	if err := s.policy(ctx, a, b.pos, b.posID, 0, true); err != nil {
 		return Proposal{}, err
 	}
+	return s.store(in, px, b, b.order.Sizing(), 0)
+}
+
+// store inserts a validated proposal as pending. The source is the chat's trigger (signal / schedule)
+// when the chat was started by one, else chat.
+func (s *Service) store(in ProposeInput, px float64, b built, z okxorder.Sizing, target int64) (Proposal, error) {
 	source, label := SourceChat, ""
 	if kind, l, ok := s.triggerRun(in.ChatID); ok {
 		source, label = kind, l
@@ -129,13 +141,12 @@ func (s *Service) Propose(ctx context.Context, in ProposeInput) (Proposal, error
 	}
 	exp = min(max(exp, minExpiry), maxExpiry)
 	now := s.now()
-	z := b.order.Sizing()
 	res, err := s.db.Exec(`INSERT INTO trade_proposals(created, updated, source, trigger_label, chat_id, inst_id, side, margin, leverage,
 		contracts, notional, ref_px, sl, tp, rationale, invalidation, expires_at, status, status_at, mode, kind, ord_type, px, mgn_mode, fraction,
-		pos_id, pos_sz, pos_avg, new_avg, liq_px, tpsl, note, order_min) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		pos_id, pos_sz, pos_avg, new_avg, liq_px, tpsl, note, order_min, target_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now.UnixMilli(), now.UnixMilli(), source, label, in.ChatID, in.InstID, in.Side, b.margin, b.lever, z.Contracts, z.NotionalUSDT,
 		px, b.sl, b.tp, in.Rationale, in.Invalidation, now.Add(exp).UnixMilli(), StatusPending, now.UnixMilli(), string(s.Mode()),
-		in.Kind, in.OrdType, b.px, b.mgnMode, in.Fraction, b.posID, b.pos.Contracts, b.pos.AvgPx, z.NewAvgPx, z.LiqPx, z.TPSL, z.Note, in.OrderMin)
+		in.Kind, in.OrdType, b.px, b.mgnMode, in.Fraction, b.posID, b.pos.Contracts, b.pos.AvgPx, z.NewAvgPx, z.LiqPx, z.TPSL, z.Note, in.OrderMin, target)
 	if err != nil {
 		return Proposal{}, err
 	}
@@ -432,6 +443,9 @@ func (s *Service) execute(ctx context.Context, id int64) (Proposal, error) {
 			s.queueSteer(id, StatusInvalidated)
 		}
 		return s.get(id)
+	}
+	if p.Kind == KindCancel || p.Kind == KindAmend {
+		return s.executeOrderOp(ctx, p, invalid)
 	}
 	px, err := s.freshQuote(p.InstID)
 	if err != nil {

@@ -63,7 +63,7 @@ var addedCols = []struct{ name, def string }{
 	{"filled", "REAL NOT NULL DEFAULT 0"}, {"fill_px", "REAL NOT NULL DEFAULT 0"}, {"filled_at", "INTEGER NOT NULL DEFAULT 0"},
 	{"algo_ids", "TEXT NOT NULL DEFAULT ''"}, {"cur_sz", "REAL NOT NULL DEFAULT 0"}, {"cur_avg", "REAL NOT NULL DEFAULT 0"},
 	{"cur_sl", "REAL NOT NULL DEFAULT 0"}, {"cur_tp", "REAL NOT NULL DEFAULT 0"}, {"cur_algo", "TEXT NOT NULL DEFAULT ''"},
-	{"realized", "REAL NOT NULL DEFAULT 0"},
+	{"realized", "REAL NOT NULL DEFAULT 0"}, {"target_id", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func migrate(db *sql.DB) error {
@@ -112,6 +112,8 @@ const (
 	KindReduce = okxorder.KindReduce
 	KindClose  = okxorder.KindClose
 	KindAdjust = okxorder.KindAdjust
+	KindCancel = okxorder.KindCancel
+	KindAmend  = okxorder.KindAmend
 
 	// order states of an executed proposal (a market order is filled at once)
 	OrdLive     = "live"
@@ -147,7 +149,8 @@ type Proposal struct {
 	RR           float64 `json:"rr"`
 	// the position an add / reduce / close / adjust acts on, at creation: its size and average entry;
 	// add: the average once filled; the estimated liquidation price after the order (0 = unknown)
-	PosID        int64   `json:"posId,omitempty"` // the AI position (its open's id; an executed open: itself); 0 = the owner's own
+	TargetID     int64   `json:"targetId,omitempty"` // cancel / amend: the resting order's proposal
+	PosID        int64   `json:"posId,omitempty"`    // the AI position (its open's id; an executed open: itself); 0 = the owner's own
 	PosContracts float64 `json:"posContracts,omitempty"`
 	PosAvgPx     float64 `json:"posAvgPx,omitempty"`
 	NewAvgPx     float64 `json:"newAvgPx,omitempty"`
@@ -211,7 +214,7 @@ var (
 const cols = `id, created, updated, source, trigger_label, chat_id, inst_id, side, margin, leverage, contracts, notional, ref_px, sl, tp,
   rationale, invalidation, expires_at, status, status_at, mode, error, resolved_by, via, exec_px, ord_id, request, response,
   closed_at, close_kind, close_px, pnl, kind, ord_type, px, mgn_mode, fraction, pos_id, pos_sz, pos_avg, new_avg, liq_px, tpsl, note,
-  order_min, order_until, ord_state, filled, fill_px, filled_at, algo_ids, cur_sz, cur_avg, cur_sl, cur_tp, cur_algo, realized`
+  order_min, order_until, ord_state, filled, fill_px, filled_at, algo_ids, cur_sz, cur_avg, cur_sl, cur_tp, cur_algo, realized, target_id`
 
 func scan(row interface{ Scan(...any) error }) (Proposal, error) {
 	var p Proposal
@@ -221,7 +224,7 @@ func scan(row interface{ Scan(...any) error }) (Proposal, error) {
 		&p.Mode, &p.Error, &p.By, &p.Via, &p.ExecPx, &p.OrdID, &req, &resp, &p.ClosedAt, &p.CloseKind, &p.ClosePx, &p.PnlUSDT,
 		&p.Kind, &p.OrdType, &p.Px, &p.MarginMode, &p.Fraction, &p.PosID, &p.PosContracts, &p.PosAvgPx, &p.NewAvgPx, &p.LiqPx, &p.TPSL, &p.Note,
 		&p.OrderMin, &p.OrderUntil, &p.OrdState, &p.Filled, &p.FillPx, &p.FilledAt, &p.algoIDs, &p.CurContracts, &p.CurAvgPx, &p.CurSL, &p.CurTP,
-		&p.curAlgo, &p.realized)
+		&p.curAlgo, &p.realized, &p.TargetID)
 	if req != "" {
 		p.Request = json.RawMessage(req)
 	}

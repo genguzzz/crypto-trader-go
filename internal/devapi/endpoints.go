@@ -472,19 +472,25 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				"side, stop 0.3–10% / target ≤ 40% from the entry, reward:risk below minRR (open, add), leverage or margin outside the caps, " +
 				"the stop beyond the estimated liquidation, another proposal or resting order in the coin, an open where a position exists " +
 				"(act on it instead), too many adds or AI positions, the daily loss stop (blocks open and add only). get_trade_proposals " +
-				"shows the mode and caps; mode=dryrun means approved actions are only recorded and simulated.",
+				"shows the mode and caps; mode=dryrun means approved actions are only recorded and simulated. Resting limit orders: " +
+				"cancel — withdraw ctg's resting limit order in that coin and side (instId + side; the unfilled rest is cancelled, a partial fill " +
+				"stays a position) · amend — change that resting order: price (a buy below / a sell above the market), orderExpiryMin " +
+				"(rest time restarts at approval), and for an open also sl / tp (both re-checked); size never changes, and a partly filled " +
+				"order only takes a new orderExpiryMin. Both need no marginUsdt / leverage / invalidation, are never blocked by the caps, " +
+				"and fail if the order has meanwhile filled or expired. A new limit or market order is a plain open / add / reduce / close. " +
+				"Without marginMode an open uses cross (the owner's default); pass isolated only when asked.",
 			Params: []Param{
-				{Name: "kind", In: "query", Type: "string", Enum: []string{"open", "add", "reduce", "close", "adjust"}, Default: "open"},
+				{Name: "kind", In: "query", Type: "string", Enum: []string{"open", "add", "reduce", "close", "adjust", "cancel", "amend"}, Default: "open"},
 				instParam("query"),
 				{Name: "side", In: "query", Type: "string", Required: true, Enum: []string{"long", "short"}, Desc: "the position's side"},
 				{Name: "orderType", In: "query", Type: "string", Enum: []string{"market", "limit"}, Default: "market"},
-				{Name: "price", In: "query", Type: "number", Desc: "limit price"},
-				{Name: "orderExpiryMin", In: "query", Type: "integer", Min: 5, Max: 1440, Desc: "limit: minutes it rests before the server cancels the unfilled rest (default 60)"},
-				{Name: "marginMode", In: "query", Type: "string", Enum: []string{"isolated", "cross"}, Desc: "open: isolated (default) or cross; other kinds use the position's"},
+				{Name: "price", In: "query", Type: "number", Desc: "limit price (amend: the new price)"},
+				{Name: "orderExpiryMin", In: "query", Type: "integer", Min: 5, Max: 1440, Desc: "limit / amend: minutes it rests before the server cancels the unfilled rest (default 60)"},
+				{Name: "marginMode", In: "query", Type: "string", Enum: []string{"isolated", "cross"}, Desc: "open: cross (default) or isolated; other kinds use the position's"},
 				{Name: "marginUsdt", In: "query", Type: "number", Desc: "open / add: margin in USDT"},
 				{Name: "leverage", In: "query", Type: "integer", Min: 1, Max: 125, Desc: "open: leverage (add uses the position's)"},
-				{Name: "sl", In: "query", Type: "number", Desc: "open / add / adjust: stop-loss trigger price (whole position)"},
-				{Name: "tp", In: "query", Type: "number", Desc: "open / add / adjust: take-profit trigger price (whole position)"},
+				{Name: "sl", In: "query", Type: "number", Desc: "open / add / adjust / amend (an open): stop-loss trigger price (whole position)"},
+				{Name: "tp", In: "query", Type: "number", Desc: "open / add / adjust / amend (an open): take-profit trigger price (whole position)"},
 				{Name: "fraction", In: "query", Type: "number", Desc: "reduce: share of the position to close, e.g. 0.5"},
 				{Name: "rationale", In: "query", Type: "string", Required: true, Desc: "why this action and why now, in Chinese, 2–6 sentences with numbers: the evidence for and against"},
 				{Name: "invalidation", In: "query", Type: "string", Desc: "open / add (required): what proves the idea wrong before the stop, in Chinese, one sentence"},

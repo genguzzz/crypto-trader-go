@@ -39,6 +39,9 @@ func (s *Service) ProposeTool(ctx context.Context, chat int64, a map[string]stri
 			out["rr"] = round(p.RR, 2)
 		}
 	}
+	if p.Kind == KindCancel || p.Kind == KindAmend {
+		out["targetId"], out["change"] = p.TargetID, p.TPSL
+	}
 	if p.Kind != KindOpen {
 		out["posId"], out["positionContracts"], out["positionAvgPx"] = p.PosID, p.PosContracts, p.PosAvgPx
 	}
@@ -75,6 +78,9 @@ func (s *Service) ListTool(_ context.Context, a map[string]string) (any, error) 
 			"status": p.Status, "mode": p.Mode}
 		if p.PosID > 0 {
 			r["posId"] = p.PosID
+		}
+		if p.TargetID > 0 {
+			r["targetId"], r["change"] = p.TargetID, p.TPSL
 		}
 		if p.Kind == KindOpen || p.Kind == KindAdd {
 			r["marginUsdt"], r["leverage"] = p.MarginUSDT, p.Leverage

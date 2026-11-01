@@ -133,7 +133,7 @@ func (s *Service) steerText(ctx context.Context, p Proposal, kind string) string
 	switch kind {
 	case StatusExecuted:
 		switch {
-		case p.Kind == KindAdjust:
+		case p.Kind == KindAdjust, p.Kind == KindCancel, p.Kind == KindAmend:
 			fmt.Fprintf(&b, "✅ %s#%d 已执行 · %s：%s", dry, p.ID, what, p.TPSL)
 		case p.OrdType == okxorder.Limit:
 			fmt.Fprintf(&b, "📌 %s#%d 限价单已挂出 · %s · %s，%s前未成交的部分自动撤单", dry, p.ID, what, order,
@@ -161,7 +161,7 @@ func (s *Service) steerText(ctx context.Context, p Proposal, kind string) string
 		fmt.Fprintf(&b, " · %s %d×", mgnText(p.MarginMode), p.Leverage)
 	}
 	b.WriteString("\n")
-	if p.TPSL != "" && (kind == StatusExecuted || kind == OrdFilled) && p.Kind != KindAdjust {
+	if p.TPSL != "" && (kind == StatusExecuted || kind == OrdFilled) && p.Kind != KindAdjust && p.Kind != KindCancel && p.Kind != KindAmend {
 		b.WriteString("止盈止损：" + p.TPSL + "\n")
 	}
 	if strings.HasPrefix(p.Error, "警告") {
@@ -313,6 +313,8 @@ func shortAction(q Proposal) string {
 		s += fmt.Sprintf(" %.0f%%（%s 张）", q.Fraction*100, fmtNum(q.Contracts))
 	case KindClose:
 		s += " 全部"
+	case KindCancel, KindAmend:
+		s = kindText(q.Kind) + " " + q.TPSL
 	case KindAdjust:
 		s = kindText(q.Kind) + fmt.Sprintf(" 止损 %s 止盈 %s", okxorder.FormatPx(q.SL), okxorder.FormatPx(q.TP))
 	}
