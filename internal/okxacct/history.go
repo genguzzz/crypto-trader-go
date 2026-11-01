@@ -46,13 +46,13 @@ var histKinds = map[string]histKind{
 	"withdrawals": {path: "/api/v5/asset/withdrawal-history", cursor: "ts", timeKey: "ts", sums: []string{"amt", "fee"}, group: "ccy",
 		keep: func(r map[string]any) bool { return str(r, "state") == "2" }, note: "completed withdrawals (state 2) incl. internal transfers out"},
 	"funding": {path: "/api/v5/asset/bills-history", cursor: "ts", timeKey: "ts", sums: []string{"balChg"}, group: "type",
-		note: "funding-account bills (about 1 year): deposits, withdrawals, C2C (116/117/118), transfers, Earn, rebates"},
+		note: "funding-account bills (about 1 year): deposits, withdrawals, C2C (117 buys completed; 116 sells escrowed, 118 refunds cancelled ones), transfers, Earn, rebates"},
 }
 
 // fundingTypes names the funding-bill types seen on this account plus the common ones.
 var fundingTypes = map[string]string{"1": "deposit", "2": "withdrawal", "13": "withdrawal cancelled", "20": "to sub-account",
 	"21": "from sub-account", "47": "system reversal", "48": "received", "75": "Simple Earn subscribe", "76": "Simple Earn redeem",
-	"116": "C2C order placed", "117": "C2C order filled", "118": "C2C order cancelled", "130": "from trading account",
+	"116": "C2C sell placed (USDT escrowed)", "117": "C2C buy completed", "118": "C2C sell cancelled (escrow refunded)", "130": "from trading account",
 	"131": "to trading account", "150": "fee rebate", "173": "fee rebate", "458": "creator reward"}
 
 // accountTypes names trading-account bill types.
