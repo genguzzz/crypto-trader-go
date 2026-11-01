@@ -312,3 +312,19 @@ class ProxyCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SignalToolLabels(unittest.TestCase):
+    def test_signal_tools_allowed_and_labelled(self):
+        import agent
+
+        for t in ("subscribe_signal", "list_signals", "unsubscribe_signal"):
+            self.assertIn(t, agent.CTG_DIRECT)
+        self.assertEqual(agent.label_for("mcp__ctg__subscribe_signal"), "订阅信号")
+        self.assertEqual(agent.label_for("mcp__ctg__unsubscribe_signal"), "取消订阅")
+        self.assertEqual(agent.label_for("mcp__ctg__list_signals"), "查看信号")
+        spec = {"type": "any", "of": [{"type": "zone", "instId": "AAVE-USDT-SWAP", "lo": 139.5, "hi": 140.2},
+                                      {"type": "price", "instId": "AAVE-USDT-SWAP", "op": "above", "level": 140.2, "bar": "1H"}]}
+        self.assertEqual(agent.brief_input("mcp__ctg__subscribe_signal", {"spec": spec}), "AAVE 139.5–140.2 或 AAVE ≥ 140.2 (1H 收盘)")
+        self.assertEqual(agent.brief_input("mcp__ctg__subscribe_signal", {"spec": json.dumps(spec["of"][0])}), "AAVE 139.5–140.2")
+        self.assertEqual(agent.brief_input("mcp__ctg__unsubscribe_signal", {"id": 12, "reason": "x"}), "#12")

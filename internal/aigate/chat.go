@@ -162,12 +162,23 @@ type ChatInput struct {
 	Retry bool `json:"retry"`
 	// Title names a new chat instead of its first words (server-started runs: "信号 · …").
 	Title string `json:"-"`
+	// Role stores the message as RoleSignal instead of a question the owner typed (server-started runs).
+	Role string `json:"-"`
 }
+
+// Message roles. A signal message is injected by the server when a subscribed signal fires
+// (internal/signals): the agent answers it like a question, the app shows it as a signal, not as the owner.
+const (
+	RoleUser      = "user"
+	RoleAssistant = "assistant"
+	RoleSignal    = "signal"
+)
 
 // ChatModels the app may pick per turn.
 var ChatModels = []string{"claude-sonnet-5", "claude-opus-5-5"}
 
-var errChatBusy = errors.New("这个对话还在回答中")
+// ErrChatBusy: the chat is answering; a new turn has to wait until it ends.
+var ErrChatBusy = errors.New("这个对话还在回答中")
 
 // StartChat stores the user's message and starts the agent run; the caller streams it with Attach.
 func (g *Gate) StartChat(in ChatInput) (int64, error) {
@@ -190,6 +201,10 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	}
 	if utf8.RuneCountInString(in.Message) > 8000 {
 		return 0, errors.New("message too long")
+	}
+	role := RoleUser
+	if in.Role == RoleSignal {
+		role = RoleSignal
 	}
 	g.mu.Lock()
 	ready := g.cred.configured() && g.w != nil && g.w.info.Ready
@@ -227,14 +242,14 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	}
 	if _, busy := g.runs[in.ChatID]; busy {
 		g.runMu.Unlock()
-		return 0, errChatBusy
+		return 0, ErrChatBusy
 	}
 	g.runs[in.ChatID] = run
 	g.runMu.Unlock()
 	if in.Retry {
 		// drop the failed answer (if any) so the question is answered once
-		g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=? AND role='assistant' AND id > (SELECT MAX(id) FROM ai_chat_msgs WHERE chat_id=? AND role='user')`, in.ChatID, in.ChatID)
-	} else if _, err := g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content) VALUES(?,?,?,?)`, in.ChatID, now, "user", in.Message); err != nil {
+		g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=? AND role='assistant' AND id > (SELECT MAX(id) FROM ai_chat_msgs WHERE chat_id=? AND role IN ('user','signal'))`, in.ChatID, in.ChatID)
+	} else if _, err := g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content) VALUES(?,?,?,?)`, in.ChatID, now, role, in.Message); err != nil {
 		g.endRun(in.ChatID)
 		return 0, err
 	}
@@ -244,6 +259,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	run.cancel = cancel
 	go func() {
 		defer cancel()
+		defer g.chatDone(in.ChatID) // after endRun: the chat takes a new turn again
 		defer g.endRun(in.ChatID)
 		start := g.now()
 		msg := map[string]any{"type": "chat", "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "notes": g.MemoryFor(in.Message)}
@@ -296,7 +312,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 
 func (g *Gate) lastQuestion(chat int64) (string, error) {
 	var q string
-	err := g.st.DB.QueryRow(`SELECT content FROM ai_chat_msgs WHERE chat_id=? AND role='user' ORDER BY id DESC LIMIT 1`, chat).Scan(&q)
+	err := g.st.DB.QueryRow(`SELECT content FROM ai_chat_msgs WHERE chat_id=? AND role IN ('user','signal') ORDER BY id DESC LIMIT 1`, chat).Scan(&q)
 	if err != nil {
 		return "", errors.New("chat has no question")
 	}
@@ -330,6 +346,43 @@ func (g *Gate) notifyDone(chat int64, text, errText string) {
 			g.logf("aigate: notify: %v", err)
 		}
 	}()
+}
+
+// WakeChat continues an existing chat with a server-injected signal message (RoleSignal): the agent
+// resumes the chat's session with its full history. ErrChatBusy while a turn runs, ErrUnavailable
+// while the agent is down; the caller retries later (internal/signals queues it).
+func (g *Gate) WakeChat(chat int64, message string) error {
+	if chat <= 0 {
+		return errors.New("chat not found")
+	}
+	if g.run(chat) != nil {
+		return ErrChatBusy
+	}
+	_, err := g.StartChat(ChatInput{ChatID: chat, Message: message, Role: RoleSignal})
+	return err
+}
+
+// ChatTitle returns a chat's title; false when there is no such chat.
+func (g *Gate) ChatTitle(chat int64) (string, bool) {
+	var t string
+	err := g.st.DB.QueryRow(`SELECT title FROM ai_chats WHERE id=?`, chat).Scan(&t)
+	return t, err == nil
+}
+
+// SetOnChatDone registers a hook called (in the run's goroutine) after any chat turn ended; must not block.
+func (g *Gate) SetOnChatDone(f func(chatID int64)) {
+	g.mu.Lock()
+	g.onDone = f
+	g.mu.Unlock()
+}
+
+func (g *Gate) chatDone(id int64) {
+	g.mu.Lock()
+	f := g.onDone
+	g.mu.Unlock()
+	if f != nil {
+		f(id)
+	}
 }
 
 func (g *Gate) endRun(id int64) {
@@ -409,7 +462,7 @@ func (g *Gate) ChatByID(id int64) (*Chat, error) {
 		c.Messages = append(c.Messages, m)
 	}
 	c.Running = g.run(id) != nil
-	if n := len(c.Messages); !c.Running && n > 0 && c.Messages[n-1].Role == "user" {
+	if n := len(c.Messages); !c.Running && n > 0 && c.Messages[n-1].Role != RoleAssistant {
 		c.Interrupted = true
 	}
 	return &c, rows.Err()
@@ -418,7 +471,7 @@ func (g *Gate) ChatByID(id int64) (*Chat, error) {
 // DeleteChat removes a conversation (not while it runs).
 func (g *Gate) DeleteChat(id int64) error {
 	if g.run(id) != nil {
-		return errChatBusy
+		return ErrChatBusy
 	}
 	if _, err := g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=?`, id); err != nil {
 		return err

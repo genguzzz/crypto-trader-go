@@ -3,6 +3,7 @@ package aigate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -133,5 +134,48 @@ func TestChatInterruptedRetryNotify(t *testing.T) {
 	c, _ := e.g.ChatByID(id)
 	if len(c.Messages) != 2 || c.Messages[0].Role != "user" || c.Messages[1].Content != "能空" || c.Interrupted {
 		t.Fatalf("after retry %+v", c.Messages)
+	}
+}
+
+// A signal wakes an existing chat: the message is stored as a signal (not the owner's), the agent resumes
+// the chat's session, a busy chat refuses until its turn ends, and the end of a turn is reported.
+func TestWakeChat(t *testing.T) {
+	e := newEnv(t, Options{})
+	e.g.SetCredential(KindAPIKey, testKey)
+	done := make(chan int64, 4)
+	e.g.SetOnChatDone(func(id int64) { done <- id })
+	e.run(t)
+	w := e.dial(t, true)
+	waitFor(t, "available", e.g.Available)
+	id, err := e.g.StartChat(ChatInput{Message: "AAVE 能多吗"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := w.recv()
+	if err := e.g.WakeChat(id, "⚡ 信号 #1 触发"); !errors.Is(err, ErrChatBusy) {
+		t.Fatalf("wake while busy: %v", err)
+	}
+	w.send(map[string]any{"type": "result", "id": m["id"], "result": map[string]any{"text": "等回踩", "sessionId": "s9"}})
+	if got := <-done; got != id {
+		t.Fatalf("done hook %d", got)
+	}
+	if err := e.g.WakeChat(id, "⚡ 信号 #1 触发：AAVE 进入 139.5–140.2"); err != nil {
+		t.Fatal(err)
+	}
+	m = w.recv()
+	if m["sessionId"] != "s9" || !strings.HasPrefix(m["message"].(string), "⚡ 信号 #1") {
+		t.Fatalf("wake message %v", m)
+	}
+	w.send(map[string]any{"type": "result", "id": m["id"], "result": map[string]any{"text": "已提议", "sessionId": "s9"}})
+	<-done
+	c, _ := e.g.ChatByID(id)
+	if len(c.Messages) != 4 || c.Messages[2].Role != RoleSignal || c.Messages[3].Content != "已提议" {
+		t.Fatalf("messages %+v", c.Messages)
+	}
+	if t2, ok := e.g.ChatTitle(id); !ok || t2 != "AAVE 能多吗" {
+		t.Fatalf("title %q %v", t2, ok)
+	}
+	if err := e.g.WakeChat(9999, "x"); err == nil {
+		t.Fatal("woke a chat that does not exist")
 	}
 }

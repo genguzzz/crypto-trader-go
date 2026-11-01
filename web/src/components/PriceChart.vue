@@ -17,13 +17,15 @@ import { getAdminKey } from '../composables/adminKey'
 import { useAiPlans, planStatusText, spanLevels, type AiPlan } from './charts/aiPlans'
 import { usePositions, posSize } from './charts/positions'
 import { useProposalLevels, entry as proposalEntry } from './charts/proposal'
+import { useSignalLevels } from './charts/signal'
 import { statusLabel } from '../realtradeApi'
 
 /** fill: take the parent's full height (workbench); otherwise fixed chart heights (stacked page).
  *  embed: inside the native app's web view (views/EmbedChart.vue): the full-screen button asks the
  *  app (event `fullscreen`) instead of going full screen itself; 'full' = already the app's full-screen chart.
- *  proposal: id of an AI trade proposal whose entry / stop / target to draw (charts/proposal.ts). */
-const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean; embed?: 'inline' | 'full'; proposal?: number }>()
+ *  proposal: id of an AI trade proposal whose entry / stop / target to draw (charts/proposal.ts).
+ *  signal: id of an agent signal subscription whose levels to draw (charts/signal.ts). */
+const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean; embed?: 'inline' | 'full'; proposal?: number; signal?: number }>()
 const emit = defineEmits<{ live: [price: number]; fullscreen: [] }>()
 const bar = ref(localStorage.getItem('bar') || '15m')
 type Layer = 'k' | 'delta' | 'foot'
@@ -53,6 +55,7 @@ let candles: ISeriesApi<'Candlestick'> | undefined
 const aiPlans = useAiPlans(() => candles, () => props.id, () => barMs[bar.value], withPlans)
 const positions = usePositions(() => candles, () => props.id, withPos)
 const prop = useProposalLevels(() => candles, () => props.id, () => props.proposal)
+const sig = useSignalLevels(() => candles, () => props.id, () => props.signal)
 const planLeft = (p: AiPlan) => { const h = (p.expires - Date.now()) / 3600e3; return h >= 24 ? `剩 ${Math.round(h / 24)} 天` : `剩 ${Math.max(1, Math.round(h))} 小时` }
 let vol: ISeriesApi<'Histogram'> | undefined
 let spot: ISeriesApi<'Line'> | undefined
@@ -489,17 +492,18 @@ onMounted(() => {
   layoutBands()
   chart.subscribeCrosshairMove(onCrosshair)
   chart.timeScale().subscribeVisibleLogicalRangeChange(() => { spacing.value = chart?.timeScale().options().barSpacing ?? 6 })
-  spanLevels(candles, () => [...aiPlans.levels(), ...positions.levels(), ...prop.levels()])
+  spanLevels(candles, () => [...aiPlans.levels(), ...positions.levels(), ...prop.levels(), ...sig.levels()])
   load('fit')
   aiPlans.refresh()
   positions.refresh()
   prop.refresh()
+  sig.refresh()
   // the proposal follows SSE `realtrade`; the poll covers embeds, which have no event stream
-  timer = window.setInterval(() => { load(); aiPlans.refresh(); positions.refresh(); if (props.embed && props.proposal) prop.refresh() }, 10_000)
+  timer = window.setInterval(() => { load(); aiPlans.refresh(); positions.refresh(); if (props.embed && props.proposal) prop.refresh(); if (props.signal) sig.refresh() }, 10_000)
   hotTimer = window.setInterval(hot, 1000)
 })
 onUnmounted(() => { clearInterval(timer); clearInterval(hotTimer); chart?.remove() })
-watch(bar, v => { localStorage.setItem('bar', v); load('anchor'); aiPlans.draw(); positions.draw(); prop.draw() })
+watch(bar, v => { localStorage.setItem('bar', v); load('anchor'); aiPlans.draw(); positions.draw(); prop.draw(); sig.draw() })
 watch(layer, v => { localStorage.setItem('ctg.chartLayer', v); legendH = 0; load('anchor') })
 watch(withSpot, v => { localStorage.setItem('ctg.chartSpot', v ? '1' : '0'); load('anchor') })
 watch(withOIL, v => { localStorage.setItem('ctg.chartOIL', v ? '1' : '0'); load('anchor') })
@@ -575,6 +579,11 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
       <span>止损 <b class="down">{{ fmtPrice(prop.proposal.value.sl) }}</b></span>
       <span>止盈 <b class="up">{{ fmtPrice(prop.proposal.value.tp) }}</b></span>
       <span v-if="prop.proposal.value.mode === 'dryrun'" class="muted">DRY RUN</span>
+    </div>
+    <div v-if="sig.signal.value" class="mapbar planbar posbar tnum">
+      <b>信号 #{{ sig.signal.value.id }}</b>
+      <span>{{ sig.signal.value.desc }}</span>
+      <span class="st">{{ { active: '等待触发', fired: '已触发', expired: '已过期', cancelled: '已取消' }[sig.signal.value.status] }}</span>
     </div>
     <div v-for="p in aiPlans.plans.value" :key="p.id" class="mapbar planbar tnum">
       <b :class="p.side === 'short' ? 'down' : 'up'">AI {{ p.side === 'short' ? '空' : '多' }}</b>

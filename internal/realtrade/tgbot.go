@@ -50,6 +50,8 @@ type BotStatus struct {
 type botJob struct {
 	kind string
 	id   int64
+	text string // kind "note": a plain push (signal fired) with an optional 打开对话 link
+	link string
 }
 
 const (
@@ -108,9 +110,18 @@ func (b *Bot) setErr(err error) {
 // ProposalEvent queues the card update and push for a proposal event (never blocks).
 func (b *Bot) ProposalEvent(kind string, p Proposal) {
 	select {
-	case b.queue <- botJob{kind, p.ID}:
+	case b.queue <- botJob{kind: kind, id: p.ID}:
 	default:
 		b.s.logf("realtrade: telegram queue full; dropped %s #%d", kind, p.ID)
+	}
+}
+
+// Note queues a plain push (internal/signals: a subscription fired) with an optional link button.
+func (b *Bot) Note(text, link string) {
+	select {
+	case b.queue <- botJob{kind: "note", text: text, link: link}:
+	default:
+		b.s.logf("realtrade: telegram queue full; dropped a note")
 	}
 }
 
@@ -142,12 +153,20 @@ func (b *Bot) resend() {
 }
 
 func (b *Bot) deliver(ctx context.Context, j botJob) {
-	p, err := b.s.get(j.id)
-	if err != nil {
-		return
+	var p Proposal
+	var err error
+	if j.kind != "note" {
+		if p, err = b.s.get(j.id); err != nil {
+			return
+		}
 	}
 	for try := 0; try < botRetries && ctx.Err() == nil; try++ {
-		if err = b.send(ctx, j.kind, p); err == nil {
+		if j.kind == "note" {
+			err = b.sendNote(ctx, j.text, j.link)
+		} else {
+			err = b.send(ctx, j.kind, p)
+		}
+		if err == nil {
 			return
 		}
 		var ae *tgError
@@ -188,6 +207,15 @@ func (b *Bot) send(ctx context.Context, kind string, p Proposal) error {
 	}
 	return b.call(ctx, "sendMessage", map[string]any{"chat_id": b.chat, "text": html.EscapeString(eventLine(kind, p)), "parse_mode": "HTML",
 		"link_preview_options": map[string]bool{"is_disabled": true}}, nil)
+}
+
+func (b *Bot) sendNote(ctx context.Context, text, link string) error {
+	params := map[string]any{"chat_id": b.chat, "text": html.EscapeString(text), "parse_mode": "HTML",
+		"link_preview_options": map[string]bool{"is_disabled": true}}
+	if link != "" {
+		params["reply_markup"] = map[string]any{"inline_keyboard": [][]tgButton{{{Text: "💬 打开对话", URL: link}}}}
+	}
+	return b.call(ctx, "sendMessage", params, nil)
 }
 
 func (b *Bot) message(id int64) (int64, int64, bool) {

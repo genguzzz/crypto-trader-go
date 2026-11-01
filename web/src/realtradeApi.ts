@@ -64,6 +64,13 @@ async function oget<T>(path: string): Promise<T | null> {
   return body as T
 }
 
+/** An agent signal subscription as the chart needs it (server: internal/signals). */
+export interface SignalSub {
+  id: number; status: 'active' | 'fired' | 'expired' | 'cancelled'; desc: string; instIds: string[]
+  levels?: { instId: string; px: number; label: string }[]
+}
+export const signalsApi = { get: (id: number) => oget<SignalSub>(`/api/v1/signals/${id}`) }
+
 export const realtradeApi = {
   list: (q: { status?: 'pending' | 'open' | 'all'; chatId?: number; limit?: number } = {}) => {
     const s = Object.entries(q).filter(([, v]) => v !== undefined && v !== 0).map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')

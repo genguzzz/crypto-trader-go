@@ -450,3 +450,16 @@ func TestHTTP(t *testing.T) {
 		t.Fatalf("triggers: %d %s", w.Code, w.Body)
 	}
 }
+
+// A proposal from a chat a signal subscription just woke is recorded as coming from that signal.
+func TestProposalFromSignalWake(t *testing.T) {
+	e := newEnv(t, okxorder.NewDryRun())
+	e.s.SetSignalSource(func(chat int64) (string, bool) { return "#4 BTC 进入 99000–99500", chat == 7 })
+	p, err := e.s.Propose(context.Background(), input())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Source != SourceSignal || p.Trigger != "#4 BTC 进入 99000–99500" || sourceText(p) != "信号 · #4 BTC 进入 99000–99500" {
+		t.Fatalf("source %s %q", p.Source, p.Trigger)
+	}
+}

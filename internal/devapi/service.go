@@ -122,6 +122,18 @@ type Service struct {
 	okxHistory func(ctx context.Context, args map[string]string) (any, error)             // paged + totalled history (optional)
 	propose    func(ctx context.Context, chat int64, args map[string]string) (any, error) // trade proposal for the owner's approval (optional)
 	proposals  func(ctx context.Context, args map[string]string) (any, error)             // the proposals and where they stand (optional)
+	signals    *SignalTools                                                               // the agent's signal subscriptions (optional)
+}
+
+// SignalTools are the owner-only subscribe_signal / list_signals / unsubscribe_signal handlers
+// (internal/signals); chat is the X-Ctg-Chat of the call (0 when absent).
+type SignalTools struct {
+	Subscribe, List, Unsubscribe func(ctx context.Context, chat int64, args map[string]string) (any, error)
+}
+
+// SetSignals enables the signal tools (call before Mount).
+func (s *Service) SetSignals(t SignalTools) {
+	s.signals = &t
 }
 
 // SetTradeProposals enables the owner-only propose_trade and get_trade_proposals tools (call before Mount).

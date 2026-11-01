@@ -108,11 +108,29 @@ func (g *Gate) savePlans(chatID int64, text, confidence string) {
 		}
 		inst := strings.ToUpper(raw.InstID)
 		g.st.DB.Exec(`UPDATE ai_plans SET status='replaced', status_at=? WHERE inst_id=? AND status IN ('pending','active','tp1')`, now, inst)
-		g.st.DB.Exec(`INSERT INTO ai_plans(chat_id, created, inst_id, side, entry_lo, entry_hi, stop, tp1, tp2, leverage, hold, invalidate,
+		res, err := g.st.DB.Exec(`INSERT INTO ai_plans(chat_id, created, inst_id, side, entry_lo, entry_hi, stop, tp1, tp2, leverage, hold, invalidate,
 			confidence, expires, checked_to) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			chatID, now, inst, raw.Side, lo, hi, raw.Stop, raw.TP[0], tp2, raw.Leverage, raw.Hold, raw.Invalidate,
 			confidence, now+holdMs(raw.Hold), now)
+		if err != nil {
+			continue
+		}
+		id, _ := res.LastInsertId()
+		g.mu.Lock()
+		f := g.onPlan
+		g.mu.Unlock()
+		if f != nil {
+			f(chatID, inst, id)
+		}
 	}
+}
+
+// SetOnPlan registers a hook for every stored plan (signals link the chat's subscriptions on that coin
+// to it: the agent subscribes before its answer, and so before the plan has an id); must not block.
+func (g *Gate) SetOnPlan(f func(chatID int64, instID string, planID int64)) {
+	g.mu.Lock()
+	g.onPlan = f
+	g.mu.Unlock()
 }
 
 var verdictConf = regexp.MustCompile("(?s)```verdict\\s*\\n.*?\"confidence\"\\s*:\\s*\"([^\"]+)\"")
@@ -249,6 +267,15 @@ func (g *Gate) loadPlans(where string, args ...any) ([]Plan, map[int64]int64) {
 		}
 	}
 	return out, checked
+}
+
+// PlanByID returns one stored plan in any state.
+func (g *Gate) PlanByID(id int64) (Plan, bool) {
+	ps, _ := g.loadPlans(`id=?`, id)
+	if len(ps) == 0 {
+		return Plan{}, false
+	}
+	return ps[0], true
 }
 
 func (g *Gate) planLoop(ctx context.Context) {

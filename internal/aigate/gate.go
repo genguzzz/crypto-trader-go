@@ -97,6 +97,8 @@ type Gate struct {
 	notify  func(ctx context.Context, text string) error
 	runMu   sync.Mutex
 	runs    map[int64]*chatRun
+	onDone  func(chatID int64) // a chat turn ended (signals retry their queued wake-ups)
+	onPlan  func(chatID int64, instID string, planID int64)
 
 	candles Candles1m // plan tracker's price source
 

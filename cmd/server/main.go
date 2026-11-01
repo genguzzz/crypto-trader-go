@@ -33,6 +33,7 @@ import (
 	"crypto-trader-go/internal/okxorder"
 	"crypto-trader-go/internal/realtrade"
 	"crypto-trader-go/internal/refdata"
+	"crypto-trader-go/internal/signals"
 	"crypto-trader-go/internal/store"
 	"crypto-trader-go/internal/strategyhost"
 	"crypto-trader-go/internal/trade"
@@ -158,12 +159,6 @@ func main() {
 	rt.SetAccount(acct)
 	rt.SetOnChange(func() { eng.Publish("realtrade", struct{}{}) })
 	dev.SetTradeProposals(rt.ProposeTool, rt.ListTool)
-	al.SetOnFired(func(evs []store.AlertEvent) {
-		for _, ev := range evs {
-			rt.Publish(realtrade.Signal{Type: "alert", InstID: ev.InstID, Vars: map[string]string{"rule": ev.RuleName, "ruleId": strconv.FormatInt(ev.RuleID, 10),
-				"message": ev.Message, "value": strconv.FormatFloat(ev.Value, 'f', -1, 64)}})
-		}
-	})
 	tradeBot, err := realtrade.BotFromEnv(rt, okx.HTTPClient())
 	if err != nil {
 		log.Fatal(err)
@@ -225,6 +220,71 @@ func main() {
 		return gate.StartChat(aigate.ChatInput{Message: prompt, InstID: instID, Title: title})
 	})
 	go rt.Run(ctx)
+
+	// Signal subscriptions: the agent waits for a condition; a firing wakes its chat (internal/signals).
+	sigOpts := signals.OptionsFromEnv()
+	sigOpts.PublicURL = envOr("CTG_PUBLIC_URL", "https://ctg.gugenzzz.top")
+	sig, err := signals.New(st, signalSources{eng: eng, gate: gate, al: al}, sigOpts)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sig.SetWaker(signalWaker{gate})
+	gate.SetOnChatDone(sig.ChatDone)
+	gate.SetOnPlan(sig.LinkPlan)
+	if tradeBot != nil {
+		sig.SetNotifier(tradeBot.Note)
+	} else {
+		sig.SetNotifier(func(text, link string) {
+			go func() {
+				nctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				if link != "" {
+					text += "\n" + link
+				}
+				if err := al.Notify(nctx, text); err != nil {
+					log.Printf("signals: notify: %v", err)
+				}
+			}()
+		})
+	}
+	sig.SetOnChange(func(kind string, id, chat int64) {
+		eng.Publish("signals", map[string]any{"kind": kind, "id": id, "chatId": chat})
+	})
+	dev.SetSignals(devapi.SignalTools{Subscribe: sig.SubscribeTool, List: sig.ListTool, Unsubscribe: sig.UnsubscribeTool})
+	rt.SetSignalSource(func(chat int64) (string, bool) {
+		id, ok := sig.WokenBy(chat)
+		if !ok {
+			return "", false
+		}
+		label := "#" + strconv.FormatInt(id, 10)
+		if x, err := sig.Get(id); err == nil {
+			label += " " + x.Desc
+		}
+		return label, true
+	})
+	al.SetOnFired(func(evs []store.AlertEvent) {
+		for _, ev := range evs {
+			rt.Publish(realtrade.Signal{Type: "alert", InstID: ev.InstID, Vars: map[string]string{"rule": ev.RuleName, "ruleId": strconv.FormatInt(ev.RuleID, 10),
+				"message": ev.Message, "value": strconv.FormatFloat(ev.Value, 'f', -1, 64)}})
+			sig.Alert(signals.AlertHit{RuleID: ev.RuleID, Rule: ev.RuleName, InstID: ev.InstID, Message: ev.Message})
+		}
+	})
+	eng.OnConfirmed(func(s *market.Snapshot) { sig.Minute(s.AsOfMinute) })
+	go func() { // price ticks: the engine's 2 s price broadcast
+		ch := eng.Subscribe()
+		defer eng.Unsubscribe(ch)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-ch:
+				if ev.Type == "prices" {
+					sig.Tick()
+				}
+			}
+		}
+	}()
+	go sig.Run(ctx)
 	go func() {
 		if err := gate.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("ai gate: %v", err)
@@ -246,7 +306,7 @@ func main() {
 	}
 	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al, Dev: dev,
 		Icons:    &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()},
-		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, acct.Register, rt.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
+		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, acct.Register, rt.Register, sig.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
 		AdminKey: os.Getenv("CTG_ADMIN_KEY"), AgentKey: agentKey, WebUI: os.Getenv("CTG_WEB_UI") == "on"}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

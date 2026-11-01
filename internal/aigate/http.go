@@ -46,7 +46,7 @@ func (g *Gate) Register(mux *http.ServeMux) {
 		case errors.Is(err, ErrUnavailable):
 			writeErr(w, 503, err.Error())
 			return
-		case errors.Is(err, errChatBusy):
+		case errors.Is(err, ErrChatBusy):
 			writeErr(w, 409, err.Error())
 			return
 		case err != nil:

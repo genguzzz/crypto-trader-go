@@ -152,3 +152,39 @@ Approval channels (all update on every change; SSE event `realtrade`):
 - Telegram trade bot (`CTG_TRADE_TG_TOKEN`, `CTG_TRADE_TG_CHAT` = the owner's user id; separate from the paper-trading bot): one card per proposal (coin, side, leverage, margin and contracts, reference entry, SL/TP with % and reward:risk, rationale, invalidation, source, expiry, `[DRY RUN]`/`[实盘]`), buttons ✅ 同意 (asks ✅ 确认同意 / ↩️ 返回 first) and ❌ 拒绝 plus a 🔍 查看 link to `<CTG_PUBLIC_URL>/instrument/<instId>?proposal=<id>`. The card is edited as the proposal moves on and every event (approved, rejected, expired, invalidated, executed, failed, closed) is also pushed as a short message. Only callbacks from that user id count. Unset = disabled.
 - Web and app: a proposal card under the `propose_trade` step in the chat (also in signal chats), the pending list with a badge on the AI orb, and the K-line with entry, SL and TP drawn (`?proposal=<id>`; the app's embed chart takes the same parameter). Approving needs an explicit confirm step.
 - REST (owner key required for every method): `GET realtrade/proposals?status=pending|open|all&chatId&limit` · `GET realtrade/proposals/{id}` (with `events`) · `POST realtrade/proposals/{id}/approve` {confirm: true, via} → final state, 409 {error, proposal} when no longer pending · `POST realtrade/proposals/{id}/reject` {via} · `GET realtrade/config` (mode, limits, bot status, triggers, account) · `PUT realtrade/triggers`. No API, agent or UI path changes the mode or the caps.
+
+## 8. Signal subscriptions: the agent waits instead of being asked again (2026-11-01)
+
+Owner request: when the agent cannot open a trade yet (entry not reached, the turn not confirmed, P_tail too high), it subscribes to the condition; the signal re-activates the same chat session with a prompt that carries everything needed to decide. `internal/signals`, MCP tools in `internal/devapi`, wake-up in `internal/aigate`.
+
+```
+condition (Spec) ──event──▶ subscription fires ──▶ ⚡ 信号 message in the subscriber's chat ──▶ agent re-checks (full history)
+  price / zone      (tick 2 s,      edge false→true,       queued while the chat answers,       ├─ propose_trade ──▶ owner approves (§7) ──▶ execution
+  field / moverisk   minute,        cooldown, maxFires,    Telegram note "AI 正在评估"           ├─ subscribe_signal (adjusted)
+  alert / time /     alert)         expiry, caps                                                └─ explain + unsubscribe_signal
+  plan / all / any
+```
+
+| Piece | Owns |
+|---|---|
+| `internal/signals` | `Spec` (validation, Chinese description, chart levels, distance to firing), evaluation (`eval.go`), `signal_subs` + `signal_fires`, the event loop, firing, the wake-up queue, caps, MCP handlers, REST `/api/v1/signals*`, the `/go/chat/{id}` bounce |
+| `internal/aigate` | `WakeChat` (append a `signal`-role message and resume the chat's session; `ErrChatBusy` while a turn runs), `SetOnChatDone` (queued wake-ups go when a turn ends), `SetOnPlan` (a plan written in the same answer is linked to that chat's new subscriptions on the coin), `PlanByID` |
+| `internal/market` | `KeepFor("signals", ids)` keeps the subscribed instruments streaming; `FieldValues` (pool row or on-demand row) |
+| `internal/devapi` | owner-only MCP `subscribe_signal` (spec is a JSON object), `list_signals` (scope mine / all), `unsubscribe_signal` (own chat only unless `ownerAsked`) |
+| `internal/realtrade` | a proposal made in a chat a signal woke within 15 min gets source `signal` and label `#id <condition>`; `Bot.Note` pushes fires |
+| `ai/` | `chat_v2.md` `<signals>`; step labels 订阅信号 / 取消订阅 / 查看信号 |
+
+Conditions (leaves; `all` / `any` compose at most 6, two levels): `price` (last price above/below a level, or a confirmed `1m/5m/15m/1H/4H` close), `zone` (last price inside lo–hi, or a closed 1m bar that traded into it), `field` (any `features.Fields` key except `turnover12h`, read each confirmed minute), `moverisk` (`pTail` / `pBig3` vs a probability, or `extended` entering / leaving, on confirmed 1H bars), `alert` (a rule fires, optionally for one instrument), `time` (`at` UTC+8 or `afterMin`), `plan` (an `ai_plans` row reaches active = entry touched / tp1 / done / stopped / invalid / missed / expired / settled). Strict validation: unknown keys, instruments, fields, rules or plans, levels > 50% from the price, zones wider than 20%, past times are rejected. Values are tri-state; missing data is unknown and never makes an edge.
+
+Semantics: a subscription fires on the edge from false to true. Subscribing to a condition that already holds is rejected (act now or pick the next level); its last state is persisted, so a condition that turned true while the server was down fires once after the restart. Each event re-reads only the leaves it can change: the engine's price broadcast (2 s) the last-price leaves, each confirmed minute the fields, bar closes, plans, zone wicks and (on the hour) move risk, each alert the alert leaves. `maxFires` (1–5, default 1) with `cooldownMin` (5–1440, default 60); expiry is required (15 min – 7 days, default 24 h); `active → fired | expired | cancelled` with who and why.
+
+Firing appends a `role=signal` message to the subscriber's chat — "⚡ 信号 #id 触发：<condition>", the time and price, the matched values, the subscriber's intent, the linked plan's levels and invalidation, fires left, then the three allowed outcomes and the unattended-session footer — and runs the agent in that chat (same session, full history). Owner-created subscriptions start a new "信号 · <condition>" chat instead. A busy chat queues the wake-up (`signal_fires.wake = queued`), retried when any turn ends and every minute; queued over 2 h → failed. Wake-ups per 24 h are capped (`CTG_SIGNAL_MAX_WAKES_DAY`); over the cap the fire is recorded and pushed but nobody is woken. Caps on active subscriptions: `CTG_SIGNAL_MAX_ACTIVE` in total, 5 per chat. Every change is the SSE event `signals` {kind, id, chatId}; the app follows a chat it is showing when a signal wakes it.
+
+REST (owner key): `GET signals?status=active|fired|ended|all&instId&chatId&kind&limit` → {signals (active ones with `progress`: price, target, distance %), caps, now} · `GET signals/{id}` (with `history`: each fire's time, price, matched values, wake state, woken chat, error) · `POST signals` {spec, intent, expiresHours, maxFires, cooldownMin, planId} (the owner's own) · `POST signals/{id}/cancel` {reason}. The embed chart draws a subscription's levels with `?signal=<id>`.
+
+### Towards an autonomous trading agent
+
+The loop is: signals → subscriptions → wake-up → decision (the agent, with fresh data) → proposal → approval → execution (§7). Autonomy can grow only at named points, each a separate owner decision:
+- **Approval policy** (not implemented, must stay off without the owner's explicit decision): a policy between `Propose` and `Approve` in `internal/realtrade` (e.g. auto-approve dry-run proposals, or live ones under a smaller margin cap with a stricter reward:risk) — it would call the same `Approve` path with `by = policy:<name>` so re-validation and every cap still apply and the audit trail shows it.
+- **Wake budget**: the daily wake cap and per-chat caps are the cost and attention limits; a scheduler that subscribes on its own (e.g. the `scan` trigger subscribing to its best setup instead of proposing at once) uses the same tools.
+- **Position follow-up**: executed proposals could subscribe their own invalidation (`price` / `field`) and wake the agent to propose a close — that needs a close order shape the owner has not approved yet.

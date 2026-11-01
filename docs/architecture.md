@@ -98,6 +98,7 @@ internal/track/        track-record statistics
 internal/alerts/       monitoring rules (types registered in conditions.go), delivery channels (masking/sending/retries), history
 internal/trade/        paper-trading order layer (docs/trading-design.md): accounts, instances, signals, risk/sizing, SimBroker, backtest replayer, /api/v1/trade/*; trade/mdlive adapts market.Engine (market/tradeapi.go)
 internal/devapi/       external access: API keys / tokens, rate limits, endpoint registry → open REST API, OpenAPI document, MCP server
+internal/signals/      the agent's signal subscriptions: conditions on prices, fields, move risk, alerts, time and AI plans; a firing wakes the subscribing chat (docs/trading-design.md §8)
 internal/api/          HTTP routes, SSE, icon proxy, gzip
 web/                   frontend (src/views pages, src/components components, embed.go embeds the build); ios/ + native/ iOS app shell (docs/ios.md)
 deploy/                docker-compose.yml (server runtime), deploy.sh (build/upload/swap/rollback)

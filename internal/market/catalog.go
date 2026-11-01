@@ -118,7 +118,17 @@ func (e *Engine) restoreInst(in *Inst, now int64) {
 
 // recording reports whether an instrument streams live (WS). Caller holds e.mu.
 func (e *Engine) recording(in *Inst, now int64) bool {
-	return in.Eligible || e.watch[in.ID] || e.keep[in.ID] || now-e.views[in.ID] < RecordViewed.Milliseconds()
+	return in.Eligible || e.watch[in.ID] || e.keep[in.ID] || e.keptBy(in.ID) || now-e.views[in.ID] < RecordViewed.Milliseconds()
+}
+
+// keptBy reports whether a KeepFor holder needs the instrument. Caller holds e.mu.
+func (e *Engine) keptBy(id string) bool {
+	for _, ids := range e.keepBy {
+		if ids[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // Touch marks a detail view: it (re)starts live streaming for instruments outside the recording

@@ -381,6 +381,62 @@ func TestProposeTradeTool(t *testing.T) {
 	}
 }
 
+// The signal tools are owner-only, carry the caller's chat and take the spec as a JSON object.
+func TestSignalTools(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.DB.Close() })
+	s, err := New(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotChat int64
+	var gotArgs map[string]string
+	h := func(_ context.Context, chat int64, a map[string]string) (any, error) {
+		gotChat, gotArgs = chat, a
+		return map[string]any{"signalId": 3}, nil
+	}
+	s.SetSignals(SignalTools{Subscribe: h, List: h, Unsubscribe: h})
+	mux := http.NewServeMux()
+	s.Mount(mux, nil, nil)
+	ext, _ := s.Create(CreateInput{Name: "ext", RatePerMin: 60, Burst: 10})
+	call := func(key, tool, a string) string {
+		r := httptest.NewRequest("POST", MCPPath, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"`+tool+`","arguments":`+a+`}}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+key)
+		r.Header.Set("X-Ctg-Chat", "12")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w.Body.String()
+	}
+	sub := `{"spec":{"type":"price","instId":"AAVE-USDT-SWAP","op":"above","level":140.2},"intent":"站上 140.2 追多"}`
+	for _, tool := range []string{"subscribe_signal", "list_signals", "unsubscribe_signal"} {
+		if out := call(ext.Secret, tool, `{}`); !strings.Contains(out, "unknown tool") {
+			t.Fatalf("%s served to an external key: %s", tool, out)
+		}
+	}
+	if gotChat != 0 {
+		t.Fatal("a non-owner reached the signal service")
+	}
+	owner := s.OwnerKey("ai-agent", 60, 10)
+	list := mcpPost(mux, owner, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`).Body.String()
+	if !strings.Contains(list, `"name":"subscribe_signal"`) || !strings.Contains(list, `"spec":{"description":"the condition, see the description","type":"object"}`) {
+		t.Fatalf("owner tools: %s", list)
+	}
+	if out := call(owner, "subscribe_signal", sub); !strings.Contains(out, "signalId") || gotChat != 12 ||
+		gotArgs["spec"] != `{"instId":"AAVE-USDT-SWAP","level":140.2,"op":"above","type":"price"}` || gotArgs["expiresHours"] != "24" {
+		t.Fatalf("subscribe: %d %v %s", gotChat, gotArgs, out)
+	}
+	if out := call(owner, "subscribe_signal", `{"spec":"price above 140","intent":"x"}`); !strings.Contains(out, "must be a JSON object") {
+		t.Fatalf("non-object spec: %s", out)
+	}
+	if out := call(owner, "unsubscribe_signal", `{"id":3,"reason":"失效","ownerAsked":true}`); !strings.Contains(out, "signalId") || gotArgs["ownerAsked"] != "true" {
+		t.Fatalf("unsubscribe: %v %s", gotArgs, out)
+	}
+}
+
 func TestOpenAPI(t *testing.T) {
 	_, mux, _ := newTestService(t)
 	w := get(mux, OpenPrefix+"openapi.json", "")

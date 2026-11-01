@@ -84,6 +84,8 @@ Parallel development in several worktrees (separate ports and database copies) i
 | `CTG_TRADE_MAX_LEVERAGE` / `CTG_TRADE_MAX_MARGIN` / `CTG_TRADE_MIN_RR` | 5 / 50 / 1 | per-trade caps: isolated leverage, margin in USDT, reward:risk |
 | `CTG_TRADE_MAX_OPEN` / `CTG_TRADE_DAILY_LOSS` / `CTG_TRADE_MAX_DRIFT_PCT` / `CTG_TRADE_EXPIRY_MIN` | 2 / 50 / 1 / 15 | AI positions open at once, daily (UTC+8) realised loss in USDT that stops new trades, price move % allowed between proposal and approval, minutes to approve |
 | `CTG_TRADE_MAX_RUNS_DAY` | 12 | signal / schedule agent runs per 24 h (triggers are off until enabled on the proposals panel) |
+| `CTG_SIGNAL_MAX_ACTIVE` | 30 | active signal subscriptions at once (5 per chat, fixed; expiry ≤ 7 days) ([trading design §8](trading-design.md#8-signal-subscriptions-the-agent-waits-instead-of-being-asked-again-2026-11-01)) |
+| `CTG_SIGNAL_MAX_WAKES_DAY` | 12 | agent wake-ups by fired subscriptions per 24 h; `0` = none (fires are recorded and pushed only). Separate from `CTG_TRADE_MAX_RUNS_DAY` |
 | `CTG_PUBLIC_URL` | `https://ctg.gugenzzz.top` | origin of the trade bot's 🔍 查看 links |
 | `CTG_SECRET_KEY` | — | at-rest key for the AI credential (else stored plain, noted on the AI page). Lives in `ctg.env` |
 | `GOMEMLIMIT` | 1536MiB in compose | resident heap is ~180 MB (with the full perpetual catalog and caches); container `mem_limit: 2g`. The limit must stay above the resident heap or the GC spins: 180MiB once caused ~20 GCs per second and 1.4 cores of constant CPU |

@@ -86,6 +86,10 @@ func (e *Endpoint) bind(get func(string) (string, bool)) (Args, error) {
 			if (p.Min != 0 || p.Max != 0) && (n < p.Min || n > p.Max) {
 				return nil, fmt.Errorf("parameter %q must be between %d and %d", p.Name, p.Min, p.Max)
 			}
+		case "object":
+			if !strings.HasPrefix(v, "{") || !json.Valid([]byte(v)) {
+				return nil, fmt.Errorf("parameter %q must be a JSON object", p.Name)
+			}
 		case "boolean":
 			switch strings.ToLower(v) {
 			case "true", "1":
@@ -502,6 +506,67 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			run: func(ctx context.Context, a Args) (any, error) {
 				return s.proposals(ctx, a)
 			},
+		})
+	}
+	if s.signals != nil {
+		chatOf := func(ctx context.Context) int64 {
+			if c := callerFrom(ctx); c != nil {
+				return c.Chat
+			}
+			return 0
+		}
+		eps = append(eps, &Endpoint{
+			Name: "subscribe_signal", Path: "subscribe-signal", Summary: "Wait for a market condition: wake this conversation when it turns true",
+			Desc: "Subscribes this conversation to a server-side condition. When it turns from false to true, the server appends a ⚡ 信号 message " +
+				"(the values that matched + your intent) to this conversation and runs you again with its full history, so you can re-check and " +
+				"propose_trade (still needs the owner's approval), re-subscribe or explain. It never trades by itself. Use it when a setup is worth " +
+				"waiting for but its entry conditions are not met yet; one subscription per setup. A condition that already holds is rejected. " +
+				"spec (JSON object), one of: " +
+				`{"type":"price","instId":"AAVE-USDT-SWAP","op":"above"|"below","level":140.2,"bar":"1H"} (bar omitted = last trade price; ` +
+				`1m/5m/15m/1H/4H = that bar's confirmed close) · {"type":"zone","instId":…,"lo":139.5,"hi":140.2} (price enters the zone) · ` +
+				`{"type":"field","instId":…,"field":"funding_hourly","op":">","value":0} (fact-panel fields as in get_universe: ret_15m ret_1h ` +
+				"ret_4h ret_24h (log) oi_chg_1h oi_chg_4h (log) vol_surprise_4h (log of the multiple) funding_hourly funding_pred_hourly (rate per " +
+				"hour) basis trend_z_4h excess_btc_4h resid_1h resid_4h trend_ema eff_ratio_24h beta_btc_48h spread_bps; checked each minute) · " +
+				`{"type":"moverisk","instId":…,"side":"top"|"bottom","metric":"pTail"|"pBig3","op":"<","value":0.4} or metric "extended" with ` +
+				"value 0 (leaves the extended state) / 1 (enters it) (rev's continuation risk on confirmed 1H bars) · " +
+				`{"type":"alert","ruleId":12,"instId":…?} (an alert rule fires) · {"type":"time","afterMin":120} or {"type":"time","at":"2026-11-02 10:00"} ` +
+				`(UTC+8; a re-check) · {"type":"plan","planId":34,"state":"active"|"tp1"|"done"|"stopped"|"invalid"|"missed"|"expired"|"settled"} ` +
+				`(an AI plan from a plan block reaches that state; active = entry zone touched) · {"type":"all"|"any","of":[…]} (≤ 6 conditions). ` +
+				"Put the invalidation in intent or subscribe it separately. Caps: 5 active per conversation, expiry ≤ 7 days, wake-ups per day are capped.",
+			Params: []Param{
+				{Name: "spec", In: "query", Type: "object", Required: true, Desc: "the condition, see the description"},
+				{Name: "intent", In: "query", Type: "string", Required: true, Desc: "in Chinese: what you will do when it fires — the plan (side, entry, stop, targets) and its invalidation; you read it back on wake-up"},
+				{Name: "expiresHours", In: "query", Type: "number", Default: 24, Desc: "hours until it lapses unfired (0.25–168)"},
+				{Name: "planId", In: "query", Type: "integer", Desc: "the AI plan (```plan block) this setup belongs to, if any"},
+				{Name: "maxFires", In: "query", Type: "integer", Default: 1, Min: 1, Max: 5, Desc: "fires before it ends"},
+				{Name: "cooldownMin", In: "query", Type: "integer", Default: 60, Min: 5, Max: 1440, Desc: "minutes between two fires (maxFires > 1)"},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.signals.Subscribe(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "list_signals", Path: "signals", Summary: "Signal subscriptions: this conversation's or everyone's, with distance to firing",
+			Desc: "Subscriptions made with subscribe_signal (and the owner's own): signalId, condition, subscriber, intent, expiry, fires, and " +
+				"for active ones how far the price is from firing. Also the caps and today's wake-ups. Check it before subscribing to avoid duplicates.",
+			Params: []Param{
+				{Name: "scope", In: "query", Type: "string", Enum: []string{"mine", "all"}, Default: "mine"},
+				{Name: "status", In: "query", Type: "string", Enum: []string{"active", "fired", "ended", "all"}, Default: "active"},
+				{Name: "instId", In: "query", Type: "string", Desc: "only this instrument"},
+			},
+			owner: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.signals.List(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "unsubscribe_signal", Path: "unsubscribe-signal", Summary: "Cancel a signal subscription",
+			Desc: "Cancels an active subscription of this conversation (when the setup is invalidated or replaced). Another subscriber's only " +
+				"when the owner explicitly asked you to (ownerAsked=true).",
+			Params: []Param{
+				{Name: "id", In: "query", Type: "integer", Required: true, Desc: "signalId"},
+				{Name: "reason", In: "query", Type: "string", Required: true, Desc: "why, in Chinese, one sentence"},
+				{Name: "ownerAsked", In: "query", Type: "boolean", Default: false, Desc: "the owner asked to cancel it (needed for subscriptions of other conversations)"},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.signals.Unsubscribe(ctx, chatOf(ctx), a) },
 		})
 	}
 	if s.okxRead != nil {

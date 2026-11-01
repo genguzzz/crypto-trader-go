@@ -116,6 +116,7 @@ type Service struct {
 
 	triggers *triggers
 	bot      *Bot
+	signalOf func(chat int64) (label string, ok bool)
 }
 
 // New creates the tables and settles proposals a restart interrupted: approved ones are invalidated
@@ -194,6 +195,24 @@ func (s *Service) AddNotifier(n Notifier) {
 	s.mu.Lock()
 	s.notifiers = append(s.notifiers, n)
 	s.mu.Unlock()
+}
+
+// SetSignalSource tells proposals made in a chat that a signal subscription just woke (internal/signals)
+// apart from the owner's own questions: they are recorded with source signal and that label.
+func (s *Service) SetSignalSource(f func(chat int64) (label string, ok bool)) {
+	s.mu.Lock()
+	s.signalOf = f
+	s.mu.Unlock()
+}
+
+func (s *Service) signalSource(chat int64) (string, bool) {
+	s.mu.Lock()
+	f := s.signalOf
+	s.mu.Unlock()
+	if f == nil || chat <= 0 {
+		return "", false
+	}
+	return f(chat)
 }
 
 // SetOnChange sets the hook called after any proposal changes (forward to SSE); must not block.
@@ -305,6 +324,8 @@ func (s *Service) Propose(ctx context.Context, in ProposeInput) (Proposal, error
 	source, label := SourceChat, ""
 	if kind, l, ok := s.triggerRun(in.ChatID); ok {
 		source, label = kind, l
+	} else if l, ok := s.signalSource(in.ChatID); ok {
+		source, label = SourceSignal, l
 	}
 	exp := time.Duration(s.opts.Limits.ExpiryMin) * time.Minute
 	if in.ExpiresMin > 0 {

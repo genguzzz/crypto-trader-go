@@ -108,11 +108,12 @@ type Engine struct {
 	insts    map[string]*Inst
 	spotIDs  map[string]bool
 	watch    map[string]bool
-	catalog  map[string]okx.Instrument // every live USDT-margined linear swap (search)
-	tickers  map[string]okx.Ticker     // latest SWAP tickers (30s REST)
-	views    map[string]int64          // detail last opened (retention tier, adhoc streaming)
-	keep     map[string]bool           // held by the paper-trading layer: stream with tickers (tradeapi.go)
-	lastPool map[string]int64          // last decision minute in the active pool
+	catalog  map[string]okx.Instrument  // every live USDT-margined linear swap (search)
+	tickers  map[string]okx.Ticker      // latest SWAP tickers (30s REST)
+	views    map[string]int64           // detail last opened (retention tier, adhoc streaming)
+	keep     map[string]bool            // held by the paper-trading layer: stream with tickers (tradeapi.go)
+	keepBy   map[string]map[string]bool // held by other layers by name (KeepFor: agent signal subscriptions)
+	lastPool map[string]int64           // last decision minute in the active pool
 	lastMin  int64
 	removed  map[string]Removed
 	prevAct  map[string]float64
@@ -688,6 +689,11 @@ func (e *Engine) updateSubscriptions() {
 	}
 	for id := range e.keep {
 		tick[id] = true
+	}
+	for _, ids := range e.keepBy {
+		for id := range ids {
+			tick[id] = true
+		}
 	}
 	for id, t := range e.views {
 		if now-t < RecordViewed.Milliseconds() {

@@ -458,6 +458,9 @@ func (s *Service) mcpCall(w http.ResponseWriter, r *http.Request, c *Caller, raw
 			return strconv.FormatFloat(x, 'f', -1, 64), true
 		case string:
 			return x, true
+		case map[string]any, []any: // object parameters (subscribe_signal spec) travel as JSON
+			b, err := json.Marshal(x)
+			return string(b), err == nil
 		default:
 			return fmt.Sprint(x), true
 		}
