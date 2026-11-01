@@ -24,6 +24,22 @@ async def no_emit(ev):
     return None
 
 
+
+def strip_context(inputs: list[str]) -> list[str]:
+    """The question as asked: the first input carries this turn's <turn_context> (time, memory) in front."""
+    return [x.split("</turn_context>\n\n", 1)[-1] for x in inputs]
+
+
+class TurnContext(unittest.TestCase):
+    def test_time_and_memory_go_with_the_question_not_the_system_prompt(self):
+        ctx = agent.turn_context({"profile": [{"id": 1, "text": "不碰 meme"}], "recalled": [{"id": 2, "kind": "plan", "text": "等 SOL 回踩 140"}]})
+        self.assertTrue(ctx.startswith("<turn_context>\nNow: "))
+        self.assertIn("[1] 不碰 meme", ctx)
+        self.assertIn("[2 plan] 等 SOL 回踩 140", ctx)
+        self.assertTrue(ctx.endswith("</turn_context>\n\n"))
+        opts = agent.build_chat_options(CHAT_CONFIG, "http://127.0.0.1:9", "1", "")
+        self.assertNotIn("</profile>", opts.system_prompt)  # the prompt names the tags; no memory block in it
+
 class AgentSteer(unittest.TestCase):
     def setUp(self):
         self.sdk = fakesdk.install()
@@ -39,7 +55,7 @@ class AgentSteer(unittest.TestCase):
         self.sdk.followups = [[fakesdk.text_delta("止盈止损已核对。"), fakesdk.ResultMessage(total_cost_usd=0.01, num_turns=1, usage={"input_tokens": 50, "output_tokens": 10})]]
         out = asyncio.run(asyncio.wait_for(agent.chat({"chatId": 7, "message": "BTC 开多", "sessionId": "s1"}, CHAT_CONFIG, "http://p", no_emit, inbox), 5))
         self.assertEqual(accepted, [True])
-        self.assertEqual(self.sdk.calls[0]["inputs"], ["BTC 开多", "✅ #3 已成交 · 开仓做多 BTC"])
+        self.assertEqual(strip_context(self.sdk.calls[0]["inputs"]), ["BTC 开多", "✅ #3 已成交 · 开仓做多 BTC"])
         self.assertIn("先看看仓位", out["text"])
         self.assertIn("止盈止损已核对", out["text"])
         self.assertAlmostEqual(out["cost"], 0.03)
@@ -54,7 +70,7 @@ class AgentSteer(unittest.TestCase):
         self.sdk.messages = [fakesdk.text_delta("答完了"), fakesdk.ResultMessage(), lambda: late.append(inbox.put("⚡ 信号 #2 触发"))]
         out = asyncio.run(asyncio.wait_for(agent.chat({"chatId": 7, "message": "hi"}, CHAT_CONFIG, "http://p", no_emit, inbox), 5))
         self.assertEqual(late, [False])  # Go keeps it queued and starts a new turn after this one
-        self.assertEqual(self.sdk.calls[0]["inputs"], ["hi"])
+        self.assertEqual(strip_context(self.sdk.calls[0]["inputs"]), ["hi"])
         self.assertEqual(out["text"], "答完了")
 
     def test_labels(self):

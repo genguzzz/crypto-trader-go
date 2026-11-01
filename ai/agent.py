@@ -272,9 +272,15 @@ def sessions_server(base: str, current: str, token: str):
             cs = fetch("/api/v1/ai/chats")
         except (OSError, ValueError) as e:
             return {"content": [{"type": "text", "text": f"chats unavailable: {e}"}], "is_error": True}
-        q = str(args.get("query") or "").strip().upper()
-        if q:
-            cs = [c for c in cs if q in (c.get("title") or "").upper() or q in (c.get("instId") or "")]
+        # any of the query's words matches (title or coin); no match → the recent chats, said so (same as 影库)
+        words = [w for w in re.split(r"[\s,，、]+", str(args.get("query") or "").upper()) if w]
+        head = ""
+        if words:
+            hit = [c for c in cs if any(w in (c.get("title") or "").upper() or w in (c.get("instId") or "") for w in words)]
+            if not hit:
+                head = f"没有标题或币种含「{args.get('query')}」的对话（只搜标题和币种，内容要 read_chat 看）。最近的对话：\n"
+                hit = cs[:8]
+            cs = hit
         lim = max(1, min(int(args.get("limit") or 20), 50))
         lines = []
         for c in cs[:lim]:
@@ -282,8 +288,8 @@ def sessions_server(base: str, current: str, token: str):
             inst = f" · {c['instId'].split('-')[0]}" if c.get("instId") else ""
             run = " · 进行中" if c.get("running") else ""
             lines.append(f"#{c['id']} {when(c['updated'])}{inst}{run} {c.get('title', '')[:60]}{tag}")
-        text = "\n".join(lines) or "没有匹配的对话"
-        return {"content": [{"type": "text", "text": f"共 {len(cs)} 个对话，显示 {min(lim, len(cs))} 个：\n{text}"}]}
+        text = "\n".join(lines) or "还没有对话"
+        return {"content": [{"type": "text", "text": head + (f"共 {len(cs)} 个对话，显示 {min(lim, len(cs))} 个：\n{text}" if not head else text)}]}
 
     @tool("read_chat", "Read one AI conversation by id: each question and answer with its time (answers' component JSON kept, "
           "tool steps left out). Long answers are cut; raise max_chars (default 6000, max 20000) only if you need more.",
@@ -389,13 +395,18 @@ def notes_block(notes: Any) -> str:
             + ("\n".join(r) or "(nothing relevant to this message)") + "\n</recalled>\n")
 
 
-def build_chat_options(config: dict, proxy: str, chat: str, session: str, notes: Any = None, emit: Emit | None = None):
+def turn_context(notes: Any) -> str:
+    """This turn's context in front of the question: the time (Asia/Shanghai, like the owner's clock) and memory."""
+    now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+    return f"<turn_context>\nNow: {now}{notes_block(notes)}</turn_context>\n\n"
+
+
+def build_chat_options(config: dict, proxy: str, chat: str, session: str, emit: Emit | None = None):
     from claude_agent_sdk import ClaudeAgentOptions
 
     agent = config.get("agent") or {}
     env = llm.build_env(config.get("credential"), proxy)
     prompt, _ = llm.load_prompt(CHAT_PROMPT)
-    prompt += notes_block(notes)
     mcp: dict[str, Any] = {"sandbox": sandbox_server(chat, agent.get("sandboxToken", ""))}
     web = [] if config.get("noWeb") else ["WebSearch", "WebFetch"]
     allowed = ["mcp__sandbox__shell", *web, "Skill"]
@@ -490,6 +501,9 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
     text = str(msg.get("message") or "")
     inst = str(msg.get("instId") or "")
     prompt = f"[当前页面: {inst}]\n{text}" if inst else text
+    # what changes every turn (time, memory) goes with the question, not into the system prompt: a resumed
+    # session may keep its first system prompt, and the stable prompt stays cacheable (same as 影库)
+    prompt = turn_context(msg.get("notes")) + prompt
     if msg.get("model") in CHAT_MODELS:
         config = {**config, "model": msg["model"]}
     # this turn's thinking effort and web search, picked in the app (unset: the configured ones)
@@ -497,7 +511,7 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
         config = {**config, "effort": msg["turnEffort"]}
     if msg.get("webSearch") is False:
         config = {**config, "noWeb": True}
-    options = build_chat_options(config, proxy, chat_id, str(msg.get("sessionId") or ""), msg.get("notes"), emit)
+    options = build_chat_options(config, proxy, chat_id, str(msg.get("sessionId") or ""), emit)
     inbox = inbox or Inbox()
 
     # ordered: {"t":"text","v"} | {"t":"think","v","ms"} | {"t":"tool","id","name","label","input","ok","sub"}
