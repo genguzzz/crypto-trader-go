@@ -8,6 +8,7 @@ import { ActivityIndicator, Platform, Pressable, Text, View } from "react-native
 import { Ionicons } from "@expo/vector-icons";
 import type { ThinkPart, ToolPart } from "@/lib/ai";
 import { colors, fs, tnum } from "@/lib/theme";
+import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { tap } from "@/components/ui";
 import { showFullText } from "./AiPanes";
 
@@ -73,26 +74,25 @@ function Status({ s, size = 14 }: { s: StepItem | "busy" | "ok" | "fail"; size?:
   );
 }
 
-// No nested scroll view: inside the chat list inside the sheet its pan never won on iOS. The first
-// lines show here; the whole text opens in a full-height pane that scrolls and selects natively.
-const PREVIEW_LINES = 14;
+// The full text scrolls inside its box (a gesture-handler ScrollView, so the inner pan wins over the
+// chat list while the box can still scroll that way); 全屏 opens it in a full-height pane.
 function Block({ k, text }: { k: string; text: string }) {
-  const lines = text.split("\n");
-  const long = lines.length > PREVIEW_LINES || text.length > 1400;
-  const preview = long ? lines.slice(0, PREVIEW_LINES).join("\n").slice(0, 1400) : text;
-  const open = () => { tap(); showFullText(k, text); };
+  const lines = text.split("\n").length;
+  const long = lines > 14 || text.length > 1400;
   return (
     <View style={{ gap: 3 }}>
-      <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{k}</Text>
-      <Pressable onPress={long ? open : undefined} style={{ borderRadius: 8, backgroundColor: "#0a0a0a", borderWidth: 1, borderColor: colors.border, paddingHorizontal: 10, paddingVertical: 8 }}>
-        <Text style={{ fontFamily: mono, fontSize: 11, lineHeight: 16, color: colors.textSoft }}>{preview}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <Text style={{ flex: 1, fontSize: fs.xs, color: colors.textFaint }}>{k}{long ? ` · ${lines} 行` : ""}</Text>
         {long ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 }}>
-            <Text style={{ fontSize: fs.xs, color: colors.primary }}>查看全部（{lines.length} 行）</Text>
-            <Ionicons name="chevron-forward" size={12} color={colors.primary} />
-          </View>
+          <Pressable hitSlop={8} onPress={() => { tap(); showFullText(k, text); }} style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+            <Ionicons name="expand-outline" size={12} color={colors.primary} />
+            <Text style={{ fontSize: fs.xs, color: colors.primary }}>全屏</Text>
+          </Pressable>
         ) : null}
-      </Pressable>
+      </View>
+      <GHScrollView nestedScrollEnabled style={{ maxHeight: 300, borderRadius: 8, backgroundColor: "#0a0a0a", borderWidth: 1, borderColor: colors.border }} contentContainerStyle={{ paddingHorizontal: 10, paddingVertical: 8 }}>
+        <Text style={{ fontFamily: mono, fontSize: 11, lineHeight: 16, color: colors.textSoft }}>{text}</Text>
+      </GHScrollView>
     </View>
   );
 }

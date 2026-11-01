@@ -393,7 +393,9 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
   const live = !!m.live;
   const text = textOf(m);
   return (
-    <Pressable onLongPress={!live && text ? () => onSelect(text) : undefined} delayLongPress={350} style={{ marginTop: 8, marginBottom: 4 }}>
+    // long-press selects the text; only the text groups take it — wrapping the steps too stole the pan
+    // from their inner scroll boxes
+    <View style={{ marginTop: 8, marginBottom: 4 }}>
       {gs.map((g, gi) =>
         g.k === "tools" ? (
           <Fragment key={gi}>
@@ -402,7 +404,7 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
             {signalIds(g.items).map((id) => <SignalById key={"s" + id} id={id} />)}
           </Fragment>
         ) : (
-          <View key={gi}>
+          <Pressable key={gi} onLongPress={!live && text ? () => onSelect(text) : undefined} delayLongPress={350}>
             {(() => {
               const segs = segments(g.v, live);
               return segs.map((sg, si) =>
@@ -413,7 +415,7 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
                 ),
               );
             })()}
-          </View>
+          </Pressable>
         ),
       )}
       {phase === "thinking" ? <Thinking label={m.parts.length ? "整理思路" : "思考中"} /> : null}
@@ -435,7 +437,7 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
           {m.costUsd ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>· ${m.costUsd.toFixed(3)}</Text> : null}
         </View>
       ) : null}
-    </Pressable>
+    </View>
   );
 }
 
