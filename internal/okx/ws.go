@@ -24,6 +24,7 @@ type Arg struct {
 // Message is one pushed data message.
 type Message struct {
 	Arg      Arg
+	Action   string // books: snapshot | update
 	Data     json.RawMessage
 	Received time.Time
 }
@@ -75,6 +76,17 @@ func (w *WS) SetSubscriptions(args []Arg) {
 	if conn != nil {
 		w.send(conn, "unsubscribe", del)
 		w.send(conn, "subscribe", add)
+	}
+}
+
+// Resubscribe re-sends one channel subscription (a fresh snapshot after a book sequence gap).
+func (w *WS) Resubscribe(a Arg) {
+	w.mu.Lock()
+	conn, ok := w.conn, w.subs[a]
+	w.mu.Unlock()
+	if conn != nil && ok {
+		w.send(conn, "unsubscribe", []Arg{a})
+		w.send(conn, "subscribe", []Arg{a})
 	}
 }
 
@@ -184,11 +196,12 @@ func (w *WS) session(ctx context.Context, downSince time.Time) error {
 			continue
 		}
 		var m struct {
-			Event string          `json:"event"`
-			Code  string          `json:"code"`
-			Msg   string          `json:"msg"`
-			Arg   Arg             `json:"arg"`
-			Data  json.RawMessage `json:"data"`
+			Event  string          `json:"event"`
+			Code   string          `json:"code"`
+			Msg    string          `json:"msg"`
+			Arg    Arg             `json:"arg"`
+			Action string          `json:"action"`
+			Data   json.RawMessage `json:"data"`
 		}
 		if json.Unmarshal(msg, &m) != nil {
 			continue
@@ -202,7 +215,7 @@ func (w *WS) session(ctx context.Context, downSince time.Time) error {
 		}
 		w.Messages.Add(1)
 		if w.OnMessage != nil && len(m.Data) > 0 {
-			w.OnMessage(Message{Arg: m.Arg, Data: m.Data, Received: now})
+			w.OnMessage(Message{Arg: m.Arg, Action: m.Action, Data: m.Data, Received: now})
 		}
 	}
 }

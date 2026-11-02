@@ -39,9 +39,11 @@ SANDBOX_SOCKET = os.environ.get("CTG_SANDBOX_SOCKET", "/run/sbx/sbx.sock")
 CTG_DIRECT = ("get_instrument", "get_universe", "search_instruments", "get_orderbook", "get_orderflow", "get_liquidations",
               "list_rules", "list_fields", "get_alert_events", "get_system_status", "get_positions", "okx_api", "okx_history",
               "propose_trade", "get_trade_proposals", "subscribe_signal", "list_signals", "unsubscribe_signal",
-              "test_signal_script")
+              "test_signal_script", "assess_manipulation", "analyze_trades", "get_book_analysis", "get_wall_history",
+              "get_dex_activity")
 SHELL_MODEL_LIMIT = 8000  # characters of shell output the model sees; the rest stays in files
-CTG_HIDDEN = ("get_candles", "get_series", "get_liquidation_map", "compare_with_majors", "get_rule_track_record", "get_usage")
+CTG_HIDDEN = ("get_candles", "get_series", "get_liquidation_map", "compare_with_majors", "get_rule_track_record", "get_usage",
+              "get_trades")
 MCP_OUTPUT_TOKENS = "6000"  # hard cap per data-tool result (Claude Code truncates beyond it)
 
 Emit = Callable[[dict], Awaitable[None]]
@@ -52,7 +54,8 @@ TOOL_LABELS = {
     "get_orderbook": "盘口", "get_liquidations": "强平记录", "get_liquidation_map": "清算地图",
     "compare_with_majors": "对比 BTC/ETH", "get_universe": "监控池", "search_instruments": "搜索合约",
     "list_rules": "规则", "get_rule_track_record": "规则战绩", "get_alert_events": "告警", "get_system_status": "数据状态",
-    "list_fields": "字段定义", "get_usage": "接口额度", "get_positions": "我的仓位", "memory_save": "记一笔", "memory_search": "翻记忆", "memory_forget": "删掉记忆", "okx_api": "查询 OKX 账户", "okx_history": "OKX 账户统计", "propose_trade": "提交交易提议", "get_trade_proposals": "交易提议", "subscribe_signal": "订阅信号", "unsubscribe_signal": "取消订阅", "list_signals": "查看信号", "test_signal_script": "测试信号脚本", "list_chats": "查看历史对话", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
+    "list_fields": "字段定义", "get_usage": "接口额度", "get_positions": "我的仓位", "memory_save": "记一笔", "memory_search": "翻记忆", "memory_forget": "删掉记忆", "okx_api": "查询 OKX 账户", "okx_history": "OKX 账户统计", "propose_trade": "提交交易提议", "get_trade_proposals": "交易提议", "subscribe_signal": "订阅信号", "unsubscribe_signal": "取消订阅", "list_signals": "查看信号", "test_signal_script": "测试信号脚本", "list_chats": "查看历史对话", "assess_manipulation": "砸盘/控盘体检", "analyze_trades": "逐笔成交分析",
+    "get_book_analysis": "盘口分布", "get_wall_history": "大单挂撤记录", "get_dex_activity": "链上 DEX 大单", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
 }
 # the analysis CLI's commands, as the owner would call them
 CA_LABELS = {

@@ -180,6 +180,7 @@ func (e *Engine) persistFlow(rows []store.FlowRow) {
 
 // onPublicReconnect: trades may have been missed while the public WS was down.
 func (e *Engine) onPublicReconnect(time.Time) {
+	e.tapeReconnect()
 	now := time.Now().UnixMilli()
 	e.mu.Lock()
 	for _, in := range e.insts {

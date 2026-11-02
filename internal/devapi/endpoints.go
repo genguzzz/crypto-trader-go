@@ -663,6 +663,7 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			},
 		})
 	}
+	eps = append(eps, s.microEndpoints(e)...)
 	return eps
 }
 

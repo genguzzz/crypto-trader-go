@@ -49,6 +49,7 @@ func main() {
 	cats := flag.String("categories", "", "comma list of instCategory to include (empty = all: 1 crypto, 3 stock/ETF, 4 commodity)")
 	replayH := flag.Int("replay-hours", 336, "hourly replay depth for rule records")
 	capMB := flag.Int("storage-cap-mb", market.DefaultCapMB, "first-run default SQLite size cap in MB (settings page overrides); see retention.go")
+	tapeMB := flag.Int("tape-cap-mb", market.TapeDefaultMB, "size cap of the trade tape file (tape.db next to -db; 0 = tape off)")
 	serveWeb := flag.Bool("web", true, "also serve the embedded web UI (false = API only, e.g. behind a separate frontend container)")
 	doh := flag.Bool("doh", os.Getenv("CTG_DOH") == "1", "resolve OKX hosts via DNS-over-HTTPS (for polluted DNS)")
 	flag.Parse()
@@ -89,6 +90,13 @@ func main() {
 	eng.Ref.Load = func() (string, bool) { return st.Setting("refdata.coingecko") }
 	eng.Ref.Save = func(s string) error { return st.PutSetting("refdata.coingecko", s) }
 	go eng.Ref.Run(ctx)
+	if *tapeMB > 0 {
+		tp, err := store.OpenTape(filepath.Join(filepath.Dir(*dbPath), "tape.db"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		eng.SetTape(tp, *tapeMB)
+	}
 	if err := eng.Start(ctx); err != nil {
 		log.Fatal(err)
 	}

@@ -297,7 +297,8 @@ type rpcResp struct {
 }
 
 const mcpInstructions = "Read-only OKX USDT-perpetual research data. Start with get_system_status (freshness) and get_universe (pool snapshot: fact panel, " +
-	"percentiles, rule scores); drill into an instrument with get_instrument, get_candles, get_orderflow, get_liquidations, get_series and get_orderbook. " +
+	"percentiles, rule scores); drill into an instrument with get_instrument, get_candles, get_orderflow, get_liquidations, get_series and get_orderbook; order flow and manipulation over the last 48 h " +
+	"(spot and swap trade tape, live book walls, wall history, DEX swaps) with assess_manipulation, analyze_trades, get_book_analysis, get_wall_history, get_dex_activity, get_trades. " +
 	"Times are Unix ms; amounts USDT unless stated; missing values mean unknown, never zero. Scores are unvalidated user rules, not advice; " +
 	"check get_rule_track_record before trusting one. Calls are rate-limited per key (see get_usage); prefer small limits."
 

@@ -18,6 +18,7 @@ Then add only what the decision still needs, in one parallel round:
 | The checklist on another bar size | `rev <SYM> -b 15m` (description only) |
 | The detail behind a headline that matters | `ca news --read <id>` (the article's main text, ~1.8k chars) |
 | Funding or OI history, hourly flow | `ca funding <SYM>`, `ca oi <SYM>`, `ca flow <SYM> -b 1H` |
+| 庄 / 控盘 / 砸盘 / 吸筹, who drives the move | `assess_manipulation` (both markets, 24 h); then `analyze_trades` sections or `get_wall_history` only for the point in doubt |
 | A level or ratio the plan needs (ATR, swing, relative strength) | raw series to a file, print only the result |
 
 Typical total: 1–3 calls. Interpret danger/control scores with [references/risk-scores.md](references/risk-scores.md).
