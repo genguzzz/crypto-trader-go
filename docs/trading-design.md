@@ -248,6 +248,36 @@ Failures are never silent: a script error (exception, budget, crash, hang) count
 
 On the way to an autonomous agent, scripts are how the agent turns a setup it reasons about into something the server can watch exactly — the same SDK it would use for a strategy, tested on history before it is trusted, and still only a wake-up: every trade goes through §7.
 
+### Pool scans (2026-11-02)
+
+Owner request: built-in signals over the whole pool ("any coin in the pool moving X% within N minutes", up, down, or a swing), managed in one place instead of one subscription per coin. `{"type":"pool", …}` is a whole subscription (never inside `all` / `any`), `internal/signals/pool.go`:
+
+| key | meaning |
+|---|---|
+| `scope` | `pool` (default: the active pool; `top` N = ranks ≤ N), `watch` (watchlist), `list` (`instIds`, 1–50); `exclude` removes coins |
+| `metric: move` | last price (or the confirmed close) vs the close `windowMin` minutes earlier (1–1440; 1 = minute to minute), `dir` up / down / both, `pct` |
+| `metric: range` | (highest high / lowest low − 1) over the window's 1m bars ≥ `pct` (needs ≥ 80% of the bars) |
+| `metric: field` | a fact-panel field with `op` / `value` across the scope |
+
+Members are re-read on every check (`market.PoolMembers`; bars from the in-memory 1m ring, `Recent1m`). Each member has its own edge and cooldown (`cooldownMin` per coin); its first value — at subscribe, on joining the scope, and after leaving and rejoining — only primes it, so coins already beyond the threshold never fire until they fall back first (the subscription is not rejected for them). Members that turn true on the same check are one fire. Checked each confirmed minute (`every` 1m, default) or each price tick; `maxFires` defaults to 10 (≤ 50); the daily wake cap still applies. The per-member state is persisted (`signal_subs.pool_state`), so a restart continues it; the restart's catch-up check only primes.
+
+### Deliveries (2026-11-02)
+
+Every fire is one `Delivery` (`internal/signals/delivery.go`, version 1), stored as `signal_fires.payload` and returned in `GET signals/{id}` history: `{v, subId, fireId, ts, type, metric, desc, fireNo, maxFires, final, expiresAt, cooldownMin, hits[{instId, px, value, text}], more, matched, intent, subscriber, chatId, tradeId, planId}`. Pool hits are the coins that fired, largest |value| first, at most 10 (`more` counts the rest); other types have one hit per instrument with its price. The wake-up message and the push are rendered from it; a pool wake-up lists one line per coin and asks the agent to look at the strongest one or two (the scan keeps running). New consumers (a strategy, a webhook) read the same record.
+
+### Replays of built-in conditions (2026-11-02)
+
+`ReplaySpec` (`replay.go`) runs a spec through the live evaluator (`liveSub.step`, the same edge / cooldown / pool code) minute by minute over 1m bars from a `History`; each minute is seen at its close, a tick first (the close standing in for the last price) and then the confirmed-minute event. Replayable: price, zone, time, `all` / `any` of them, pool scans on move / range; fields, move risk, alerts, plans have no history (rejected) and scripts have their own replay. Live, `test_signal` (MCP) / `POST /api/v1/signals/test {spec, hours ≤ 72, cooldownMin, every}` replays over the recorded 1m bars (`market.Bars1m`; pool members = the scope's coins now) and returns fires, fires per day, fires per coin and the last fires. `GET /api/v1/signals/catalog` describes every type (params, cadence, replayable, example) and the delivery version.
+
+Script checks with fewer than `lookback` bars for an instrument are unknown (`warmup`) and the script is not run — live and in replays — so scripts may index the bars they declared without guarding against short windows at the start of history or for new listings.
+
+### How signals are tested
+
+- `testdata/okx-1m-20261030.csv.gz`: real OKX 1m candles of 10 perpetuals over 30 h (ENA and PEPE move ≥ 2% in 15 min often, the majors never), shared by the Go and Python tests.
+- Pool scans: replays equal a hand-written brute force on that history for moves (1, 15, 240 min; up / down / both; several cooldowns) and ranges; only the volatile coins fire at 2%; tick and minute checks agree; the live service driven minute by minute fires exactly where the brute force does (times, coins, delivery fields, ordering), hits the daily wake cap after 30, ends at maxFires, survives a restart without re-firing, and primes coins that join the scope.
+- Single types: last-price crosses, 15m closes and zone entries on BTC equal brute force; deliveries and the REST / tool surfaces are checked.
+- Scripts (`script_worker_test.go`, needs python3 + numpy): six common conditions (SMA cross, breakout, volume spike, relative strength of two coins, RSI reclaim, any-of-three 1m jump) are subscribed through the real worker (`runner.CondWorker` → `ctg.condworker`), checked live minute by minute as production schedules them, and must fire exactly at the false→true edges of the worker's own replay of the same bars; validation outcomes (compile, error, often, holds, forbidden import, lookback longer than the history) are checked with the real worker. `strategies/tests/test_condition_replay.py` requires the replay's state on every close to equal the condition computed straight from the full arrays (no look-ahead), for several timeframes and two-instrument conditions.
+
 ### Towards an autonomous trading agent
 
 The loop is: signals → subscriptions → wake-up → decision (the agent, with fresh data) → proposal → approval → execution (§7). Autonomy can grow only at named points, each a separate owner decision:

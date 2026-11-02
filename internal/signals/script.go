@@ -87,6 +87,7 @@ type ScriptEval struct {
 	Ms      float64            `json:"ms"`
 	Error   string             `json:"error,omitempty"`
 	Missing []string           `json:"missing,omitempty"` // instruments without the bar of this close
+	Warmup  []string           `json:"warmup,omitempty"`  // instruments with fewer than lookback bars (not run)
 }
 
 func (r ScriptEval) tri() tri {
@@ -103,6 +104,8 @@ func (r ScriptEval) text() string {
 		return "出错：" + r.Error
 	case len(r.Missing) > 0:
 		return "缺少 K 线：" + strings.Join(coins(r.Missing), "、")
+	case len(r.Warmup) > 0:
+		return "K 线不足 lookback 根：" + strings.Join(coins(r.Warmup), "、")
 	}
 	parts := []string{}
 	if r.Note != "" {
@@ -466,6 +469,10 @@ func (s *Service) replay(ctx context.Context, code string, m ScriptMeta) (*Repla
 		r.Problem, r.Reason = "slow", fmt.Sprintf("a check takes %.1f ms on average; the cap is %.0f ms", r.AvgMs, float64(s.opts.ScriptMs)/4)
 	case r.Unknown == r.Bars:
 		r.Problem, r.Reason = "unknown", "the script returned no value (None, or bars missing) on every close"
+		if r.Now != nil && len(r.Now.Warmup) > 0 {
+			r.Reason = fmt.Sprintf("fewer than lookback (%d) %s bars of %s on every close: lower lookback, or wait for more history",
+				m.Lookback, m.Timeframe, strings.Join(r.Now.Warmup, ", "))
+		}
 	case r.PerDay > s.opts.ScriptPerDay:
 		r.Problem, r.Reason = "often", fmt.Sprintf("it would have fired %d times in %.1f days (%.1f a day; the cap is %g): make the condition stricter or the timeframe slower",
 			r.FireCount, r.Days, r.PerDay, s.opts.ScriptPerDay)
@@ -473,6 +480,9 @@ func (s *Service) replay(ctx context.Context, code string, m ScriptMeta) (*Repla
 		r.Problem, r.Reason = "unknown", "the script has no value on the newest close ("+fmtTime(r.To)+")"
 		if r.Now != nil && len(r.Now.Missing) > 0 {
 			r.Reason += ": bars missing for " + strings.Join(r.Now.Missing, ", ")
+		}
+		if r.Now != nil && len(r.Now.Warmup) > 0 {
+			r.Reason += ": fewer bars than lookback for " + strings.Join(r.Now.Warmup, ", ") + " (lower lookback, or wait for more history)"
 		}
 	case *r.Now.Fire:
 		r.Problem, r.Reason = "holds", fmt.Sprintf("the condition already holds on the newest close (%s: %s); a subscription fires only when it turns true. "+
@@ -694,7 +704,7 @@ func (s *Service) applyScripts(b scriptBatch) {
 		default:
 			st.Errors = 0
 			st.Last = &r
-			if len(r.Missing) == 0 {
+			if len(r.Missing) == 0 && len(r.Warmup) == 0 {
 				st.AvgMs = (st.AvgMs*float64(st.Checks) + r.Ms) / float64(st.Checks+1)
 				st.Checks++
 			}

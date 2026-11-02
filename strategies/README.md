@@ -130,7 +130,7 @@ class AaveRsiReclaim(Condition):
         return Fire(r[-2] < 30 <= r[-1], values={"rsi": r[-1]}, note=f"RSI {r[-1]:.1f}")
 ```
 
-`check` returns True / False, `Fire(hit, values, note)` or None (unknown). `ctx`: `now`, `timeframe`,
+`check` returns True / False, `Fire(hit, values, note)` or None (unknown). An instrument with fewer than `lookback` bars (the start of the history, a new listing) makes the check unknown without running it, so `check` may index the bars it declared. `ctx`: `now`, `timeframe`,
 `instruments`, `bars(inst, n)`, `factors(inst)`. No state between calls; imports only `ctg`, `numpy`,
 `math`, `statistics`, `collections`, `itertools`, `functools`, `typing`; ≤ 8000 bytes; a CPU budget
 per call (`CTG_SIGNAL_SCRIPT_MS`, 200 ms). Scripts run in one long-lived worker (`ctg/condworker.py`)

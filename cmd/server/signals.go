@@ -7,6 +7,7 @@ import (
 	"crypto-trader-go/internal/alerts"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/signals"
+	"crypto-trader-go/internal/store"
 	"crypto-trader-go/internal/strategyhost"
 )
 
@@ -69,6 +70,25 @@ func (s signalSources) AlertRule(id int64) (string, bool) {
 }
 
 func (s signalSources) Keep(ids []string) { s.eng.KeepFor("signals", ids) }
+
+// Members, Recent1m: pool scans (signals.PoolSource). Bars1m: replays (signals.HistorySource).
+func (s signalSources) Members(scope string, top int) []string { return s.eng.PoolMembers(scope, top) }
+
+func (s signalSources) Recent1m(id string, n int) []signals.Bar {
+	return toSignalBars(s.eng.Recent1m(id, n))
+}
+
+func (s signalSources) Bars1m(id string, from, to int64) []signals.Bar {
+	return toSignalBars(s.eng.Bars1m(id, from, to))
+}
+
+func toSignalBars(xs []store.Bar) []signals.Bar {
+	out := make([]signals.Bar, len(xs))
+	for i, x := range xs {
+		out[i] = signals.Bar{T: x.Ts, H: x.H, L: x.L, C: x.C}
+	}
+	return out
+}
 
 // signalWaker runs the agent for a fired subscription through the chat gate: steered into the chat (a
 // new turn, or injected into the one running).

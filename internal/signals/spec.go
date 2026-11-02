@@ -28,6 +28,8 @@ import (
 //	plan     {planId, state: active|tp1|done|stopped|invalid|missed|expired|settled}
 //	script   {code}                                    a ctg.Condition class run on its timeframe's bar close (script.go);
 //	                                                   validation stores what it declares in script; one per subscription
+//	pool     {scope: pool|watch|list, top?, instIds?, exclude?, metric: move|range|field, …}
+//	                                                   every member checked on its own (pool.go); root only
 //	all|any  {of: [...]}                               at most 6 leaves, 2 levels deep
 type Spec struct {
 	Type   string      `json:"type"`
@@ -50,6 +52,14 @@ type Spec struct {
 	Code   string      `json:"code,omitempty"`   // script: Python source
 	Script *ScriptMeta `json:"script,omitempty"` // script: its declarations, filled by validation
 	Of     []Spec      `json:"of,omitempty"`
+	// pool (pool.go): a scan over many instruments, each with its own edge
+	Scope     string   `json:"scope,omitempty"`     // pool | watch | list
+	Top       int      `json:"top,omitempty"`       // scope pool: only ranks ≤ top (0 = whole active pool)
+	List      []string `json:"instIds,omitempty"`   // scope list: the instruments
+	Exclude   []string `json:"exclude,omitempty"`   // never these
+	WindowMin int      `json:"windowMin,omitempty"` // move / range: window in minutes
+	Dir       string   `json:"dir,omitempty"`       // move: up | down | both
+	Pct       float64  `json:"pct,omitempty"`       // move / range: threshold in percent
 	// Every (root only) is how often it is checked: tick (each ~2 s price broadcast), 1m, 5m, 15m or 1H
 	// (on that confirmed minute). "" = tick when a leaf reads the last price (and there is no script),
 	// else 1m. Coarser = cheaper and calmer; a brief spike between checks can be missed. A script runs
@@ -307,6 +317,11 @@ func (s *Spec) normalize(src Sources, now time.Time, depth int) error {
 				return fmt.Errorf("unknown instrument %s (OKX USDT perpetual ids like AAVE-USDT-SWAP)", id)
 			}
 		}
+	case "pool":
+		if depth > 0 {
+			return errors.New("pool is a whole subscription on its own: it cannot sit inside all / any")
+		}
+		return s.normalizePool(src)
 	case "plan":
 		p, ok := src.Plan(s.PlanID)
 		if !ok {
@@ -320,7 +335,7 @@ func (s *Spec) normalize(src Sources, now time.Time, depth int) error {
 		}
 		s.InstID = p.InstID
 	default:
-		return fmt.Errorf("unknown signal type %q (price, zone, field, moverisk, alert, time, plan, script, all, any)", s.Type)
+		return fmt.Errorf("unknown signal type %q (price, zone, field, moverisk, alert, time, plan, script, pool, all, any)", s.Type)
 	}
 	return nil
 }
@@ -407,6 +422,9 @@ func (s Spec) InstIDs() []string {
 		ids := []string{l.InstID}
 		if l.Script != nil {
 			ids = l.Script.InstIDs
+		}
+		if l.Type == "pool" {
+			ids = l.List
 		}
 		for _, id := range ids {
 			if id != "" && !slices.Contains(out, id) {
@@ -518,6 +536,8 @@ func (s Spec) Describe() string {
 			return "脚本信号"
 		}
 		return fmt.Sprintf("脚本 %s · %s", s.Script.Timeframe, s.Script.Desc)
+	case "pool":
+		return s.describePool()
 	}
 	return s.Type
 }

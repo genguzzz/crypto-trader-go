@@ -43,8 +43,7 @@ const (
 	tapeFloor     = 24 * time.Hour     //
 	tapeAuxKeep   = 7 * 24 * time.Hour // wall events and book minutes
 	TapeDefaultMB = 2048
-	tapeFilePages = 400 // history-trades pages per backfill (≈40k trades, ~70 s at the rate limit)
-	tapeFileMaxMB = 40  // daily trade files above this are skipped (BTC-sized days; memory)
+	tapeFileMaxMB = 40 // daily trade files above this are skipped (BTC-sized days; memory)
 	tapeWait      = 25 * time.Second
 )
 
@@ -684,6 +683,9 @@ func (e *Engine) tapeBackfill(id string, from, to int64) *tapeJob {
 
 var tapeBackfillSem = make(chan struct{}, 1) // trade files are large: one download at a time
 
+// tapePages caps the history-trades pages of one backfill (≈40k trades, ~70 s at the rate limit).
+var tapePages = 400
+
 func (e *Engine) runTapeBackfill(ctx context.Context, id string, from, hi int64) (string, error) {
 	select {
 	case tapeBackfillSem <- struct{}{}:
@@ -746,12 +748,12 @@ func (e *Engine) runTapeBackfill(ctx context.Context, id string, from, hi int64)
 	// 2) the rest, newest gap first, from history-trades (page-capped)
 	pages := 0
 	gaps := missingRanges(from, hi, have)
-	for i := len(gaps) - 1; i >= 0 && pages < tapeFilePages; i-- {
+	for i := len(gaps) - 1; i >= 0 && pages < tapePages; i-- {
 		lo, end := gaps[i][0], gaps[i][1]
 		byMin := map[int64][]TapeTrade{}
 		oldest, beforeID, beforeTs := end, int64(0), end
 		reached := false
-		for pages < tapeFilePages {
+		for pages < tapePages {
 			xs, err := e.rest.HistoryTrades(ctx, id, beforeID, beforeTs, 100)
 			pages++
 			if err != nil {

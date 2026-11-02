@@ -17,6 +17,8 @@ import (
 //	POST /api/v1/signals/{id}/cancel    {reason?}
 //	POST /api/v1/signals/test-script    {code} → ScriptTest (compile + replay; nothing is stored)
 //	GET  /api/v1/signals/script-template {code}
+//	GET  /api/v1/signals/catalog        {types: every condition type with its parameters, deliveryVersion}
+//	POST /api/v1/signals/test           {spec, hours?, cooldownMin?, every?} → SpecReplay (built-in types over recorded 1m bars)
 //	GET  /go/chat/{id}                  public, data-free bounce to okxhelper://ai?chat=<id> (Telegram buttons take http(s) only)
 //
 // Changes are pushed as the stream event "signals" {kind, id, chatId}.
@@ -57,6 +59,35 @@ func (s *Service) Register(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET /api/v1/signals/script-template", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"code": ScriptTemplate, "limits": s.limits()})
+	})
+	mux.HandleFunc("GET /api/v1/signals/catalog", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"types": Catalog(), "deliveryVersion": DeliveryVersion})
+	})
+	mux.HandleFunc("POST /api/v1/signals/test", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Spec        json.RawMessage `json:"spec"`
+			Hours       float64         `json:"hours"`
+			CooldownMin int             `json:"cooldownMin"`
+			Every       string          `json:"every"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
+			httpErr(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		spec, err := ParseSpec(string(in.Spec))
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if in.Every != "" {
+			spec.Every = in.Every
+		}
+		rep, err := s.TestSpec(r.Context(), spec, in.Hours, in.CooldownMin)
+		if err != nil {
+			httpErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, rep)
 	})
 	mux.HandleFunc("POST /api/v1/signals/test-script", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {

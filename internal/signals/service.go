@@ -174,6 +174,7 @@ type Subscription struct {
 	History     []Fire      `json:"history,omitempty"`  // detail only
 	Script      *ScriptInfo `json:"script,omitempty"`   // script conditions: code, declarations, replay, live checks
 	state       tri
+	poolRaw     string // pool scans: per-member state (pool_state)
 }
 
 // Fire is one firing and what became of its wake-up.
@@ -186,6 +187,8 @@ type Fire struct {
 	WakeChat int64   `json:"wakeChat,omitempty"`
 	WakeAt   int64   `json:"wakeAt,omitempty"`
 	Error    string  `json:"error,omitempty"`
+	// Delivery is what was delivered (nil for fires recorded before deliveries were stored).
+	Delivery *Delivery `json:"delivery,omitempty"`
 }
 
 // Service owns the subscriptions.
@@ -221,6 +224,7 @@ type liveSub struct {
 	sub    Subscription
 	root   *node
 	script *ScriptState // script subscriptions only
+	pool   *poolState   // pool scans only
 }
 
 func newLive(sub Subscription, root *node) *liveSub {
@@ -229,7 +233,51 @@ func newLive(sub Subscription, root *node) *liveSub {
 		st := sub.Script.ScriptState
 		l.script = &st
 	}
+	if sub.Spec.Type == "pool" {
+		l.pool = loadPoolState(sub.poolRaw)
+	}
 	return l
+}
+
+// step evaluates one event and decides whether the subscription fires: the edge from false to true
+// off cooldown, or for a pool scan the members that turned true off their own cooldown (hits). It
+// changes only the in-memory state; changed says whether that state needs saving. Live evaluation
+// and replays (replay.go) share it.
+func (l *liveSub) step(src Sources, ev event, now time.Time) (fire bool, hits []Hit, changed bool) {
+	cool := time.Duration(l.sub.CooldownMin) * time.Minute
+	if l.pool != nil {
+		hits, changed, _ = l.pool.scan(l.sub.Spec, src, ev, now, cool)
+		return len(hits) > 0, hits, changed
+	}
+	v := l.root.eval(src, ev, now)
+	if v == unknown {
+		return false, nil, false
+	}
+	prev := l.sub.state
+	changed = v != prev
+	l.sub.state = v
+	fire = v == yes && prev == no && (l.sub.LastFiredAt == 0 || now.Sub(time.UnixMilli(l.sub.LastFiredAt)) >= cool)
+	if fire {
+		for _, id := range l.sub.InstIDs {
+			h := Hit{InstID: id}
+			if px, ts, ok := src.Quote(id); ok && now.Sub(time.UnixMilli(ts)) <= quoteMaxAge {
+				h.Px = px
+			}
+			hits = append(hits, h)
+		}
+	}
+	return fire, hits, changed
+}
+
+// fired records a firing in memory (count, time, per-member cooldown).
+func (l *liveSub) fired(hits []Hit, now time.Time) {
+	l.sub.FireCount++
+	l.sub.LastFiredAt = now.UnixMilli()
+	if l.pool != nil {
+		for _, h := range hits {
+			l.pool.Fired[h.InstID] = now.UnixMilli()
+		}
+	}
 }
 
 // New creates the tables and loads the active subscriptions.
@@ -265,11 +313,13 @@ func New(st *store.Store, src Sources, opts Options) (*Service, error) {
 	if _, err := s.db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("signals schema: %w", err)
 	}
-	for _, c := range []struct{ name, def string }{{"script", "TEXT NOT NULL DEFAULT ''"}, {"trade_id", "INTEGER NOT NULL DEFAULT 0"}} {
-		var has int // added 2026-11-01: tables made before get the column
-		s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('signal_subs') WHERE name=?`, c.name).Scan(&has)
+	for _, c := range []struct{ table, name, def string }{{"signal_subs", "script", "TEXT NOT NULL DEFAULT ''"},
+		{"signal_subs", "trade_id", "INTEGER NOT NULL DEFAULT 0"}, {"signal_subs", "pool_state", "TEXT NOT NULL DEFAULT ''"},
+		{"signal_fires", "payload", "TEXT NOT NULL DEFAULT ''"}} {
+		var has int // added after the tables existed: older databases get the column
+		s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+c.table+`') WHERE name=?`, c.name).Scan(&has)
 		if has == 0 {
-			if _, err := s.db.Exec(`ALTER TABLE signal_subs ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
+			if _, err := s.db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
 				return nil, fmt.Errorf("signals schema: %w", err)
 			}
 		}
@@ -409,16 +459,14 @@ func (s *Service) check(l *liveSub, ev event, now time.Time) {
 	if now.UnixMilli() >= l.sub.ExpiresAt {
 		return // expireDue ends it
 	}
-	v := l.root.eval(s.src, ev, now)
-	if v == unknown {
-		return
+	fire, hits, changed := l.step(s.src, ev, now)
+	if changed {
+		s.saveState(l)
 	}
-	prev := l.sub.state
-	s.setState(l, v)
-	if v == yes && prev == no && (l.sub.LastFiredAt == 0 || now.Sub(time.UnixMilli(l.sub.LastFiredAt)) >= time.Duration(l.sub.CooldownMin)*time.Minute) {
-		s.fire(l, now)
+	if fire {
+		s.fire(l, hits, now)
 	}
-	if ev.kind == "alert" && l.sub.Status == StatusActive { // an alert is a moment: its leaves are false again right after
+	if ev.kind == "alert" && l.pool == nil && l.sub.Status == StatusActive { // an alert is a moment: its leaves are false again right after
 		if v := l.root.eval(s.src, event{kind: "settle"}, now); v != unknown {
 			s.setState(l, v)
 		}
@@ -428,14 +476,24 @@ func (s *Service) check(l *liveSub, ev event, now time.Time) {
 func (s *Service) setState(l *liveSub, v tri) {
 	if v != l.sub.state {
 		l.sub.state = v
-		s.db.Exec(`UPDATE signal_subs SET state=? WHERE id=?`, int(v), l.sub.ID)
+		s.saveState(l)
 	}
+}
+
+// saveState persists the edge state (and a pool scan's per-member memory) so a restart continues it.
+func (s *Service) saveState(l *liveSub) {
+	if l.pool != nil {
+		raw, _ := json.Marshal(l.pool)
+		s.db.Exec(`UPDATE signal_subs SET pool_state=? WHERE id=?`, string(raw), l.sub.ID)
+		return
+	}
+	s.db.Exec(`UPDATE signal_subs SET state=? WHERE id=?`, int(l.sub.state), l.sub.ID)
 }
 
 // live reports whether any leaf reads the last price (worth evaluating on each price tick).
 func (s Spec) live() bool {
 	for _, l := range s.leaves() {
-		if (l.Type == "price" && l.Bar == "") || l.Type == "zone" || l.Type == "time" {
+		if (l.Type == "price" && l.Bar == "") || l.Type == "zone" || l.Type == "time" || (l.Type == "pool" && l.Every == "tick") {
 			return true
 		}
 	}
@@ -443,29 +501,42 @@ func (s Spec) live() bool {
 }
 
 // fire records a firing, ends the subscription when it used up its fires, and wakes the subscriber.
-func (s *Service) fire(l *liveSub, now time.Time) {
+func (s *Service) fire(l *liveSub, hits []Hit, now time.Time) {
 	sub := &l.sub
-	matched := strings.Join(l.root.observed(), "；")
-	var px float64
-	if ids := sub.InstIDs; len(ids) > 0 {
-		px, _, _ = s.src.Quote(ids[0])
+	matched := ""
+	if l.pool == nil {
+		matched = strings.Join(l.root.observed(), "；")
+	} else {
+		texts := make([]string, 0, len(hits))
+		for _, h := range hits[:min(len(hits), poolMaxHits)] {
+			texts = append(texts, h.Text)
+		}
+		matched = strings.Join(texts, "；")
 	}
-	sub.FireCount++
-	sub.LastFiredAt = now.UnixMilli()
+	l.fired(hits, now)
 	status := StatusActive
 	if sub.FireCount >= sub.MaxFires {
 		status = StatusFired
 	}
-	msg := s.wakeMessage(*sub, matched, px, now)
-	res, err := s.db.Exec(`INSERT INTO signal_fires(sub_id, ts, px, matched, message, wake) VALUES(?,?,?,?,?,?)`,
-		sub.ID, now.UnixMilli(), px, matched, msg, WakeQueued)
+	d := delivery(*sub, hits, matched, now)
+	_, px := d.px()
+	msg := s.wakeMessage(d, *sub)
+	payload, _ := json.Marshal(d)
+	res, err := s.db.Exec(`INSERT INTO signal_fires(sub_id, ts, px, matched, message, wake, payload) VALUES(?,?,?,?,?,?,?)`,
+		sub.ID, now.UnixMilli(), px, matched, msg, WakeQueued, string(payload))
 	if err != nil {
 		s.logf("signals: fire #%d: %v", sub.ID, err)
 		return
 	}
 	fireID, _ := res.LastInsertId()
+	d.FireID = fireID
+	payload, _ = json.Marshal(d)
+	s.db.Exec(`UPDATE signal_fires SET payload=? WHERE id=?`, string(payload), fireID)
 	s.db.Exec(`UPDATE signal_subs SET fires=?, last_fired_at=?, updated=?, status=?, status_at=CASE WHEN ?<>status THEN ? ELSE status_at END WHERE id=?`,
 		sub.FireCount, sub.LastFiredAt, now.UnixMilli(), status, status, now.UnixMilli(), sub.ID)
+	if l.pool != nil {
+		s.saveState(l)
+	}
 	sub.Status = status
 	if status != StatusActive {
 		s.mu.Lock()
@@ -484,7 +555,7 @@ func (s *Service) fire(l *liveSub, now time.Time) {
 	if wake == WakeQueued {
 		s.tryWake(fireID)
 	}
-	s.push(*sub, fireID, matched, px)
+	s.push(*sub, fireID, d)
 }
 
 // wakesToday counts fires that woke (or wait to wake) an agent in the last 24 h.
@@ -494,55 +565,29 @@ func (s *Service) wakesToday(now time.Time) int {
 	return n
 }
 
-// wakeMessage is what the subscriber's agent reads: the signal, what matched, its own plan, and what to do.
-func (s *Service) wakeMessage(sub Subscription, matched string, px float64, now time.Time) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "⚡ 信号 #%d 触发：%s\n", sub.ID, sub.Desc)
-	fmt.Fprintf(&b, "时间：%s（UTC+8）", now.In(tz8).Format("01-02 15:04:05"))
-	if px > 0 && len(sub.InstIDs) > 0 {
-		fmt.Fprintf(&b, " · %s 现价 %s", coin(sub.InstIDs[0]), fmtPx(px))
-	}
-	b.WriteString("\n")
-	if matched != "" {
-		b.WriteString("触发值：" + matched + "\n")
-	}
-	if sub.Intent != "" {
-		b.WriteString("你订阅时的计划：" + sub.Intent + "\n")
-	}
+// wakeMessage renders a delivery for the subscriber's agent, with the positions block and the linked plan.
+func (s *Service) wakeMessage(d Delivery, sub Subscription) string {
 	s.mu.Lock()
 	ctxf := s.context
 	s.mu.Unlock()
+	block := ""
 	if ctxf != nil && (sub.TradeID > 0 || sub.Kind == KindChat) {
-		if c := ctxf(sub.ChatID, sub.InstIDs, sub.TradeID); c != "" {
-			b.WriteString(c + "\n")
+		ids := sub.InstIDs
+		if sub.Spec.Type == "pool" {
+			ids = nil
+			for _, h := range d.Hits {
+				ids = append(ids, h.InstID)
+			}
 		}
+		block = ctxf(sub.ChatID, ids, sub.TradeID)
 	}
+	var plan *Plan
 	if sub.PlanID > 0 {
 		if p, ok := s.src.Plan(sub.PlanID); ok {
-			fmt.Fprintf(&b, "关联计划 #%d：%s %s · 入场 %s–%s · 止损 %s · 止盈 %s", p.ID, map[bool]string{true: "做多", false: "做空"}[p.Side == "long"],
-				coin(p.InstID), fmtPx(p.EntryLo), fmtPx(p.EntryHi), fmtPx(p.Stop), fmtPx(p.TP1))
-			if p.TP2 > 0 {
-				b.WriteString(" / " + fmtPx(p.TP2))
-			}
-			if p.Invalidate != "" {
-				b.WriteString(" · 失效：" + p.Invalidate)
-			}
-			b.WriteString("（当前状态 " + p.Status + "）\n")
+			plan = &p
 		}
 	}
-	if left := sub.MaxFires - sub.FireCount; left > 0 {
-		fmt.Fprintf(&b, "这是第 %d/%d 次触发；订阅仍有效（冷却 %d 分钟，%s 到期）。\n", sub.FireCount, sub.MaxFires, sub.CooldownMin,
-			time.UnixMilli(sub.ExpiresAt).In(tz8).Format("01-02 15:04"))
-	} else {
-		fmt.Fprintf(&b, "这是第 %d/%d 次触发；订阅已结束。\n", sub.FireCount, sub.MaxFires)
-	}
-	b.WriteString("\n请先用最新数据（有仓位就先 get_positions）重新检查，不要沿用订阅时的数字，然后三选一：\n" +
-		"1. 计划仍然成立 → 用 propose_trade 提交对应的操作（开仓 / 补仓 / 减仓 / 平仓 / 调整止盈止损，主人审核后才执行）；\n" +
-		"2. 还差一步 → 用 subscribe_signal 订阅调整后的条件（管理仓位的带 tradeId），并说明为什么；\n" +
-		"3. 已经不成立 → 说明原因；若这个订阅仍有效且不再需要，用 unsubscribe_signal 取消。\n" +
-		"（这是自动触发的信号会话，主人此刻不一定在看。你只能用 propose_trade 提交待主人审核的提议，不能下单；" +
-		"没有足够把握就不要提议，直接说明理由。最多提议一笔。）")
-	return b.String()
+	return d.wakeText(block, plan)
 }
 
 // tryWake starts one queued wake-up; it reports whether it is settled (started, failed).
@@ -577,6 +622,11 @@ func (s *Service) tryWake(fireID int64) bool {
 		inst := ""
 		if len(sub.InstIDs) > 0 {
 			inst = sub.InstIDs[0]
+		}
+		var d Delivery
+		var raw string
+		if s.db.QueryRow(`SELECT payload FROM signal_fires WHERE id=?`, fireID).Scan(&raw) == nil && json.Unmarshal([]byte(raw), &d) == nil && len(d.Hits) > 0 {
+			inst = d.Hits[0].InstID
 		}
 		chat, err = w.Start(title, msg, inst)
 	}
@@ -625,7 +675,7 @@ func (s *Service) processQueue() {
 }
 
 // push sends the short note on fire.
-func (s *Service) push(sub Subscription, fireID int64, matched string, px float64) {
+func (s *Service) push(sub Subscription, fireID int64, d Delivery) {
 	s.mu.Lock()
 	n := s.notify
 	s.mu.Unlock()
@@ -635,11 +685,7 @@ func (s *Service) push(sub Subscription, fireID int64, matched string, px float6
 	var wake, errText string
 	var chat int64
 	s.db.QueryRow(`SELECT wake, wake_chat, error FROM signal_fires WHERE id=?`, fireID).Scan(&wake, &chat, &errText)
-	text := fmt.Sprintf("⚡ 信号 #%d 触发：%s", sub.ID, sub.Desc)
-	if px > 0 && len(sub.InstIDs) > 0 {
-		text += fmt.Sprintf("（%s 现价 %s）", coin(sub.InstIDs[0]), fmtPx(px))
-	}
-	text += "\n订阅者：" + sub.Subscriber
+	text := d.pushText(sub.Subscriber)
 	switch wake {
 	case WakeStarted:
 		text += "\n→ AI 正在评估"
@@ -754,12 +800,18 @@ func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subs
 	if exp < MinExpiry || exp > MaxExpiry {
 		return Subscription{}, fmt.Errorf("expiresHours must be between %.2g and %.0f (7 days)", MinExpiry.Hours(), MaxExpiry.Hours())
 	}
-	maxFires := in.MaxFires
+	maxFires, fireCap := in.MaxFires, MaxFiresCap
+	if spec.Type == "pool" {
+		fireCap = PoolMaxFires
+	}
 	if maxFires == 0 {
 		maxFires = 1
+		if spec.Type == "pool" {
+			maxFires = poolDefaultFire
+		}
 	}
-	if maxFires < 1 || maxFires > MaxFiresCap {
-		return Subscription{}, fmt.Errorf("maxFires must be between 1 and %d", MaxFiresCap)
+	if maxFires < 1 || maxFires > fireCap {
+		return Subscription{}, fmt.Errorf("maxFires must be between 1 and %d", fireCap)
 	}
 	cool := in.CooldownMin
 	if cool == 0 {
@@ -804,12 +856,27 @@ func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subs
 		script = &ScriptState{Replay: replay, Last: replay.Now}
 		root.setScript(replay.Now)
 	}
-	switch root.eval(s.src, event{kind: "init"}, now) {
-	case unknown:
-		return Subscription{}, fmt.Errorf("no current data for: %s — cannot watch it yet", strings.Join(root.unknowns(), "；"))
-	case yes:
-		return Subscription{}, fmt.Errorf("the condition already holds now (%s); a subscription fires only when it turns true. "+
-			"Act on it now, or subscribe to the next level", strings.Join(root.observed(), "；"))
+	var pool *poolState
+	poolRaw := ""
+	if spec.Type == "pool" { // members already beyond the threshold are recorded, not rejected: they fire only after falling back
+		pool = newPoolState()
+		members := spec.members(s.src)
+		if len(members) == 0 {
+			return Subscription{}, errors.New("the scope has no instruments right now")
+		}
+		if _, _, known := pool.scan(spec, s.src, event{kind: "init"}, now, 0); known == 0 {
+			return Subscription{}, fmt.Errorf("no current data for any of the %d instruments — cannot watch them yet", len(members))
+		}
+		b, _ := json.Marshal(pool)
+		poolRaw = string(b)
+	} else {
+		switch root.eval(s.src, event{kind: "init"}, now) {
+		case unknown:
+			return Subscription{}, fmt.Errorf("no current data for: %s — cannot watch it yet", strings.Join(root.unknowns(), "；"))
+		case yes:
+			return Subscription{}, fmt.Errorf("the condition already holds now (%s); a subscription fires only when it turns true. "+
+				"Act on it now, or subscribe to the next level", strings.Join(root.observed(), "；"))
+		}
 	}
 	raw, _ := json.Marshal(spec)
 	scriptRaw := ""
@@ -819,9 +886,9 @@ func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subs
 	}
 	desc := spec.Label()
 	res, err := s.db.Exec(`INSERT INTO signal_subs(created, updated, kind, chat_id, label, inst_ids, spec, descr, intent, plan_id, expires_at,
-		max_fires, cooldown_min, state, status, status_at, script, trade_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		max_fires, cooldown_min, state, status, status_at, script, trade_id, pool_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now.UnixMilli(), now.UnixMilli(), kind, in.ChatID, label, strings.Join(spec.InstIDs(), ","), string(raw), desc, in.Intent, in.PlanID,
-		now.Add(exp).UnixMilli(), maxFires, cool, int(no), StatusActive, now.UnixMilli(), scriptRaw, max(in.TradeID, 0))
+		now.Add(exp).UnixMilli(), maxFires, cool, int(no), StatusActive, now.UnixMilli(), scriptRaw, max(in.TradeID, 0), poolRaw)
 	if err != nil {
 		return Subscription{}, err
 	}
@@ -830,8 +897,12 @@ func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subs
 	if err != nil {
 		return sub, err
 	}
+	l := newLive(sub, root)
+	if pool != nil {
+		l.pool = pool
+	}
 	s.mu.Lock()
-	s.live[id] = newLive(sub, root)
+	s.live[id] = l
 	s.mu.Unlock()
 	s.keep()
 	s.changed("subscribed", id, in.ChatID)
@@ -950,14 +1021,14 @@ func brief(subs []Subscription) string {
 // ---------- reads ----------
 
 const subCols = `id, created, updated, kind, chat_id, label, spec, descr, intent, plan_id, expires_at, max_fires, cooldown_min,
-  fires, last_fired_at, state, status, status_at, ended_by, reason, script, trade_id`
+  fires, last_fired_at, state, status, status_at, ended_by, reason, script, trade_id, pool_state`
 
 func scanSub(row interface{ Scan(...any) error }) (Subscription, error) {
 	var x Subscription
 	var raw, script string
 	var st int
 	err := row.Scan(&x.ID, &x.Created, &x.Updated, &x.Kind, &x.ChatID, &x.Label, &raw, &x.Desc, &x.Intent, &x.PlanID, &x.ExpiresAt,
-		&x.MaxFires, &x.CooldownMin, &x.FireCount, &x.LastFiredAt, &st, &x.Status, &x.StatusAt, &x.EndedBy, &x.Reason, &script, &x.TradeID)
+		&x.MaxFires, &x.CooldownMin, &x.FireCount, &x.LastFiredAt, &st, &x.Status, &x.StatusAt, &x.EndedBy, &x.Reason, &script, &x.TradeID, &x.poolRaw)
 	if err != nil {
 		return x, err
 	}
@@ -990,7 +1061,7 @@ func (s *Service) Get(id int64) (Subscription, error) {
 	if err != nil {
 		return x, err
 	}
-	rows, err := s.db.Query(`SELECT id, ts, px, matched, wake, wake_chat, wake_at, error FROM signal_fires WHERE sub_id=? ORDER BY id`, id)
+	rows, err := s.db.Query(`SELECT id, ts, px, matched, wake, wake_chat, wake_at, error, payload FROM signal_fires WHERE sub_id=? ORDER BY id`, id)
 	if err != nil {
 		return x, err
 	}
@@ -998,8 +1069,15 @@ func (s *Service) Get(id int64) (Subscription, error) {
 	x.History = []Fire{}
 	for rows.Next() {
 		var f Fire
-		if err := rows.Scan(&f.ID, &f.Ts, &f.Px, &f.Matched, &f.Wake, &f.WakeChat, &f.WakeAt, &f.Error); err != nil {
+		var payload string
+		if err := rows.Scan(&f.ID, &f.Ts, &f.Px, &f.Matched, &f.Wake, &f.WakeChat, &f.WakeAt, &f.Error, &payload); err != nil {
 			return x, err
+		}
+		if payload != "" {
+			var d Delivery
+			if json.Unmarshal([]byte(payload), &d) == nil {
+				f.Delivery = &d
+			}
 		}
 		x.History = append(x.History, f)
 	}
@@ -1081,6 +1159,9 @@ func (s *Service) progress(x Subscription) *Progress { return s.progressAt(x, s.
 
 // progressAt is the distance to firing; a script without a price leaf shows its newest check.
 func (s *Service) progressAt(x Subscription, now time.Time) *Progress {
+	if x.Spec.Type == "pool" {
+		return poolProgress(x.Spec, s.src, now)
+	}
 	if p := progress(x.Spec, s.src, now); p != nil || x.Script == nil {
 		return p
 	}

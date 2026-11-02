@@ -271,7 +271,7 @@ func main() {
 	sig.SetOnChange(func(kind string, id, chat int64) {
 		eng.Publish("signals", map[string]any{"kind": kind, "id": id, "chatId": chat})
 	})
-	dev.SetSignals(devapi.SignalTools{Subscribe: sig.SubscribeTool, List: sig.ListTool, Unsubscribe: sig.UnsubscribeTool, TestScript: sig.TestScriptTool})
+	dev.SetSignals(devapi.SignalTools{Subscribe: sig.SubscribeTool, List: sig.ListTool, Unsubscribe: sig.UnsubscribeTool, TestScript: sig.TestScriptTool, TestSpec: sig.TestSpecTool})
 	rt.SetSignalSource(func(chat int64) (string, bool) {
 		id, ok := sig.WokenBy(chat)
 		if !ok {

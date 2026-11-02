@@ -552,6 +552,13 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				"Condition class run on every close of its timeframe — for indicator, multi-condition or relative logic the built-ins cannot " +
 				"express; test it with test_signal_script first; subscribing runs the same compile + replay check and rejects scripts that error, " +
 				"are slow, would fire more than the daily cap or hold right now; at most one script per subscription, every ≠ tick) · " +
+				`{"type":"pool","scope":"pool"|"watch"|"list","top":50,"instIds":[…],"exclude":[…],"metric":"move","windowMin":15,"dir":"up"|"down"|"both","pct":3} ` +
+				`(a scan of many coins, each on its own: move = change over the last windowMin minutes ≥ pct %, windowMin 1 = minute-to-minute; ` +
+				`metric "range" = high–low swing within windowMin ≥ pct %; metric "field" with field/op/value = a fact-panel field across the scope; ` +
+				"scope pool = the active pool, top = ranks ≤ N, watch = watchlist, list = instIds (≤ 50); coins already beyond the threshold " +
+				"only fire after falling back; each coin has its own cooldownMin; coins firing on the same minute arrive in one wake-up with a " +
+				"line each; default maxFires 10 (≤ 50); checked each minute or every tick; it must be the whole spec, not inside all/any; " +
+				"test it with test_signal first) · " +
 				`{"type":"all"|"any","of":[…]} (≤ 6 conditions). ` +
 				"Put the invalidation in intent or subscribe it separately. Caps: 5 active per conversation, expiry ≤ 7 days, wake-ups per day are capped. " +
 				"A wake-up while this conversation is answering is injected into the running turn.",
@@ -562,8 +569,8 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 				{Name: "expiresHours", In: "query", Type: "number", Default: 24, Desc: "hours until it lapses unfired (0.25–168)"},
 				{Name: "planId", In: "query", Type: "integer", Desc: "the AI plan (```plan block) this setup belongs to, if any"},
 				{Name: "tradeId", In: "query", Type: "integer", Desc: "the AI position this watch manages (its open's proposal id): its state comes with the wake-up and the watch is cancelled when it closes"},
-				{Name: "maxFires", In: "query", Type: "integer", Default: 1, Min: 1, Max: 5, Desc: "fires before it ends"},
-				{Name: "cooldownMin", In: "query", Type: "integer", Default: 60, Min: 5, Max: 1440, Desc: "minutes between two fires (maxFires > 1)"},
+				{Name: "maxFires", In: "query", Type: "integer", Min: 1, Max: 50, Desc: "fires before it ends (default 1, ≤ 5; pool scans default 10, ≤ 50)"},
+				{Name: "cooldownMin", In: "query", Type: "integer", Default: 60, Min: 5, Max: 1440, Desc: "minutes between two fires (maxFires > 1); for a pool scan per coin"},
 				{Name: "every", In: "query", Type: "string", Enum: []string{"tick", "1m", "5m", "15m", "1H"}, Desc: "how often the server checks it: " +
 					"tick = each ~2 s price update (only for a fast level / zone you must catch at once), 1m, 5m, 15m, 1H (on that confirmed " +
 					"minute). Altcoins are always checked at least every minute (5m–1H is lowered to 1m); only BTC / ETH may wait 5m–1H. " +
@@ -596,6 +603,24 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			write: true,
 			run:   func(ctx context.Context, a Args) (any, error) { return s.signals.Unsubscribe(ctx, chatOf(ctx), a) },
 		})
+		if s.signals.TestSpec != nil {
+			eps = append(eps, &Endpoint{
+				Name: "test_signal", Path: "test-signal", Summary: "Replay a built-in signal condition over recent 1m history (stores nothing)",
+				Desc: "Before subscribe_signal: how often would this spec have fired over the last hours, and on what. Runs the same evaluator as live " +
+					"on recorded 1m bars (closes stand in for ticks, so live may fire a little earlier or on wicks). Replayable: price, zone, time, " +
+					"all/any of them, and pool scans on move / range (members = the scope's coins now). Not replayable: field, moverisk, alert, plan " +
+					"(no history) and scripts (use test_signal_script). Returns fireCount, perDay, unknownMinutes, for pool scans members and fires per coin, " +
+					"and the last fires with the matched values. Tune pct / windowMin / cooldownMin until the rate is what you want, then subscribe.",
+				Params: []Param{
+					{Name: "spec", In: "query", Type: "object", Required: true, Desc: "the condition, as for subscribe_signal"},
+					{Name: "hours", In: "query", Type: "number", Default: 24, Desc: "look-back (≤ 72; 1m history is kept 2–7 days)"},
+					{Name: "cooldownMin", In: "query", Type: "integer", Default: 60, Min: 5, Max: 1440, Desc: "as for subscribe_signal (pool: per coin)"},
+					{Name: "every", In: "query", Type: "string", Enum: []string{"tick", "1m", "5m", "15m", "1H"}, Desc: "check interval, as for subscribe_signal"},
+				},
+				owner: true,
+				run:   func(ctx context.Context, a Args) (any, error) { return s.signals.TestSpec(ctx, chatOf(ctx), a) },
+			})
+		}
 		if s.signals.TestScript != nil {
 			eps = append(eps, &Endpoint{
 				Name: "test_signal_script", Path: "test-signal-script", Summary: "Compile a script signal and replay it over recent history (stores nothing)",

@@ -220,13 +220,13 @@ class WorkerTest(unittest.TestCase):
 
     def test_ops(self):
         bad = script("raise RuntimeError('boom')\n")
-        closes = [100] * 40
-        item = {"key": 1, "code": RSI, "now": 40 * STEP, "bars": {AAVE: rows(closes)}, "factors": {}}
+        closes = [100] * 60  # ≥ the RSI script's lookback (50): fewer bars would be a warm-up (unknown)
+        item = {"key": 1, "code": RSI, "now": 60 * STEP, "bars": {AAVE: rows(closes)}, "factors": {}}
         w, lines = self.run_worker(
             {"op": "check", "code": RSI},
             {"op": "eval", "budgetMs": 200, "items": [item, dict(item, key=2, code=bad), dict(item, key=3, code="x = (")]},
             {"op": "eval", "items": [item]},
-            {"op": "replay", "code": RSI, "bars": {AAVE: rows(closes)}, "start": 30 * STEP, "end": 40 * STEP},
+            {"op": "replay", "code": RSI, "bars": {AAVE: rows(closes)}, "start": 50 * STEP, "end": 60 * STEP},
             {"op": "nope"},
         )
         self.assertEqual(lines[0], {"ready": True})

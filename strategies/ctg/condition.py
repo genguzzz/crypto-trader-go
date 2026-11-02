@@ -313,12 +313,17 @@ def run_check(obj: Condition, bars: dict[str, Bars], factors: dict, now: int, bu
     """One check at the close `now`: {fire, values, note, ms, error?, missing?, factors?}.
 
     An instrument whose newest bar is not the one closing at `now` (no data, a gap) makes the result
-    unknown without running the script — the same rule live and in replays."""
+    unknown without running the script, and so does one with fewer than `lookback` bars (the start of the
+    history, a new listing: the script was promised `lookback` bars and may index them) — the same rules
+    live and in replays."""
     cls = type(obj)
     step = TIMEFRAMES[cls.timeframe]
     missing = [i for i in cls.instruments if i not in bars or len(bars[i]) == 0 or int(bars[i].ts[-1]) + step != now]
     if missing:
         return {"fire": None, "values": {}, "note": "", "ms": 0.0, "missing": missing}
+    short = [i for i in cls.instruments if len(bars[i]) < cls.lookback]
+    if short:
+        return {"fire": None, "values": {}, "note": "", "ms": 0.0, "warmup": short}
     ctx = ConditionContext(bars, factors, now, cls.timeframe)
     t0 = time.perf_counter()
     try:
@@ -372,7 +377,7 @@ def replay(cls: type[Condition], data: dict[str, list], start: int, end: int, bu
             k = int(np.searchsorted(a[:, 0], t - step, side="right")) if len(a) else 0
             bars[inst] = Bars.from_array(a[max(0, k - cls.lookback):k])
         r = run_check(obj, bars, {}, t, budget_s)
-        if "missing" not in r:
+        if "missing" not in r and "warmup" not in r:
             calls += 1
             ms_sum += r["ms"]
             ms_max = max(ms_max, r["ms"])
@@ -394,6 +399,8 @@ def replay(cls: type[Condition], data: dict[str, list], start: int, end: int, bu
         last = {"t": t, **{k: r[k] for k in ("fire", "values", "note") if k in r}}
         if r.get("missing"):
             last["missing"] = r["missing"]
+        if r.get("warmup"):
+            last["warmup"] = r["warmup"]
         if r.get("error"):
             last["error"] = r["error"]
         t += step

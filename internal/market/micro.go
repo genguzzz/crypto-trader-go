@@ -35,7 +35,7 @@ func groupOrders(xs []TapeTrade, ctVal float64) []TapeOrder {
 		if i > 0 {
 			o := &out[len(out)-1]
 			if t.Ts == o.Ts && t.Buy == o.Buy {
-				o.Px = (o.Px*o.Usd + t.Px*usd) / (o.Usd + usd)
+				o.Px = (o.Px*o.Qty + t.Px*t.Sz) / (o.Qty + t.Sz) // volume-weighted: Σ px·qty / Σ qty
 				o.Usd += usd
 				o.Qty += t.Sz
 				o.Fills++
