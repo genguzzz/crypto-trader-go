@@ -31,6 +31,17 @@ import { useActiveSignalCount } from "@/lib/signals";
 import { VoiceWave } from "@/components/ai/VoiceWave";
 import { ModelChip, ModelMenu } from "@/components/ai/ModelMenu";
 import { segments } from "@/components/ai/blocks";
+import { req } from "@/lib/api";
+import { useQuery } from "@/lib/query";
+
+/** Preset questions of the empty chat (server setting ai.presets, GET /api/v1/ai/presets); {sym} = the coin. */
+interface AiPreset { label: string; prompt?: string }
+interface AiPresets { coin: AiPreset[]; market: AiPreset[] }
+// shown until the server answers (same as the server's defaults, prompts kept there)
+const DEFAULT_PRESETS: AiPresets = {
+  coin: [{ label: "{sym} 资金费和 OI 最近有什么变化？" }, { label: "{sym} 上方和下方的清算密集区在哪？" }, { label: "{sym} 最近有什么新闻或利空？" }],
+  market: [{ label: "今天哪些币逼空风险高、别空？" }, { label: "大盘怎么样？BTC 和 ETH 的资金费与 OI" }, { label: "监控池里哪些币多头最拥挤？" }],
+};
 
 const ONE_CLICK = "一键分析当前合约：完整的多空分析、风险和交易计划";
 
@@ -177,9 +188,12 @@ export default function AiScreen() {
     newChat();
   };
 
-  const suggestions = s.instId
-    ? [`${sym} 资金费和 OI 最近有什么变化？`, `${sym} 上方和下方的清算密集区在哪？`, `${sym} 最近有什么新闻或利空？`]
-    : ["今天哪些币逼空风险高、别空？", "大盘怎么样？BTC 和 ETH 的资金费与 OI", "监控池里哪些币多头最拥挤？"];
+  // preset questions come from the server (setting ai.presets; label on the button, prompt sent)
+  const presets = useQuery("ai-presets", () => req<{ presets: AiPresets }>("/api/v1/ai/presets"), { staleMs: 5 * 60_000 }).data?.presets ?? DEFAULT_PRESETS;
+  const suggestions = (s.instId ? presets.coin : presets.market).map((p) => {
+    const fill = (t: string) => t.split("{sym}").join(sym);
+    return { label: fill(p.label), prompt: fill(p.prompt || p.label) };
+  });
   const lastMsg = s.msgs[s.msgs.length - 1];
   const bottomPad = kb || Platform.OS === "web" ? 8 : insets.bottom + 8; // a sheet: no tab bar under it
 
@@ -265,8 +279,8 @@ export default function AiScreen() {
               ) : null}
               <View style={{ width: "100%", maxWidth: 380, gap: 8, marginTop: 4 }}>
                 {suggestions.map((q) => (
-                  <Pressable key={q} onPress={() => submit(q)} style={({ pressed }) => ({ paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: pressed ? colors.cardMuted : colors.card })}>
-                    <Text style={{ fontSize: fs.md, color: colors.textSoft }}>{q}</Text>
+                  <Pressable key={q.label} onPress={() => submit(q.prompt)} style={({ pressed }) => ({ paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: pressed ? colors.cardMuted : colors.card })}>
+                    <Text style={{ fontSize: fs.md, color: colors.textSoft }}>{q.label}</Text>
                   </Pressable>
                 ))}
               </View>
