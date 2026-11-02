@@ -42,7 +42,7 @@ const (
 	TapeKeep      = 48 * time.Hour     // trades kept (capacity pressure shortens it, never below tapeFloor)
 	tapeFloor     = 24 * time.Hour     //
 	tapeAuxKeep   = 7 * 24 * time.Hour // wall events and book minutes
-	TapeDefaultMB = 1024
+	TapeDefaultMB = 2048
 	tapeFilePages = 400 // history-trades pages per backfill (≈40k trades, ~70 s at the rate limit)
 	tapeFileMaxMB = 40  // daily trade files above this are skipped (BTC-sized days; memory)
 	tapeWait      = 25 * time.Second
