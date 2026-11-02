@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // Tape is a second SQLite file for the bulky microstructure data: raw public trades per minute
@@ -228,6 +229,42 @@ func (t *Tape) Prune(tapeBefore, restBefore int64) (int64, error) {
 		total += n
 	}
 	return total, nil
+}
+
+// PruneExcept deletes trade minutes older than before of every instrument not in keep.
+func (t *Tape) PruneExcept(keep []string, before int64) (int64, error) {
+	q := `DELETE FROM tape WHERE ts<?`
+	args := []any{before}
+	if len(keep) > 0 {
+		q += ` AND inst_id NOT IN (?` + strings.Repeat(`,?`, len(keep)-1) + `)`
+		for _, id := range keep {
+			args = append(args, id)
+		}
+	}
+	r, err := t.DB.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return r.RowsAffected()
+}
+
+// RecentTape returns the newest stored minute per instrument among minutes at/after since.
+func (t *Tape) RecentTape(since int64) (map[string]int64, error) {
+	rows, err := t.DB.Query(`SELECT inst_id, MAX(ts) FROM tape WHERE ts>=? GROUP BY inst_id`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var ts int64
+		if err := rows.Scan(&id, &ts); err != nil {
+			return nil, err
+		}
+		out[id] = ts
+	}
+	return out, rows.Err()
 }
 
 // UsedBytes is the file size minus reusable free pages.

@@ -103,7 +103,7 @@ func (s *Service) microEndpoints(e *market.Engine) []*Endpoint {
 		{
 			Name: "analyze_trades", Path: "trades/analysis", Summary: "Trade-tape statistics over a window: size distribution, large-order delta, repeated clip sizes, sweeps, profile, spot vs swap",
 			Desc: "Every public trade of the perpetual and its USDT spot pair, grouped into taker orders (same ms + side = one aggressive order), over up to 48 h. " +
-				"Recorded live for the top of the pool, the watchlist and coins viewed or asked about (asking starts recording for 6 h); missing minutes are backfilled " +
+				"Recorded live for the pool's top 50 (kept 2 h after leaving it), the watchlist and coins viewed or asked about (asking starts recording for 6 h); missing minutes are backfilled " +
 				"from OKX daily trade files and history-trades — coverage.pct says how complete the window is, coverage.backfill whether a download is still running. Sections (comma list):\n" +
 				"summary — buy/sell/delta USDT, OHLC, VWAP, taker-order size percentiles, largeBuy/SellUsd and largeDeltaPct (orders ≥ largeUsd vs the rest: who drove the delta), " +
 				"top1PctShare (volume share of the largest 1% of orders), lambdaBpsPer100k (1m price impact per 100k net flow, OLS) and wash (opposite-side identical non-round sizes within 2 s at the same price).\n" +

@@ -2,6 +2,7 @@ package market
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -214,5 +215,26 @@ func TestSizeBucketsAuto(t *testing.T) {
 	}
 	if n != 1000 {
 		t.Fatalf("lost orders: %d", n)
+	}
+}
+
+func TestGraceMembers(t *testing.T) {
+	now := int64(10 * hourMs)
+	seen := map[string]int64{"A": now, "B": now - hourMs, "C": now - 3*hourMs}
+	for i := 0; i < tapeExtra+5; i++ { // more past members than the extra slots
+		seen[fmt.Sprintf("P%02d", i)] = now - int64(i+2)*minuteMs
+	}
+	got := map[string]bool{}
+	for _, id := range graceMembers(seen, now, TapeTopN) {
+		got[id] = true
+	}
+	if !got["A"] || got["C"] || len(got) != 1+tapeExtra {
+		t.Fatalf("members %v", got)
+	}
+	if _, ok := seen["C"]; ok {
+		t.Fatal("expired member not forgotten")
+	}
+	if !got["P00"] || got[fmt.Sprintf("P%02d", tapeExtra+4)] {
+		t.Fatal("must keep the most recently seen past members")
 	}
 }

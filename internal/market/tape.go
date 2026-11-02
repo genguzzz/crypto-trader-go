@@ -34,8 +34,10 @@ import (
 // history-trades pages); a stored empty minute means "no trades", a missing one means unknown.
 
 const (
-	TapeTopN      = 30                 // pool members (by rank) whose trades are taped
+	TapeTopN      = 50                 // pool members (by rank) whose trades are taped
 	BookTopN      = 15                 // pool members whose order books are tracked (walls.go)
+	tapeGrace     = 2 * time.Hour      // a coin that drops out of the top stays recorded this long (no flapping at the edge)
+	tapeExtra     = 20                 // at most this many past members ride on grace (oldest dropped first)
 	tapeReqFor    = 6 * time.Hour      // an instrument an agent asked about stays taped this long
 	TapeKeep      = 48 * time.Hour     // trades kept (capacity pressure shortens it, never below tapeFloor)
 	tapeFloor     = 24 * time.Hour     //
@@ -154,15 +156,17 @@ type tapeBuf struct {
 }
 
 type tapeState struct {
-	st     *store.Tape
-	capMB  int
-	mu     sync.Mutex
-	bufs   map[string]*tapeBuf // instId (swap or spot) → accumulating trades
-	req    map[string]int64    // swap id → last agent request (ms)
-	ch     chan store.TapeRow
-	keep   time.Duration // trade age in force (≤ TapeKeep, shortened under capacity pressure)
-	jobsMu sync.Mutex
-	jobs   map[string]*tapeJob
+	st       *store.Tape
+	capMB    int
+	mu       sync.Mutex
+	bufs     map[string]*tapeBuf // instId (swap or spot) → accumulating trades
+	req      map[string]int64    // swap id → last agent request (ms)
+	topSeen  map[string]int64    // swap id → last time it ranked ≤ TapeTopN (grace after leaving)
+	bookSeen map[string]int64    // same for BookTopN
+	ch       chan store.TapeRow
+	keep     time.Duration // trade age in force (≤ TapeKeep, shortened under capacity pressure)
+	jobsMu   sync.Mutex
+	jobs     map[string]*tapeJob
 }
 
 type tapeJob struct {
@@ -176,7 +180,7 @@ func (e *Engine) SetTape(t *store.Tape, capMB int) {
 	if capMB <= 0 {
 		capMB = TapeDefaultMB
 	}
-	e.tape = &tapeState{st: t, capMB: capMB, bufs: map[string]*tapeBuf{}, req: map[string]int64{},
+	e.tape = &tapeState{st: t, capMB: capMB, bufs: map[string]*tapeBuf{}, req: map[string]int64{}, topSeen: map[string]int64{}, bookSeen: map[string]int64{},
 		ch: make(chan store.TapeRow, 20000), keep: TapeKeep, jobs: map[string]*tapeJob{}}
 	e.walls = newWallTracker(e)
 }
@@ -184,6 +188,16 @@ func (e *Engine) SetTape(t *store.Tape, capMB int) {
 func (e *Engine) startTape(ctx context.Context) {
 	if e.tape == nil {
 		return
+	}
+	// a restart keeps the grace of coins recorded in the last tapeGrace (they were in the top then)
+	if recent, err := e.tape.st.RecentTape(time.Now().Add(-tapeGrace).UnixMilli()); err == nil {
+		e.tape.mu.Lock()
+		for id, ts := range recent {
+			if strings.HasSuffix(id, "-SWAP") {
+				e.tape.topSeen[id] = ts
+			}
+		}
+		e.tape.mu.Unlock()
 	}
 	go e.tapeLoop(ctx)
 	go e.tapeWriter(ctx)
@@ -241,15 +255,47 @@ func (e *Engine) tapeTargets(now int64) (trades, books map[string]bool) {
 		add(trades, id)
 		add(books, id)
 	}
+	e.tape.mu.Lock()
 	for _, r := range e.snap.Load().Rows {
 		if r.Active && r.Rank <= TapeTopN {
-			add(trades, r.InstID)
+			e.tape.topSeen[r.InstID] = now
 		}
 		if r.Active && r.Rank <= BookTopN {
-			add(books, r.InstID)
+			e.tape.bookSeen[r.InstID] = now
 		}
 	}
+	for _, x := range []struct {
+		seen map[string]int64
+		set  map[string]bool
+		n    int
+	}{{e.tape.topSeen, trades, TapeTopN}, {e.tape.bookSeen, books, BookTopN}} {
+		for _, id := range graceMembers(x.seen, now, x.n) {
+			add(x.set, id)
+		}
+	}
+	e.tape.mu.Unlock()
 	return
+}
+
+// graceMembers returns the ids in the top now plus those that left it less than tapeGrace ago,
+// keeping at most tapeExtra of the latter (most recently seen first); expired ones are forgotten.
+func graceMembers(seen map[string]int64, now int64, topN int) []string {
+	var cur, past []string
+	for id, t := range seen {
+		switch {
+		case t == now:
+			cur = append(cur, id)
+		case now-t < tapeGrace.Milliseconds():
+			past = append(past, id)
+		default:
+			delete(seen, id)
+		}
+	}
+	sort.Slice(past, func(i, j int) bool { return seen[past[i]] > seen[past[j]] })
+	if len(past) > tapeExtra {
+		past = past[:tapeExtra]
+	}
+	return append(cur, past...)
 }
 
 // syncTape starts/stops per-instrument tape buffers to match the subscribed set.
@@ -421,6 +467,18 @@ func (e *Engine) tapeRetention(ctx context.Context) {
 		keep := e.tapeKeep()
 		used, _ := e.tape.st.UsedBytes()
 		capB := int64(e.tape.capMB) << 20
+		if used > capB { // over the cap: coins no longer recorded go down to the floor first
+			e.tape.mu.Lock()
+			live := make([]string, 0, len(e.tape.bufs))
+			for id := range e.tape.bufs {
+				live = append(live, id)
+			}
+			e.tape.mu.Unlock()
+			if n, err := e.tape.st.PruneExcept(live, now.Add(-tapeFloor).UnixMilli()); err == nil && n > 0 {
+				used, _ = e.tape.st.UsedBytes()
+				log.Printf("tape: over cap, cut %d minutes of coins no longer recorded to %s", n, tapeFloor)
+			}
+		}
 		for used > capB && keep > tapeFloor {
 			keep -= 6 * time.Hour
 			e.tape.st.Prune(now.Add(-keep).UnixMilli(), now.Add(-tapeAuxKeep).UnixMilli())
