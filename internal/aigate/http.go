@@ -32,9 +32,11 @@ import (
 //	GET    /api/v1/ai/notes                 the owner's preferences / long-term notes for the chat agent
 //	POST   /api/v1/ai/notes                 {text, replaces?}
 //	DELETE /api/v1/ai/notes/{id}
+//	GET|PUT|DELETE /api/v1/ai/presets   the chat's preset questions (presets.go)
 func (g *Gate) Register(mux *http.ServeMux) {
 	g.planRoutes(mux)
 	g.registerNotes(mux)
+	g.registerPresets(mux)
 	mux.HandleFunc("POST /api/v1/ai/chat", func(w http.ResponseWriter, r *http.Request) {
 		var in ChatInput
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {

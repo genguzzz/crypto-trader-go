@@ -12,6 +12,7 @@ import { rt, refreshPending } from '../../composables/realtrade'
 import { segments } from './blocks'
 import { useDesktop } from '../../composables/device'
 import { useRouter } from 'vue-router'
+import { aiApi, type AiPresets } from '../../tradeApi'
 
 /** AI chat: bottom sheet on phones (drag the header down to close), side panel on desktop. */
 const desktop = useDesktop()
@@ -50,9 +51,22 @@ function flash(m: string) { toast.value = m; clearTimeout(toastT); toastT = wind
 
 const sym = computed(() => ai.instId.split('-')[0])
 const ONE_CLICK = '一键分析当前合约：完整的多空分析、风险和交易计划'
-const suggestions = computed(() => ai.instId
-  ? [`${sym.value} 资金费和 OI 最近有什么变化？`, `${sym.value} 上方和下方的清算密集区在哪？`, `${sym.value} 最近有什么新闻或利空？`]
-  : ['今天哪些币逼空风险高、别空？', '大盘怎么样？BTC 和 ETH 的资金费与 OI', '监控池里哪些币多头最拥挤？'])
+// preset questions come from the server (ai.presets); these are shown until it answers or when it cannot
+const presets = ref<AiPresets>({
+  coin: [{ label: '{sym} 资金费和 OI 最近有什么变化？' }, { label: '{sym} 上方和下方的清算密集区在哪？' }, { label: '{sym} 最近有什么新闻或利空？' }],
+  market: [{ label: '今天哪些币逼空风险高、别空？' }, { label: '大盘怎么样？BTC 和 ETH 的资金费与 OI' }, { label: '监控池里哪些币多头最拥挤？' }],
+})
+let presetsAt = 0
+function loadPresets() {
+  if (Date.now() - presetsAt < 5 * 60_000) return
+  presetsAt = Date.now()
+  aiApi.presets().then(r => { if (r?.presets) presets.value = r.presets }).catch(() => { presetsAt = 0 })
+}
+watch(() => ai.open, o => { if (o) loadPresets() }, { immediate: true })
+const suggestions = computed(() => (ai.instId ? presets.value.coin : presets.value.market).map(p => {
+  const fill = (t: string) => t.split('{sym}').join(sym.value)
+  return { label: fill(p.label), prompt: fill(p.prompt || p.label) }
+}))
 
 function submit(text = input.value) {
   if (!text.trim() || ai.running) return
@@ -260,7 +274,7 @@ function dragEnd() { if (y0 < 0) return; y0 = -1; if (dragY.value > 110) ai.open
             <button v-if="ai.instId" type="button" class="oneclick" @click="submit(ONE_CLICK)">
               <ChartCandlestick :size="18" /><span><b>一键分析 {{ sym }}</b><small>多空辩论 · 风险 · 交易计划</small></span><ChevronRight :size="18" />
             </button>
-            <div class="sugs"><button v-for="s in suggestions" :key="s" type="button" class="sug" @click="submit(s)">{{ s }}</button></div>
+            <div class="sugs"><button v-for="s in suggestions" :key="s.label" type="button" class="sug" @click="submit(s.prompt)">{{ s.label }}</button></div>
           </div>
 
           <template v-for="(m, mi) in ai.msgs" :key="m.id ?? 'm' + mi">

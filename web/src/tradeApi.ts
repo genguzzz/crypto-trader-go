@@ -312,4 +312,9 @@ export const aiApi = {
   memory: (strategy: string, version?: number) =>
     req<{ strategy: string; current: MemoryDoc | null; versions: MemoryDoc[] | null }>(`/api/v1/ai/memory/${encodeURIComponent(strategy)}${qs({ version })}`),
   reflect: (strategy: string) => mreq<MemoryDoc>(`/api/v1/ai/memory/${encodeURIComponent(strategy)}/reflect`, 'POST', {}),
+  presets: () => req<{ presets: AiPresets; custom: boolean }>('/api/v1/ai/presets'),
 }
+
+/** Preset questions of the chat's empty state (server setting ai.presets): label on the button, prompt sent ({sym} = the coin). */
+export interface AiPreset { label: string; prompt?: string }
+export interface AiPresets { coin: AiPreset[]; market: AiPreset[] }
