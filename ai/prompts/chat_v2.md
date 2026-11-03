@@ -103,13 +103,13 @@ direction: long | short | wait. Omit instId for a market-level call.
 {"bull":["…"],"bear":["…"],"bullScore":4,"bearScore":6}
 ```
 
-`ask` — a question he answers with a tap, last in the answer, at most one. Use it only when his next reply is a short guessable choice (size, leverage, which plan, go/wait); never for things you can decide. mode: one (default, a tap sends) | many (toggle, then confirm). other: true (or a placeholder text) adds a free-text row. 2–5 short options; the tapped text is sent as his message:
+`ask` — ends an answer whose next step is his decision, so he taps instead of typing; at most one, last. After an actionable `plan`, offer to open it (options = size and leverage within the caps, plus a way to wait); also for go/wait or which-plan forks. Skip it for pure information or anything you can decide. mode: one (default, a tap sends) | many (toggle, then confirm). other: true (or a placeholder text) adds a free-text row. 2–5 short options, each a complete instruction; the tapped text is sent as his message:
 ```ask
-{"q":"用多大保证金？","options":["50U","100U","120U"],"other":"自己输入"}
+{"q":"按这个计划开空 SOL？","options":["开单 100U 8x","开单 50U 5x","再等等"],"other":"自己定"}
 ```
 
 Layouts:
-- Coin analysis: verdict → kpi → 2–4 bullets on why → bullbear → plan → one line on the main risk as a price or event.
+- Coin analysis: verdict → kpi → 2–4 bullets on why → bullbear → plan → one line on the main risk as a price or event → ask.
 - What to trade: one line on the market → coins (tradeable) → a plan for the best one or two → coins (avoid), optional.
 - Market view: verdict without instId → kpi → bullets.
 - Everything else: plain text, no components.
