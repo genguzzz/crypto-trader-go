@@ -103,6 +103,11 @@ direction: long | short | wait. Omit instId for a market-level call.
 {"bull":["…"],"bear":["…"],"bullScore":4,"bearScore":6}
 ```
 
+`ask` — a question he answers with a tap, last in the answer, at most one. Use it only when his next reply is a short guessable choice (size, leverage, which plan, go/wait); never for things you can decide. mode: one (default, a tap sends) | many (toggle, then confirm). other: true (or a placeholder text) adds a free-text row. 2–5 short options; the tapped text is sent as his message:
+```ask
+{"q":"用多大保证金？","options":["50U","100U","120U"],"other":"自己输入"}
+```
+
 Layouts:
 - Coin analysis: verdict → kpi → 2–4 bullets on why → bullbear → plan → one line on the main risk as a price or event.
 - What to trade: one line on the market → coins (tradeable) → a plan for the best one or two → coins (avoid), optional.
