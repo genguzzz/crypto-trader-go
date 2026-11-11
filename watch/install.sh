@@ -28,6 +28,12 @@ echo "▸ watch app + widget for the watch (registers it in the profiles)"
 xcodebuild -project OKXWatch.xcodeproj -scheme OKXWatchApp -configuration Release -derivedDataPath build \
   -destination "platform=watchOS,id=$WATCH" "${sign[@]}" build 2>&1 | quiet
 
+if [ -n "$PHONE" ]; then
+  echo "▸ iPhone app for the phone (registers it in the profiles)"
+  xcodebuild -project OKXWatch.xcodeproj -scheme OKXWatch -configuration Release -derivedDataPath build \
+    -destination "platform=iOS,id=$PHONE" "${sign[@]}" build 2>&1 | quiet
+fi
+
 echo "▸ archive (iPhone app with its widget and the embedded watch app)"
 rm -rf build/OKXWatch.xcarchive
 xcodebuild -project OKXWatch.xcodeproj -scheme OKXWatch -configuration Release -derivedDataPath build \
