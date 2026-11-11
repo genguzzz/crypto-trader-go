@@ -10,7 +10,8 @@ on:
   push:
     branches: [main]
     # ai/**.md are prompts and skills (they ship), so only root docs and READMEs are ignored.
-    paths-ignore: ['*.md', '**/README.md', 'docs/**', 'research/**', '.claude/**', '.github/ISSUE_TEMPLATE/**', '.github/pull_request_template.md']
+    # mobile/ (the iOS app, shipped over the air) and watch/ (the Apple Watch helper) do not touch the server.
+    paths-ignore: ['*.md', '**/README.md', 'docs/**', 'research/**', '.claude/**', '.github/ISSUE_TEMPLATE/**', '.github/pull_request_template.md', 'mobile/**', 'watch/**']
   workflow_dispatch:
 
 concurrency:

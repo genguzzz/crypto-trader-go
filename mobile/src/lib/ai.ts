@@ -1,0 +1,689 @@
+// AI research chat (port of web/src/composables/ai.ts; backend internal/aigate/chat.go). One global
+// conversation state for the AI tab. A turn streams as Server-Sent Events over a POST (expo/fetch:
+// a real streaming body on iOS); the run continues on the server when the stream drops, and
+// openChat()/resume() re-attach to a running chat. AppState "active" and the network coming back
+// play the role of the web's visibilitychange/online events.
+import { useSyncExternalStore } from "react";
+import { AppState, Platform } from "react-native";
+import * as SecureStore from "expo-secure-store";
+import { getAdminKey, keyRejected, loadAdminKey } from "./adminKey";
+import { API_ORIGIN, appVersion } from "./api";
+import { has, notify } from "./device";
+import { logger } from "./log";
+import { track } from "./track";
+
+const log = logger("ai");
+
+export type ToolPart = { t: "tool"; id: string; name: string; label: string; input: string; ok: boolean | null; sub?: boolean; args?: string; output?: string };
+/** The model's (summarized) reasoning; t0 = when it started streaming here, ms = its length once ended. */
+export type ThinkPart = { t: "think"; v: string; ms?: number; t0?: number; live?: boolean };
+export type Part = { t: "text"; v: string } | ThinkPart | ToolPart;
+/** role signal: the server's ⚡ message when a subscribed signal fired (lib/signals.ts); role trade: its message after an
+ *  approved trade proposal ran or its position closed (lib/realtrade.ts). Both are answered like a question, and arrive
+ *  inside a running answer too (stream event `steer`). */
+export type MsgRole = "user" | "assistant" | "signal" | "trade";
+export interface Usage { input: number; output: number; cacheWrite: number; cacheRead: number; searches: number }
+export interface Msg { id?: number; ts?: number; role: MsgRole; parts: Part[]; error?: string; costUsd?: number; usage?: Usage; latencyMs?: number; live?: boolean }
+/** kind "desk" = the standing trading desk chat (lib/desk.ts): server-run, listed first, not deletable. */
+export interface ChatSummary { id: number; title: string; kind?: string; instId?: string; updated: number; costUsd: number; running: boolean }
+export interface Note { id: number; ts: number; text: string; by: "ai" | "owner" }
+
+// The model menu's choices (models, thinking levels, web search default) come from the server — see
+// components/ai/ModelMenu.tsx. Here only what this phone picked is kept.
+export interface ChatOption { value: string; label: string; hint: string }
+export interface ChatOptions { models: ChatOption[]; efforts: ChatOption[]; webSearch: { default: boolean; hint: string }; defaults: { model: string; effort: string } }
+
+export const ai = {
+  /** the AI sheet is on screen */
+  open: false,
+  chatId: 0,
+  title: "",
+  /** kind of the chat on screen ("desk" = the trading desk) and how many older messages were not loaded */
+  kind: "",
+  truncated: 0,
+  msgs: [] as Msg[],
+  running: false,
+  chats: [] as ChatSummary[],
+  error: "",
+  /** an answer finished while the sheet was closed (orb dot) */
+  unread: false,
+  /** when the last text token arrived (thinking indicator) */
+  lastDelta: 0,
+  /** the stream dropped and we are polling the server back */
+  reconnecting: false,
+  /** the chat's last question has no answer and nothing runs (server restarted): offer retry */
+  interrupted: false,
+  /** instrument the question is about (opened from an instrument page) */
+  instId: "",
+  /** model, thinking effort, web search picked on this device; null = not sent, the server's default applies */
+  model: null as string | null,
+  effort: null as string | null,
+  webSearch: null as boolean | null,
+  notes: [] as Note[],
+};
+
+// ---------- store plumbing (useSyncExternalStore over a version counter) ----------
+
+let version = 0;
+const listeners = new Set<() => void>();
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => listeners.delete(l);
+};
+function emit() {
+  if (soon) {
+    clearTimeout(soon);
+    soon = null;
+  }
+  version++;
+  listeners.forEach((l) => l());
+}
+let soon: ReturnType<typeof setTimeout> | null = null;
+/** text deltas arrive many times a second: repaint at most every 60 ms */
+function emitSoon() {
+  if (!soon) soon = setTimeout(emit, 60);
+}
+export function useAi() {
+  useSyncExternalStore(subscribe, () => version);
+  return ai;
+}
+/** One derived value (primitive): re-renders only when it changes, not on every streamed token. */
+export const useAiSelect = <T,>(pick: (a: typeof ai) => T): T => useSyncExternalStore(subscribe, () => pick(ai));
+
+// ---------- device storage (web: localStorage, like the web app's keys) ----------
+
+const kv =
+  Platform.OS === "web"
+    ? { get: async (k: string) => globalThis.localStorage?.getItem(k) ?? null, set: async (k: string, v: string) => (v ? globalThis.localStorage?.setItem(k, v) : globalThis.localStorage?.removeItem(k)) }
+    : { get: (k: string) => SecureStore.getItemAsync(k), set: (k: string, v: string) => (v ? SecureStore.setItemAsync(k, v) : SecureStore.deleteItemAsync(k)) };
+const CHAT_KEY = "okxh.aiChat"; // the chat on screen, reopened after an app restart
+const PENDING_KEY = "okxh.aiPending"; // a chat whose answer we have not seen finish yet
+const MODEL_KEY = "okxh.aiModel";
+const EFFORT_KEY = "okxh.aiEffort";
+const WEB_KEY = "okxh.aiWebSearch";
+const savedVals: Record<string, string> = {};
+const saved = (k: string) => Number(savedVals[k] || 0);
+function put(k: string, v: string) {
+  savedVals[k] = v;
+  void Promise.resolve(kv.set(k, v)).catch((e) => log.warn("save failed", { k, err: e }));
+}
+function setChat(id: number) {
+  ai.chatId = id;
+  put(CHAT_KEY, id ? String(id) : "");
+}
+function setPending(id: number) {
+  put(PENDING_KEY, id ? String(id) : "");
+}
+export function setModel(m: string | null) {
+  ai.model = m || null;
+  put(MODEL_KEY, m ?? "");
+  emit();
+}
+export function setEffort(e: string | null) {
+  ai.effort = e || null;
+  put(EFFORT_KEY, e ?? "");
+  emit();
+}
+export function setWebSearch(on: boolean) {
+  ai.webSearch = on;
+  put(WEB_KEY, on ? "1" : "0");
+  emit();
+}
+
+// ---------- HTTP ----------
+
+type Fetch = (url: string, init: RequestInit) => Promise<Response>;
+const plainFetch: Fetch = (u, i) => fetch(u, i);
+let streamFetchP: Promise<Fetch> | null = null;
+/** expo/fetch streams the response body natively; the browser's fetch already does (web preview). */
+function streamFetch(): Promise<Fetch> {
+  if (Platform.OS === "web") return Promise.resolve(plainFetch);
+  streamFetchP ??= import("expo/fetch").then((m) => m.fetch as unknown as Fetch);
+  return streamFetchP;
+}
+
+const ascii = appVersion.replace(/[^\x20-\x7e]/g, "?"); // header values must be ASCII
+
+/** fetch with the owner key; a 401 admin_required waits for KeyGate's new key and retries once. */
+async function kfetch(path: string, init: RequestInit = {}, f: Fetch = plainFetch): Promise<Response> {
+  const send = (key: string) =>
+    f(API_ORIGIN + path, { ...init, headers: { ...((init.headers as Record<string, string>) || {}), "x-app-version": ascii, "X-CTG-Admin": key } });
+  await loadAdminKey();
+  let key = getAdminKey() || (await keyRejected(""));
+  let r = await send(key);
+  if (r.status === 401) {
+    const out = (await r.json().catch(() => ({}))) as { code?: string; error?: string };
+    if (out?.code !== "admin_required") throw new Error(out?.error || "HTTP 401");
+    key = await keyRejected(key);
+    r = await send(key);
+  }
+  return r;
+}
+
+async function errorOf(r: Response) {
+  const out = (await r.json().catch(() => ({}))) as { error?: string };
+  return new Error(out?.error || `HTTP ${r.status}`);
+}
+
+// ---------- applying stream events ----------
+
+function last(): Msg {
+  let m = ai.msgs[ai.msgs.length - 1];
+  if (!m || m.role !== "assistant" || !m.live) {
+    m = { ts: Date.now(), role: "assistant", parts: [], live: true };
+    ai.msgs.push(m);
+  }
+  return m;
+}
+
+function apply(ev: any) {
+  switch (ev.type) {
+    case "chat":
+      ai.chatId = ev.chatId;
+      return emit();
+    case "text": {
+      ai.lastDelta = Date.now();
+      const m = last();
+      const p = m.parts[m.parts.length - 1];
+      if (p && p.t === "text") p.v += ev.delta;
+      else m.parts.push({ t: "text", v: ev.delta });
+      return emitSoon();
+    }
+    case "text_start":
+      last().parts.push({ t: "text", v: "" });
+      return emit();
+    case "steer": { // a server message injected into the running answer: shown where it arrived; the answer continues below it
+      const m = ai.msgs[ai.msgs.length - 1];
+      if (m?.role === "assistant" && m.live && !m.parts.length) ai.msgs.pop();
+      ai.msgs.push({ ts: Date.now(), role: ev.role === "trade" ? "trade" : "signal", parts: [{ t: "text", v: String(ev.text ?? "") }] });
+      return emit();
+    }
+    case "think_start":
+      last().parts.push({ t: "think", v: "", t0: Date.now(), live: true });
+      return emit();
+    case "think": {
+      ai.lastDelta = Date.now();
+      const m = last();
+      const p = m.parts[m.parts.length - 1];
+      if (p && p.t === "think") p.v += ev.delta;
+      else m.parts.push({ t: "think", v: ev.delta, t0: Date.now(), live: true });
+      return emitSoon();
+    }
+    case "think_end": {
+      const m = last();
+      for (let i = m.parts.length - 1; i >= 0; i--) {
+        const p = m.parts[i];
+        if (p.t === "think" && p.live) {
+          p.live = false;
+          p.ms = ev.ms;
+          break;
+        }
+      }
+      return emit();
+    }
+    case "tool": {
+      const m = last();
+      if (!m.parts.some((p) => p.t === "tool" && p.id === ev.id)) m.parts.push({ t: "tool", id: ev.id, name: ev.name, label: ev.label, input: "", ok: null, sub: ev.sub });
+      return emit();
+    }
+    case "tool_input":
+    case "tool_done": {
+      const p = last().parts.find((x) => x.t === "tool" && x.id === ev.id) as ToolPart | undefined;
+      if (!p) return;
+      if (ev.type === "tool_input") {
+        p.input = ev.input;
+        if (ev.args) p.args = ev.args;
+        if (ev.label) p.label = ev.label;
+      } else {
+        p.ok = ev.ok;
+        if (ev.output != null) p.output = ev.output;
+      }
+      return emit();
+    }
+    case "done": {
+      const m = last();
+      m.live = false;
+      m.costUsd = ev.cost;
+      m.usage = ev.usage ?? undefined;
+      m.latencyMs = ev.latencyMs;
+      m.parts.forEach((p) => {
+        if (p.t === "tool" && p.ok == null) p.ok = true;
+        if (p.t === "think") p.live = false;
+      });
+      return emit();
+    }
+    case "error": {
+      const m = last();
+      m.live = false;
+      m.error = ev.error;
+      m.parts.forEach((p) => {
+        if (p.t === "think") p.live = false;
+      });
+      return emit();
+    }
+  }
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  if (typeof TextDecoder !== "undefined") return new TextDecoder().decode(bytes);
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  try {
+    return decodeURIComponent(escape(s));
+  } catch {
+    return s;
+  }
+}
+
+/** Read an SSE response body and apply its events until it ends. Bytes are decoded up to the last
+ *  newline only, so a multi-byte character split across chunks is never cut. */
+async function pump(r: Response, onEvent: (ev: any) => void, onData: () => void) {
+  const reader = r.body!.getReader();
+  let buf = "";
+  let pending = new Uint8Array(0);
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    onData();
+    if (!value?.length) continue;
+    const all = new Uint8Array(pending.length + value.length);
+    all.set(pending);
+    all.set(value, pending.length);
+    const nl = all.lastIndexOf(10);
+    if (nl < 0) {
+      pending = all;
+      continue;
+    }
+    buf += decodeUtf8(all.subarray(0, nl + 1));
+    pending = all.slice(nl + 1);
+    let i: number;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      for (const line of block.split("\n")) {
+        if (!line.startsWith("data: ")) continue; // ": ping" keeps the connection warm
+        let ev: any;
+        try {
+          ev = JSON.parse(line.slice(6));
+        } catch {
+          continue;
+        }
+        onEvent(ev);
+        apply(ev);
+      }
+    }
+  }
+}
+
+// ---------- connection: a turn runs on the server; the app only watches it and can always pick it up again ----------
+
+const STALE_MS = 40_000; // the server pings every 15 s: this much silence means the stream is dead
+type End = "ended" | "dropped" | "replaced";
+let abort: AbortController | null = null;
+let lastData = 0; // last byte from the server (stream liveness)
+let syncSeq = 0; // bumps whenever another chat load starts: older loads give way
+
+const inFront = () => AppState.currentState === "active" || AppState.currentState == null;
+
+function finishedAway(ev: any) {
+  // the answer finished while the owner was elsewhere: badge on the tab, a notification when in background
+  if (!ai.open || !inFront()) ai.unread = true;
+  if (!inFront() && has("notifications")) {
+    const body = ev.type === "error" ? `出错：${ev.error ?? ""}` : (ai.title || "点开查看").slice(0, 80);
+    void notify("AI 回答好了", body, { url: "/ai" }).catch(() => {});
+  }
+}
+
+/** Stream one response. ended = the turn finished (done/error/idle event); dropped = the connection
+ *  broke first; replaced = a newer stream or chat load took over (it owns the state now). */
+async function stream(open: (signal: AbortSignal) => Promise<Response>): Promise<End> {
+  abort?.abort();
+  const ac = new AbortController();
+  abort = ac;
+  ai.running = true;
+  ai.error = "";
+  emit();
+  lastData = Date.now();
+  let ended = false;
+  const dog = setInterval(() => {
+    if (Date.now() - lastData > STALE_MS) ac.abort();
+  }, 5000);
+  const onEvent = (ev: any) => {
+    if (ev.type === "chat") setChat(ev.chatId);
+    if (ev.type === "done" || ev.type === "error" || ev.type === "idle") ended = true;
+    if (ev.type === "done" || ev.type === "error") finishedAway(ev);
+  };
+  try {
+    const r = await open(ac.signal);
+    if (!r.ok) throw await errorOf(r);
+    await pump(r, onEvent, () => {
+      lastData = Date.now();
+      if (ai.reconnecting) {
+        ai.reconnecting = false;
+        emit();
+      }
+    });
+  } catch (e) {
+    if (abort !== ac) return "replaced";
+    if (!ended) ai.error = ac.signal.aborted ? "连接超时" : (e as Error)?.message || String(e);
+  } finally {
+    clearInterval(dog);
+    if (abort === ac) {
+      abort = null;
+      ai.running = false;
+    }
+    emit();
+  }
+  if (abort !== null && abort !== ac) return "replaced";
+  return ended ? "ended" : "dropped";
+}
+
+function stopStream() {
+  abort?.abort();
+  abort = null;
+  ai.running = false;
+}
+
+export async function send(text: string, retrying = false) {
+  text = text.trim();
+  if ((!text && !retrying) || ai.running) return;
+  if (retrying) {
+    const m = ai.msgs[ai.msgs.length - 1];
+    if (m?.role === "assistant") ai.msgs.pop(); // the failed answer is replaced
+  } else {
+    ai.msgs.push({ ts: Date.now(), role: "user", parts: [{ t: "text", v: text }] });
+    if (!ai.chatId) ai.title = text.slice(0, 40);
+  }
+  ai.interrupted = false;
+  ai.reconnecting = false;
+  syncSeq++;
+  track("ai.send", { model: ai.model, inst: ai.instId || undefined, retry: retrying || undefined, len: text.length });
+  const body = JSON.stringify({ chatId: ai.chatId || 0, message: text, instId: ai.instId, model: ai.model ?? undefined, effort: ai.effort ?? undefined, webSearch: ai.webSearch ?? undefined, retry: retrying });
+  const f = await streamFetch();
+  const end = await stream((signal) => kfetch("/api/v1/ai/chat", { method: "POST", body, headers: { "Content-Type": "application/json", accept: "text/event-stream" }, signal }, f));
+  if (end === "replaced") return;
+  if (end === "ended") {
+    setPending(0);
+    return;
+  }
+  if (ai.chatId) {
+    // the server has the question: the answer goes on there, follow it again
+    setPending(ai.chatId);
+    return reconnect(ai.chatId);
+  }
+  // never reached the server (no chat id yet): keep the question, offer to send it again
+  const m = ai.msgs[ai.msgs.length - 1];
+  if (m?.role === "assistant" && m.live) ai.msgs.pop();
+  ai.msgs.push({ role: "assistant", parts: [], error: "没发出去：" + (ai.error || "网络错误") });
+  emit();
+}
+
+/** Ask the last question again: in place on the server, or from scratch when it never got there. */
+export async function retry() {
+  if (ai.chatId) return send("", true);
+  const i = ai.msgs.map((m) => m.role).lastIndexOf("user");
+  if (i < 0) return;
+  const q = textOf(ai.msgs[i]);
+  ai.msgs.splice(i);
+  return send(q);
+}
+
+export async function stop() {
+  if (!ai.chatId) return;
+  track("ai.stop");
+  await kfetch(`/api/v1/ai/chats/${ai.chatId}/stop`, { method: "POST" }).catch((e) => log.warn("stop failed", e));
+}
+
+const CHAT_TAIL = 160;
+interface StoredMsg { id: number; ts?: number; role: MsgRole; content: string; steps: any[]; costUsd?: number; usage?: Usage; latencyMs?: number; error?: string }
+function fromStored(m: StoredMsg): Msg {
+  const parts: Part[] =
+    Array.isArray(m.steps) && m.steps.length ? m.steps.map((s: any) => (s.t === "text" ? { t: "text", v: s.v } : s.t === "think" ? { t: "think", v: s.v, ms: s.ms } : { ...s, t: "tool" })) : m.content ? [{ t: "text", v: m.content }] : [];
+  return { id: m.id, ts: m.ts, role: m.role, parts, error: m.error, costUsd: m.costUsd, usage: m.usage, latencyMs: m.latencyMs };
+}
+
+/** Load a chat from the server and, while it is answering, follow it to the end. Throws on HTTP errors. */
+async function sync(id: number): Promise<End> {
+  const my = ++syncSeq;
+  // the desk's chat never ends: every chat is loaded by its tail (an ordinary chat is far shorter)
+  const r = await kfetch(`/api/v1/ai/chats/${id}?last=${CHAT_TAIL}`);
+  if (my !== syncSeq) return "replaced";
+  if (!r.ok) {
+    if (r.status === 404 && id === ai.chatId) newChat();
+    throw await errorOf(r);
+  }
+  const c = await r.json();
+  if (my !== syncSeq) return "replaced";
+  setChat(c.id);
+  ai.title = c.title;
+  ai.kind = c.kind ?? "";
+  ai.truncated = c.truncated ?? 0;
+  ai.msgs = ((c.messages ?? []) as StoredMsg[]).map(fromStored);
+  ai.interrupted = !!c.interrupted;
+  ai.error = "";
+  if (!c.running) {
+    stopStream();
+    if (saved(PENDING_KEY) === c.id) {
+      setPending(0);
+      if (!ai.open) ai.unread = true;
+    }
+    emit();
+    return "ended";
+  }
+  setPending(c.id);
+  ai.msgs.push({ role: "assistant", parts: [], live: true }); // the stream replays this turn from its start
+  emit();
+  const f = await streamFetch();
+  const end = await stream((signal) => kfetch(`/api/v1/ai/chats/${c.id}/stream`, { signal, headers: { accept: "text/event-stream" } }, f));
+  if (end === "ended" && my === syncSeq) return sync(id); // load the stored answer: complete, every step's result
+  return end;
+}
+
+/** Show a chat (history, app start); a dropped stream turns into reconnecting. */
+export async function openChat(id: number) {
+  ai.reconnecting = false;
+  if ((await sync(id)) === "dropped") await reconnect(id);
+}
+
+let loop: Promise<void> | null = null;
+let loopId = 0;
+/** The stream dropped (background, network, server restart): retry with backoff until the turn is over. */
+function reconnect(id: number): Promise<void> {
+  if (loop && loopId === id) return loop;
+  loopId = id;
+  loop = (async () => {
+    for (let i = 0; i < 10; i++) {
+      ai.reconnecting = true;
+      emit();
+      await new Promise((r) => setTimeout(r, Math.min(15_000, 1000 * 2 ** i)));
+      if (ai.chatId !== id || !inFront()) return; // resume() picks it up on return
+      try {
+        const end = await sync(id);
+        if (end !== "dropped") return;
+        i = -1; // was connected again for a while: start the backoff over
+      } catch {
+        // offline or server restarting: next attempt
+      }
+    }
+  })().finally(() => {
+    if (loopId === id) {
+      loop = null;
+      ai.reconnecting = false;
+      emit();
+    }
+  });
+  return loop;
+}
+
+/** App back in front / network back / tab shown: catch up with the chat on screen or the one left running. */
+export async function resume() {
+  const id = ai.chatId || saved(CHAT_KEY);
+  if (!id) return;
+  if (ai.running && abort && Date.now() - lastData < 20_000) return; // a live stream is still flowing
+  if (!ai.chatId && saved(PENDING_KEY) !== id && !ai.open) return; // nothing in flight: load when the tab opens
+  await openChat(id).catch((e) => log.warn("resume failed", { id, err: e }));
+}
+
+export function newChat() {
+  stopStream();
+  syncSeq++;
+  loopId = 0;
+  setChat(0);
+  setPending(0);
+  ai.title = "";
+  ai.kind = "";
+  ai.truncated = 0;
+  ai.msgs = [];
+  ai.error = "";
+  ai.interrupted = false;
+  ai.reconnecting = false;
+  emit();
+}
+
+/** The AI tab came into view / left it. */
+export function setOpen(open: boolean) {
+  ai.open = open;
+  if (open) ai.unread = false;
+  emit();
+  if (open) void resume();
+}
+
+/** Ask about an instrument (the instrument page's 问 AI): it becomes the context of the next turns. */
+export function askAbout(instId: string) {
+  ai.instId = instId;
+  track("ai.context", { inst: instId });
+  if (!ai.running && ai.msgs.length) newChat(); // a fresh chat shows the one-click analysis card
+  emit();
+}
+/** The floating orb opened the chat from an instrument page: that coin becomes the context, the chat stays. */
+export function setContext(instId: string) {
+  if (ai.instId === instId) return;
+  ai.instId = instId;
+  emit();
+}
+export function clearContext() {
+  ai.instId = "";
+  emit();
+}
+
+let started = false;
+/** App start (root layout): restore the device state, pick up a question left running, follow
+ *  foreground and network changes. */
+export async function initAi() {
+  if (started) return;
+  started = true;
+  try {
+    const [c, p, m, e, w] = await Promise.all([kv.get(CHAT_KEY), kv.get(PENDING_KEY), kv.get(MODEL_KEY), kv.get(EFFORT_KEY), kv.get(WEB_KEY)]);
+    if (e) ai.effort = e;
+    if (w === "1" || w === "0") ai.webSearch = w === "1";
+    savedVals[CHAT_KEY] = c ?? "";
+    savedVals[PENDING_KEY] = p ?? "";
+    if (m) ai.model = m;
+  } catch (e) {
+    log.warn("load failed", e);
+  }
+  emit();
+  AppState.addEventListener("change", (s) => {
+    if (s !== "active") return;
+    if (ai.open && ai.unread) {
+      ai.unread = false;
+      emit();
+    }
+    void resume();
+  });
+  if (has("network")) {
+    void import("expo-network").then((N) => {
+      let was = true;
+      N.addNetworkStateListener((st) => {
+        const on = st.isConnected !== false && st.isInternetReachable !== false;
+        if (on && !was) void resume();
+        was = on;
+      });
+    });
+  } else if (Platform.OS === "web" && typeof window !== "undefined") {
+    window.addEventListener("online", () => void resume());
+  }
+  void resume(); // app start: pick up a question left running
+}
+
+// ---------- history, voice, notes ----------
+
+export async function loadChats() {
+  const r = await kfetch("/api/v1/ai/chats");
+  if (!r.ok) throw await errorOf(r);
+  ai.chats = await r.json();
+  emit();
+}
+
+export async function deleteChat(id: number) {
+  const r = await kfetch(`/api/v1/ai/chats/${id}`, { method: "DELETE" });
+  if (!r.ok) throw await errorOf(r);
+  ai.chats = ai.chats.filter((c) => c.id !== id);
+  if (ai.chatId === id) newChat();
+  emit();
+}
+
+/** Upload a recording (m4a on iOS) to Groq Whisper through the server. The global fetch is expo/fetch,
+ *  whose FormData rejects React Native's {uri, name, type} file parts ("Unsupported FormDataPart
+ *  implementation"), so on device the multipart body is built by hand from the file's bytes. */
+export async function transcribe(uri: string): Promise<string> {
+  let body: FormData | Uint8Array;
+  let headers: Record<string, string> = {};
+  if (Platform.OS === "web") {
+    const fd = new FormData();
+    const blob = await (await fetch(uri)).blob();
+    fd.append("audio", blob, blob.type.includes("mp4") ? "voice.m4a" : "voice.webm");
+    body = fd;
+  } else {
+    const { File } = await import("expo-file-system");
+    const audio = await new File(uri).bytes();
+    const boundary = "ctg" + Math.random().toString(36).slice(2);
+    const enc = new TextEncoder();
+    const head = enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="audio"; filename="voice.m4a"\r\nContent-Type: audio/mp4\r\n\r\n`);
+    const tail = enc.encode(`\r\n--${boundary}--\r\n`);
+    body = new Uint8Array(head.length + audio.length + tail.length);
+    body.set(head);
+    body.set(audio, head.length);
+    body.set(tail, head.length + audio.length);
+    headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+  }
+  const t0 = Date.now();
+  const r = await kfetch("/api/v1/ai/transcribe", { method: "POST", body: body as BodyInit, headers });
+  if (!r.ok) throw await errorOf(r);
+  const text = ((await r.json()) as { text?: string }).text || "";
+  track("ai.transcribe", { ms: Date.now() - t0, len: text.length });
+  return text;
+}
+
+/** Plain text of a message (copy button). */
+export const textOf = (m: Msg) =>
+  m.parts
+    .filter((p) => p.t === "text")
+    .map((p) => (p as { v: string }).v)
+    .join("\n\n");
+
+export async function loadNotes() {
+  const r = await kfetch("/api/v1/ai/notes");
+  if (!r.ok) throw await errorOf(r);
+  ai.notes = await r.json();
+  emit();
+}
+export async function addNote(text: string) {
+  const r = await kfetch("/api/v1/ai/notes", { method: "POST", body: JSON.stringify({ text }), headers: { "Content-Type": "application/json" } });
+  if (!r.ok) throw await errorOf(r);
+  await loadNotes();
+}
+export async function deleteNote(id: number) {
+  const r = await kfetch(`/api/v1/ai/notes/${id}`, { method: "DELETE" });
+  if (!r.ok) throw await errorOf(r);
+  ai.notes = ai.notes.filter((n) => n.id !== id);
+  emit();
+}
+
+/** "18.2k tokens": everything the turn read and wrote (cache reads included — they are billed, at a tenth). */
+export function tokensLabel(u?: Usage): string {
+  if (!u) return "";
+  const n = u.input + u.output + u.cacheWrite + u.cacheRead;
+  if (!n) return "";
+  return `${n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : n} tokens`;
+}

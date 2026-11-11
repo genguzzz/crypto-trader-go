@@ -15,7 +15,7 @@ Rules for every AI agent (Claude Code, Codex, …) working in this repository. R
 
 - **English** in all docs, comments, commits, issues and PRs. Talk to the owner in Chinese. Exceptions approved by the owner: the comments in built-in strategies (`strategies/library/`), editor templates, the in-app help articles (`web/src/docs/`) and the owner's research reports (`docs/research/*.html` with their `research/report/history.json`; 2026-10-11) are Chinese, because they are teaching material for the owner.
 - Work from an issue ([requirements](docs/contributing.md#requirements), [bugs](docs/contributing.md#bugs)); claim it before starting ([claiming work](docs/contributing.md#claiming-work)).
-- Parallel work uses one worktree per issue and a self-reviewed pull request: [worktree workflow](docs/worktree-workflow.md). Direct commits to `main` only when the owner asks.
+- One branch, one checkout (owner, 2026-11-11): the server, the iOS app (`mobile/`) and the watch helper (`watch/`) all live on `main`; commit there and push, and do not leave work on side branches or in extra worktrees. Server changes go live with `deploy/deploy.sh` from the up-to-date checkout. The [worktree workflow](docs/worktree-workflow.md) with pull requests is only for when the owner asks for parallel work.
 - Commits and PR titles follow [Conventional Commits](docs/contributing.md#commits). `git pull --rebase` before pushing; never force-push `main`.
 - After any code change: `make test`, `scripts/dev.sh restart`, `scripts/dev.sh shots` (desktop + phone). Fix until clean.
 - Frontend follows the [design guidelines](docs/design-guidelines.md): three-level hierarchy, semantic color only, explanations in InfoTip/Modal, component library only, no horizontal overflow on phones.
