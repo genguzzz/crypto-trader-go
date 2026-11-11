@@ -139,7 +139,7 @@ func (d Delivery) wakeText(ctxBlock string, plan *Plan) string {
 			"3. 已经不成立 → 说明原因；若这个订阅仍有效且不再需要，用 unsubscribe_signal 取消。\n")
 	}
 	b.WriteString("（这是自动触发的信号会话，主人此刻不一定在看。你只能用 propose_trade 提交待主人审核的提议，不能下单；" +
-		"没有足够把握就不要提议，直接说明理由。最多提议一笔。）")
+		"把握不够就不要提议，直接说明理由（按主人的风险风格判断：位置好、有中等把握即可）。最多提议一笔。）")
 	return b.String()
 }
 

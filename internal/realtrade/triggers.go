@@ -83,7 +83,7 @@ func (alertKind) Match(d TriggerDef, sig Signal) bool {
 
 // promptFooter is appended to every signal prompt: the run is unattended and can only propose.
 const promptFooter = "\n\n（这是自动触发的信号会话，主人此刻不一定在看。你只能用 propose_trade 提交待主人审核的提议，不能下单；" +
-	"没有足够把握就不要提议，直接说明理由。最多提议一笔。）"
+	"把握不够就不要提议，直接说明理由（按主人的风险风格判断：位置好、有中等把握即可）。最多提议一笔。）"
 
 var defaultTriggers = []TriggerDef{
 	{ID: "scan", Kind: "schedule", Label: "定时扫描", EveryMin: 240, CooldownMin: 60,

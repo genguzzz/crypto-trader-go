@@ -938,3 +938,22 @@ func TestRestartClosesInterruptedRun(t *testing.T) {
 		t.Fatal("the interrupted slot was not run again with its signal")
 	}
 }
+
+func TestRiskStyleInBrief(t *testing.T) {
+	c := DefaultConfig()
+	got := riskText(c.Risk) + proposeRule(c.Risk)
+	for _, want := range []string{"略偏激进", "120 U、8×", "960 U", "保证金的 20%", "2.5% 的价格距离", "24 U", "不超过 300 U", "盈亏比 ≥ 1.5"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+	t.Log("\n" + got)
+	c.Risk = RiskConfig{Style: "steady"}
+	if c, err := c.normalize(); err != nil || !strings.Contains(proposeRule(c.Risk), "中等以上") {
+		t.Fatalf("steady: %v %s", err, proposeRule(c.Risk))
+	}
+	c.Risk = RiskConfig{MarginUSDT: 200, MaxMarginUSDT: 100}
+	if _, err := c.normalize(); err == nil {
+		t.Fatal("max margin below the usual margin must be rejected")
+	}
+}

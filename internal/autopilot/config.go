@@ -37,6 +37,22 @@ type Config struct {
 	MaxProposals int `json:"maxProposals"`
 	// Focus is the owner's standing instruction, carried in every brief (≤ 600 characters).
 	Focus string `json:"focus"`
+	// Risk is the owner's sizing and loss tolerance, carried in every brief.
+	Risk RiskConfig `json:"risk"`
+}
+
+// RiskConfig is how the owner sizes and how much loss he accepts per idea (owner, 2026-11-11: a usual
+// entry is about 120 USDT margin at 8×, a stop up to 20% of the margin, holding and adding while the
+// location is good up to 300 USDT margin per coin). The trade limits (internal/realtrade) still apply.
+type RiskConfig struct {
+	// Style: "aggressive" proposes on a good location with medium conviction; "steady" only on strong conviction.
+	Style      string  `json:"style"`
+	MarginUSDT float64 `json:"marginUsdt"` // a usual first entry
+	Leverage   int     `json:"leverage"`
+	// MaxLossPct: the stop is at most this % of the margin away (ROE), i.e. MaxLossPct/Leverage % in price.
+	MaxLossPct float64 `json:"maxLossPct"`
+	// MaxMarginUSDT: one coin's margin including adds while holding through a drawdown.
+	MaxMarginUSDT float64 `json:"maxMarginUsdt"`
 }
 
 // ScheduleConfig: a run LeadMin minutes before every EveryHours-th hour of the UTC+8 clock. OKX
@@ -262,6 +278,28 @@ func (c Config) normalize() (Config, error) {
 	}
 	if c.Effort != "" && !slices.Contains(aigate.ChatEfforts, c.Effort) {
 		return c, errors.New("unknown effort")
+	}
+	if c.Risk.Style == "" {
+		c.Risk.Style = "aggressive"
+	}
+	if c.Risk.Style != "aggressive" && c.Risk.Style != "steady" {
+		return c, errors.New("risk.style must be aggressive or steady")
+	}
+	fdef := func(v *float64, d, lo, hi float64, name string) error {
+		if *v == 0 {
+			*v = d
+		}
+		if math.IsNaN(*v) || *v < lo || *v > hi {
+			return fmt.Errorf("%s must be between %g and %g", name, lo, hi)
+		}
+		return nil
+	}
+	if err := errors.Join(fdef(&c.Risk.MarginUSDT, 120, 10, 5000, "risk.marginUsdt"), def(&c.Risk.Leverage, 8, 1, 50, "risk.leverage"),
+		fdef(&c.Risk.MaxLossPct, 20, 1, 80, "risk.maxLossPct"), fdef(&c.Risk.MaxMarginUSDT, 300, 10, 20000, "risk.maxMarginUsdt")); err != nil {
+		return c, err
+	}
+	if c.Risk.MaxMarginUSDT < c.Risk.MarginUSDT {
+		return c, errors.New("risk.maxMarginUsdt must be at least risk.marginUsdt")
 	}
 	c.Focus = strings.TrimSpace(c.Focus)
 	if utf8.RuneCountInString(c.Focus) > 600 {
