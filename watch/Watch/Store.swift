@@ -16,6 +16,9 @@ final class Store: NSObject, ObservableObject, WCSessionDelegate {
     @Published var answering: Int?      // the proposal being answered
 
     func start() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["OKX_DEMO"] != nil { take(Store.demo); return }  // simulator screenshots
+        #endif
         guard WCSession.isSupported() else { return }
         WCSession.default.delegate = self
         WCSession.default.activate()
@@ -90,4 +93,28 @@ final class Store: NSObject, ObservableObject, WCSessionDelegate {
     func sessionReachabilityDidChange(_ session: WCSession) {
         if session.isReachable { DispatchQueue.main.async { self.refresh() } }
     }
+
+    #if DEBUG
+    /// Sample data for the simulator (run with SIMCTL_CHILD_OKX_DEMO=1).
+    static var demo: Snapshot {
+        let now = Date().timeIntervalSince1970 * 1000
+        var s = Snapshot()
+        s.ts = now
+        s.mode = "live"
+        s.pending = [Proposal(id: 12, kind: "open", instId: "ENA-USDT-SWAP", side: "long", source: "signal", trigger: "交易台 · 信号", marginMode: "isolated",
+                              orderType: "limit", px: 0.412, marginUsdt: 30, leverage: 5, contracts: 364, notionalUsdt: 150, fraction: nil, refPx: 0.4205,
+                              sl: 0.398, tp: 0.445, slPct: 3.4, tpPct: 8.0, rr: 2.36, rationale: "1 小时 +5.1%，量能 2.6 倍、OI +3.2%，回踩 0.412 企稳后做多。",
+                              invalidation: "15m 收盘跌破 0.398", note: nil, expiresAt: now + 14 * 60_000, status: "pending", mode: "live", error: nil)]
+        s.positionsEnabled = true
+        s.positions = [Position(instId: "BTC-USDT-SWAP", side: "long", mgnMode: "cross", contracts: 0.12, notionalUsd: 12400, avgPx: 102350, markPx: 103480,
+                                liqPx: 91200, lever: 8, upl: 135.6, uplRatio: 0.0875, margin: 1550, tp: [Trigger(px: 106000)], sl: [Trigger(px: 100800)]),
+                       Position(instId: "DOGE-USDT-SWAP", side: "short", mgnMode: "isolated", contracts: 1500, notionalUsd: 277, avgPx: 0.1851, markPx: 0.1872,
+                                liqPx: 0.2143, lever: 5, upl: -3.15, uplRatio: -0.0567, margin: 55, tp: nil, sl: [Trigger(px: 0.189)])]
+        s.equity = Equity(totalEq: 2480.35, availEq: 870.2, upl: 132.45)
+        s.desk = DeskStatus(enabled: true, running: nil,
+                            lastRun: DeskRun(id: 7, label: "定时巡检", status: "done", ts: now - 50 * 60_000, decisions: 2, proposals: 1, summary: "ENA 回踩做多一笔（待审核），SOL 不做。"),
+                            nextScheduleAt: now + 70 * 60_000, pending: 2, runs24h: 9, decisions24h: 14, lastError: nil)
+        return s
+    }
+    #endif
 }

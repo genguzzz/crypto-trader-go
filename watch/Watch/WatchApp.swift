@@ -28,13 +28,21 @@ struct RootView: View {
     @EnvironmentObject var store: Store
 
     var body: some View {
-        TabView {
-            NavigationStack { ProposalsPage() }
-            NavigationStack { PositionsPage() }
-            NavigationStack { DeskPage() }
+        // one navigation stack around the pages (a stack per page inside a vertical TabView renders nothing)
+        NavigationStack {
+            TabView {
+                ProposalsPage()
+                PositionsPage()
+                DeskPage()
+            }
+            .tabViewStyle(.verticalPage)
+            .navigationDestination(for: Proposal.self) { ProposalDetail(p: $0) }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { store.refresh() } label: { Image(systemName: "arrow.clockwise") }.disabled(store.loading)
+                }
+            }
         }
-        .tabViewStyle(.verticalPage)
-        .tint(lime)
     }
 }
 
@@ -62,15 +70,6 @@ struct StatusLine: View {
     }
 }
 
-struct RefreshButton: ToolbarContent {
-    @EnvironmentObject var store: Store
-    var body: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Button { store.refresh() } label: { Image(systemName: "arrow.clockwise") }.disabled(store.loading)
-        }
-    }
-}
-
 // ---------- proposals ----------
 
 struct ProposalsPage: View {
@@ -88,8 +87,6 @@ struct ProposalsPage: View {
             StatusLine()
         }
         .navigationTitle("待审核")
-        .navigationDestination(for: Proposal.self) { ProposalDetail(p: $0) }
-        .toolbar { RefreshButton() }
     }
 }
 
@@ -223,7 +220,6 @@ struct PositionsPage: View {
             StatusLine()
         }
         .navigationTitle("持仓")
-        .toolbar { RefreshButton() }
     }
 }
 
@@ -285,7 +281,6 @@ struct DeskPage: View {
             StatusLine()
         }
         .navigationTitle("交易台")
-        .toolbar { RefreshButton() }
     }
 
     private func row(_ label: String, _ value: String) -> some View {
