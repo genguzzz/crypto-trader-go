@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"time"
 )
@@ -138,7 +139,7 @@ func replayable(s Spec) error {
 		case "script":
 			return errors.New("replay a script with test_signal_script")
 		case "pool":
-			if l.Metric == "field" {
+			if l.Metric == "field" || slices.ContainsFunc(l.Legs, func(x Spec) bool { return x.Metric == "field" }) {
 				return errors.New("pool scans on a field have no history to replay (only move and range)")
 			}
 		}

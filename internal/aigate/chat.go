@@ -55,6 +55,13 @@ func (g *Gate) SetNotify(f func(ctx context.Context, text string) error) {
 	g.mu.Unlock()
 }
 
+// SetNotifyFilter limits the "answer ready" messages to chats it returns true for (nil = all).
+func (g *Gate) SetNotifyFilter(f func(chat int64) bool) {
+	g.mu.Lock()
+	g.notifyFilter = f
+	g.mu.Unlock()
+}
+
 // SetAgent configures the chat agent's tools and pushes them to a connected worker.
 func (g *Gate) SetAgent(a Agent) {
 	g.mu.Lock()
@@ -65,17 +72,22 @@ func (g *Gate) SetAgent(a Agent) {
 
 // Chat is one conversation.
 type Chat struct {
-	ID      int64   `json:"id"`
-	Created int64   `json:"created"`
-	Updated int64   `json:"updated"`
-	Title   string  `json:"title"`
+	ID      int64  `json:"id"`
+	Created int64  `json:"created"`
+	Updated int64  `json:"updated"`
+	Title   string `json:"title"`
+	// Kind: "" = an ordinary conversation; KindDesk = the standing trading desk (internal/autopilot):
+	// one long-lived chat the server wakes on signals and on a schedule, listed first.
+	Kind    string  `json:"kind,omitempty"`
 	InstID  string  `json:"instId,omitempty"`
 	CostUSD float64 `json:"costUsd"`
 	Running bool    `json:"running"`
 	// Interrupted: the last turn has no answer and nothing is running (the server restarted mid-answer).
-	Interrupted bool        `json:"interrupted,omitempty"`
-	Messages    []ChatMsg   `json:"messages,omitempty"`
-	Events      []chatEvent `json:"events,omitempty"` // a running chat: events so far
+	Interrupted bool `json:"interrupted,omitempty"`
+	// Truncated: older messages not in Messages (ChatTail).
+	Truncated int         `json:"truncated,omitempty"`
+	Messages  []ChatMsg   `json:"messages,omitempty"`
+	Events    []chatEvent `json:"events,omitempty"` // a running chat: events so far
 }
 
 // ChatMsg is one stored turn. Steps are the tool calls of an assistant turn.
@@ -393,9 +405,9 @@ func (g *Gate) lastQuestion(chat int64) (string, error) {
 // notifyDone tells the owner (Telegram, when configured) that an answer nobody was watching is ready.
 func (g *Gate) notifyDone(chat int64, text, errText string) {
 	g.mu.Lock()
-	f := g.notify
+	f, keep := g.notify, g.notifyFilter
 	g.mu.Unlock()
-	if f == nil {
+	if f == nil || (keep != nil && !keep(chat)) {
 		return
 	}
 	var title string
@@ -443,6 +455,12 @@ const steerTimeout = 10 * time.Second
 // finishing, or the worker does not steer), ErrUnavailable while the agent is down: the caller keeps
 // it queued and retries when the turn ends (SetOnChatDone).
 func (g *Gate) SteerChat(chat int64, role, message string) error {
+	return g.SteerChatWith(chat, role, message, "", "")
+}
+
+// SteerChatWith is SteerChat with the model and effort of the turn it starts ("" = the configured
+// ones); they do not apply when the message is injected into a turn that is already running.
+func (g *Gate) SteerChatWith(chat int64, role, message, model, effort string) error {
 	message = strings.TrimSpace(message)
 	switch {
 	case chat <= 0:
@@ -455,7 +473,7 @@ func (g *Gate) SteerChat(chat int64, role, message string) error {
 	for try := 0; try < 2; try++ {
 		r := g.run(chat)
 		if r == nil {
-			_, err := g.StartChat(ChatInput{ChatID: chat, Message: message, Role: role})
+			_, err := g.StartChat(ChatInput{ChatID: chat, Message: message, Role: role, Model: model, Effort: effort})
 			if errors.Is(err, ErrChatBusy) {
 				continue // a turn started meanwhile: steer into it
 			}
@@ -544,7 +562,7 @@ func (g *Gate) currentModel() string {
 
 // Chats lists recent conversations.
 func (g *Gate) Chats(limit int) ([]Chat, error) {
-	rows, err := g.st.DB.Query(`SELECT id, created, updated, title, inst_id, cost_usd FROM ai_chats ORDER BY updated DESC LIMIT ?`, limit)
+	rows, err := g.st.DB.Query(`SELECT id, created, updated, title, kind, inst_id, cost_usd FROM ai_chats ORDER BY kind<>'' DESC, updated DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -552,7 +570,7 @@ func (g *Gate) Chats(limit int) ([]Chat, error) {
 	out := []Chat{}
 	for rows.Next() {
 		var c Chat
-		if err := rows.Scan(&c.ID, &c.Created, &c.Updated, &c.Title, &c.InstID, &c.CostUSD); err != nil {
+		if err := rows.Scan(&c.ID, &c.Created, &c.Updated, &c.Title, &c.Kind, &c.InstID, &c.CostUSD); err != nil {
 			return nil, err
 		}
 		c.Running = g.run(c.ID) != nil
@@ -562,14 +580,25 @@ func (g *Gate) Chats(limit int) ([]Chat, error) {
 }
 
 // ChatByID returns a conversation with its messages (and the events so far when running).
-func (g *Gate) ChatByID(id int64) (*Chat, error) {
+func (g *Gate) ChatByID(id int64) (*Chat, error) { return g.ChatTail(id, 0) }
+
+// ChatTail is ChatByID with only the newest last messages (0 = all; the desk's chat never ends, so the
+// app loads its tail). Truncated says older messages exist.
+func (g *Gate) ChatTail(id int64, last int) (*Chat, error) {
 	var c Chat
-	err := g.st.DB.QueryRow(`SELECT id, created, updated, title, inst_id, cost_usd FROM ai_chats WHERE id=?`, id).
-		Scan(&c.ID, &c.Created, &c.Updated, &c.Title, &c.InstID, &c.CostUSD)
+	err := g.st.DB.QueryRow(`SELECT id, created, updated, title, kind, inst_id, cost_usd FROM ai_chats WHERE id=?`, id).
+		Scan(&c.ID, &c.Created, &c.Updated, &c.Title, &c.Kind, &c.InstID, &c.CostUSD)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := g.st.DB.Query(`SELECT id, ts, role, content, steps, cost_usd, latency_ms, error, usage FROM ai_chat_msgs WHERE chat_id=? ORDER BY id`, id)
+	var from int64
+	if last > 0 {
+		g.st.DB.QueryRow(`SELECT COALESCE(MIN(id),0) FROM (SELECT id FROM ai_chat_msgs WHERE chat_id=? ORDER BY id DESC LIMIT ?)`, id, last).Scan(&from)
+		var older int
+		g.st.DB.QueryRow(`SELECT COUNT(*) FROM ai_chat_msgs WHERE chat_id=? AND id<?`, id, from).Scan(&older)
+		c.Truncated = older
+	}
+	rows, err := g.st.DB.Query(`SELECT id, ts, role, content, steps, cost_usd, latency_ms, error, usage FROM ai_chat_msgs WHERE chat_id=? AND id>=? ORDER BY id`, id, from)
 	if err != nil {
 		return nil, err
 	}
@@ -598,6 +627,11 @@ func (g *Gate) ChatByID(id int64) (*Chat, error) {
 func (g *Gate) DeleteChat(id int64) error {
 	if g.run(id) != nil {
 		return ErrChatBusy
+	}
+	var kind string
+	g.st.DB.QueryRow(`SELECT kind FROM ai_chats WHERE id=?`, id).Scan(&kind)
+	if kind != "" {
+		return ErrStandingChat
 	}
 	if _, err := g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=?`, id); err != nil {
 		return err

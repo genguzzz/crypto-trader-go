@@ -95,10 +95,12 @@ type Gate struct {
 	agent   Agent
 	notesMu sync.Mutex
 	notify  func(ctx context.Context, text string) error
-	runMu   sync.Mutex
-	runs    map[int64]*chatRun
-	onDone  func(chatID int64) // a chat turn ended (signals retry their queued wake-ups)
-	onPlan  func(chatID int64, instID string, planID int64)
+	// notifyFilter: only chats it returns true for get an "answer ready" message (nil = all)
+	notifyFilter func(chat int64) bool
+	runMu        sync.Mutex
+	runs         map[int64]*chatRun
+	onDone       func(chatID int64) // a chat turn ended (signals retry their queued wake-ups)
+	onPlan       func(chatID int64, instID string, planID int64)
 
 	candles Candles1m // plan tracker's price source
 
@@ -142,6 +144,13 @@ func New(st *store.Store, opts Options) (*Gate, error) {
 	}
 	if _, err := st.DB.Exec(schema + chatSchema + planSchema); err != nil {
 		return nil, fmt.Errorf("aigate schema: %w", err)
+	}
+	var hasKind int // added with the trading desk: older databases get the column
+	st.DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_chats') WHERE name='kind'`).Scan(&hasKind)
+	if hasKind == 0 {
+		if _, err := st.DB.Exec(`ALTER TABLE ai_chats ADD COLUMN kind TEXT NOT NULL DEFAULT ''`); err != nil {
+			return nil, fmt.Errorf("aigate schema: %w", err)
+		}
 	}
 	// columns added after the table existed
 	var hasUsage int

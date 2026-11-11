@@ -100,6 +100,8 @@ internal/alerts/       monitoring rules (types registered in conditions.go), del
 internal/trade/        paper-trading order layer (docs/trading-design.md): accounts, instances, signals, risk/sizing, SimBroker, backtest replayer, /api/v1/trade/*; trade/mdlive adapts market.Engine (market/tradeapi.go)
 internal/devapi/       external access: API keys / tokens, rate limits, endpoint registry → open REST API, OpenAPI document, MCP server
 internal/signals/      the agent's signal subscriptions: conditions on prices, fields, move risk, alerts, time, AI plans and Python scripts (run by the strategy container); a firing wakes the subscribing chat (docs/trading-design.md §8)
+internal/autopilot/    the trading desk: one standing AI chat run on pool-wide strategy scans (batched, paced) and on a schedule, with a decision journal followed
+                       after the fact, long-term memory and statistics; it only proposes (docs/trading-design.md §9)
 internal/api/          HTTP routes, SSE, icon proxy, gzip
 web/                   frontend (src/views pages, src/components components, embed.go embeds the build); ios/ + native/ iOS app shell (docs/ios.md)
 deploy/                docker-compose.yml (server runtime), deploy.sh (build/upload/swap/rollback)
@@ -116,6 +118,8 @@ Native iOS app (Expo, `mobile/` on branch `ios`; `internal/api/mobile.go`): `GET
 Monitoring: `GET|POST alerts/rules`, `PUT|DELETE alerts/rules/{id}`, `GET|PUT alerts/channels` (secrets are returned masked; empty/masked = unchanged), `DELETE alerts/channels/{telegram|webhook}`, `POST alerts/channels/{ch}/test`, `GET alerts/history?limit=`.
 
 `series?instId=&field=oi|funding&hours=&step=` — `step` (ms, optional) keeps only the last point of each step bucket; the price chart passes its bar period (OI is recorded per minute, the chart plots one value per bar), the OI chart keeps ≤ ~2,000 points.
+
+Trading desk (`internal/autopilot`, [trading design §9](trading-design.md#9-trading-desk-one-standing-ai-chat-run-by-the-server-2026-11-11)): `GET autopilot`, `PUT autopilot/config`, `POST autopilot/run`, `GET autopilot/runs|inbox|journal|journal/{id}|memory|stats`, `POST autopilot/journal/{id}/review`, `POST autopilot/memory`, `DELETE autopilot/memory/{id}`; stream event `autopilot`. `GET ai/chats` lists the desk's chat first with `kind: "desk"`; `GET ai/chats/{id}?last=N` returns the newest N messages.
 
 Developer (owner UI, same access as the rest of `/api/v1`): `GET|PUT dev/config` (external API switch, server-wide limit), `GET|POST dev/keys`, `PATCH|DELETE dev/keys/{id}` (rename, limits, revoke), `GET dev/log` (last 200 external calls, memory only), `GET dev/endpoints` (registry for the Dev tab).
 

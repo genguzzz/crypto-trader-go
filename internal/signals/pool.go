@@ -19,6 +19,7 @@ import (
 //	 "metric":"move",  "windowMin":15, "dir":"up"|"down"|"both", "pct":3}   change over the window ≥ pct %
 //	 "metric":"range", "windowMin":5, "pct":2}                              high–low swing in the window ≥ pct %
 //	 "metric":"field", "field":"funding_hourly", "op":">", "value":0.0005}  a fact-panel field crosses a value
+//	 "metric":"combo", "legs":[{"metric":"move",…},{"metric":"field",…}]}   2–4 of the above, all true for the same coin
 //
 // move: last price (or the newest confirmed close) against the close windowMin minutes earlier, so
 // windowMin 1 is the minute-to-minute move. range: (highest high / lowest low − 1) over the window's 1m
@@ -46,7 +47,12 @@ const (
 	poolStaleMs     = 3 * 60_000
 )
 
-var poolMetrics = map[string]bool{"move": true, "range": true, "field": true}
+var poolMetrics = map[string]bool{"move": true, "range": true, "field": true, "combo": true}
+
+const (
+	comboMinLegs = 2
+	comboMaxLegs = 4
+)
 
 func (s *Spec) normalizePool(src Sources) error {
 	if _, ok := src.(PoolSource); !ok {
@@ -98,8 +104,39 @@ func (s *Spec) normalizePool(src Sources) error {
 		return errors.New("pool: every must be 1m (default) or tick — scans of altcoins are checked at least every minute")
 	}
 	if !poolMetrics[s.Metric] {
-		return errors.New("pool: metric must be move (change over a window), range (high–low swing in a window) or field (a fact-panel field)")
+		return errors.New("pool: metric must be move (change over a window), range (high–low swing in a window), field (a fact-panel field) " +
+			"or combo (legs: 2–4 of those, all true for the same coin)")
 	}
+	if s.Metric != "combo" {
+		if len(s.Legs) > 0 {
+			return errors.New("pool: legs belong to metric combo")
+		}
+		return s.normalizeMetric()
+	}
+	if s.WindowMin != 0 || s.Pct != 0 || s.Dir != "" || s.Field != "" || s.Op != "" || s.Value != nil {
+		return errors.New("pool: metric combo takes only legs; each leg carries its own metric and settings")
+	}
+	if len(s.Legs) < comboMinLegs || len(s.Legs) > comboMaxLegs {
+		return fmt.Errorf("pool: combo needs %d–%d legs", comboMinLegs, comboMaxLegs)
+	}
+	for i := range s.Legs {
+		l := &s.Legs[i]
+		if l.Type != "" || l.Scope != "" || l.Top != 0 || len(l.List) > 0 || len(l.Exclude) > 0 || l.Every != "" || len(l.Legs) > 0 || len(l.Of) > 0 ||
+			l.InstID != "" || l.Level != 0 || l.Bar != "" || l.Lo != 0 || l.Hi != 0 || l.Side != "" || l.Code != "" {
+			return fmt.Errorf("pool: combo leg %d takes only metric and that metric's settings (the scope belongs to the scan)", i+1)
+		}
+		if l.Metric == "combo" || !poolMetrics[l.Metric] {
+			return fmt.Errorf("pool: combo leg %d: metric must be move, range or field", i+1)
+		}
+		if err := l.normalizeMetric(); err != nil {
+			return fmt.Errorf("combo leg %d: %w", i+1, err)
+		}
+	}
+	return nil
+}
+
+// normalizeMetric validates the settings of one move / range / field measurement (a scan's own, or a combo leg's).
+func (s *Spec) normalizeMetric() error {
 	window := func() error {
 		if s.WindowMin < 1 || s.WindowMin > poolMaxWindow {
 			return fmt.Errorf("pool: windowMin must be between 1 and %d minutes", poolMaxWindow)
@@ -206,20 +243,35 @@ func (s Spec) scopeText() string {
 var dirText = map[string]string{"up": "涨", "down": "跌", "both": "涨或跌"}
 
 func (s Spec) describePool() string {
+	if s.Metric == "combo" {
+		parts := make([]string, len(s.Legs))
+		for i, l := range s.Legs {
+			parts[i] = l.metricText()
+		}
+		return fmt.Sprintf("%s任一币同时满足：%s", s.scopeText(), strings.Join(parts, " + "))
+	}
+	if t := s.metricText(); t != "" {
+		return s.scopeText() + "任一币 " + t
+	}
+	return "全池扫描"
+}
+
+// metricText describes one measurement: "15 分钟内涨 ≥ 3%".
+func (s Spec) metricText() string {
 	switch s.Metric {
 	case "move":
-		return fmt.Sprintf("%s任一币 %s内%s ≥ %g%%", s.scopeText(), windowText(s.WindowMin), dirText[s.Dir], s.Pct)
+		return fmt.Sprintf("%s内%s ≥ %g%%", windowText(s.WindowMin), dirText[s.Dir], s.Pct)
 	case "range":
-		return fmt.Sprintf("%s任一币 %s内振幅 ≥ %g%%", s.scopeText(), windowText(s.WindowMin), s.Pct)
+		return fmt.Sprintf("%s内振幅 ≥ %g%%", windowText(s.WindowMin), s.Pct)
 	case "field":
 		v := 0.0
 		if s.Value != nil {
 			v = *s.Value
 		}
 		f, _ := features.Lookup(s.Field)
-		return fmt.Sprintf("%s任一币 %s %s %s", s.scopeText(), f.Label, opText[s.Op], fieldText(s.Field, v))
+		return fmt.Sprintf("%s %s %s", f.Label, opText[s.Op], fieldText(s.Field, v))
 	}
-	return "全池扫描"
+	return ""
 }
 
 // reading is one member's measurement at one check.
@@ -235,6 +287,32 @@ type reading struct {
 // as of the last price; on init as of the member's newest bar (priming only).
 func (s Spec) read(src Sources, inst string, ev event, now time.Time) reading {
 	var r reading
+	if s.Metric == "combo" { // every leg known, every leg true; the first leg's value ranks the hits
+		r.known, r.hit = true, true
+		texts := make([]string, 0, len(s.Legs))
+		for i, l := range s.Legs {
+			x := l.read(src, inst, ev, now)
+			if !x.known {
+				return reading{}
+			}
+			if i == 0 {
+				r.val = x.val
+			}
+			if r.px == 0 {
+				r.px = x.px
+			}
+			r.hit = r.hit && x.hit
+			t := strings.TrimPrefix(x.text, coin(inst)+" ")
+			if l.Metric == "field" { // a bare value says nothing next to the other legs: name the field
+				if f, ok := features.Lookup(l.Field); ok {
+					t = f.Label + " " + t
+				}
+			}
+			texts = append(texts, t)
+		}
+		r.text = coin(inst) + " " + strings.Join(texts, "；")
+		return r
+	}
 	if s.Metric == "field" {
 		vs, ok := src.Values(inst)
 		if !ok {
@@ -414,6 +492,22 @@ func (p *poolState) scan(s Spec, src Sources, ev event, now time.Time, cooldown 
 	return hits, changed, known
 }
 
+// closeness orders readings of one measurement by how far they are towards its threshold.
+func (s Spec) closeness(v float64) float64 {
+	switch {
+	case s.Metric == "move" && s.Dir == "up":
+		return v
+	case s.Metric == "move" && s.Dir == "down":
+		return -v
+	case s.Metric == "field":
+		if s.Op == "<" || s.Op == "<=" {
+			return -v
+		}
+		return v
+	}
+	return math.Abs(v)
+}
+
 func round4(x float64) float64 { return math.Round(x*1e4) / 1e4 }
 
 // poolProgress shows the member closest to its threshold now (as of its newest bar).
@@ -430,17 +524,16 @@ func poolProgress(s Spec, src Sources, now time.Time) *Progress {
 			continue
 		}
 		known++
-		score := math.Abs(r.val)
-		switch {
-		case s.Metric == "move" && s.Dir == "up":
-			score = r.val
-		case s.Metric == "move" && s.Dir == "down":
-			score = -r.val
-		case s.Metric == "field":
-			score = r.val
-			if s.Op == "<" || s.Op == "<=" {
-				score = -r.val
+		score := s.closeness(r.val)
+		if s.Metric == "combo" { // the coin with the most legs true, then the strongest first leg
+			score = s.Legs[0].closeness(r.val)
+			n := 0
+			for _, l := range s.Legs {
+				if x := l.read(src, id, event{kind: "init"}, now); x.known && x.hit {
+					n++
+				}
 			}
+			score = float64(n)*1e9 + math.Max(math.Min(score, 1e8), -1e8)
 		}
 		if score > bestScore {
 			best, bestInst, bestScore = r, id, score

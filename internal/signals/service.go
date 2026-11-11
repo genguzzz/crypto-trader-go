@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS signal_fires_wake ON signal_fires(wake, ts);
 const (
 	KindChat  = "chat"  // an AI chat: its agent is woken in that chat
 	KindOwner = "owner" // the owner over REST: a new "信号 · …" chat is started on fire
+	KindDesk  = "desk"  // the standing trading desk (internal/autopilot): no expiry, fires go to its inbox (desk.go)
 
 	StatusActive    = "active"
 	StatusFired     = "fired"
@@ -68,6 +69,7 @@ const (
 	WakeStarted = "started" // the agent runs (wake_chat)
 	WakeSkipped = "skipped" // daily wake-up cap reached: recorded and pushed, nobody woken
 	WakeFailed  = "failed"  // final error (chat deleted, queued too long)
+	WakeDesk    = "desk"    // handed to the trading desk's inbox: it batches and paces its own runs
 )
 
 // Caps (docs/operations.md).
@@ -207,6 +209,7 @@ type Service struct {
 	onChange func(kind string, id, chat int64)
 	scripts  ScriptBackend
 	context  func(chat int64, instIDs []string, tradeID int64) string // the positions block of a wake-up (internal/realtrade)
+	desk     DeskSink
 
 	ticks   chan struct{}
 	minutes chan int64
@@ -515,7 +518,7 @@ func (s *Service) fire(l *liveSub, hits []Hit, now time.Time) {
 	}
 	l.fired(hits, now)
 	status := StatusActive
-	if sub.FireCount >= sub.MaxFires {
+	if sub.FireCount >= sub.MaxFires && sub.Kind != KindDesk {
 		status = StatusFired
 	}
 	d := delivery(*sub, hits, matched, now)
@@ -543,6 +546,18 @@ func (s *Service) fire(l *liveSub, hits []Hit, now time.Time) {
 		delete(s.live, sub.ID)
 		s.mu.Unlock()
 		s.keep()
+	}
+	if sub.Kind == KindDesk { // the desk batches and budgets its own runs: no wake-up, no push per fire
+		s.db.Exec(`UPDATE signal_fires SET wake=?, wake_chat=?, wake_at=? WHERE id=?`, WakeDesk, sub.ChatID, now.UnixMilli(), fireID)
+		s.logf("signals: #%d fired (desk %s): %s", sub.ID, sub.Label, matched)
+		s.changed("fired", sub.ID, sub.ChatID)
+		s.mu.Lock()
+		sink := s.desk
+		s.mu.Unlock()
+		if sink != nil {
+			sink(d, *sub)
+		}
+		return
 	}
 	wake := WakeQueued
 	if s.opts.WakesPerDay == 0 || s.wakesToday(now) > s.opts.WakesPerDay { // this fire is already counted as queued
@@ -761,6 +776,9 @@ type SubscribeInput struct {
 	MaxFires     int
 	CooldownMin  int
 	Every        string // check interval, see Spec.Every
+	// Desk: the trading desk's strategy key. The subscription is standing (no expiry, no fire limit),
+	// outside the caps, belongs to the desk's chat (ChatID) and delivers to the DeskSink.
+	Desk string
 }
 
 // Subscribe validates the condition (it must be known and false right now), checks the caps and stores it.
@@ -821,7 +839,9 @@ func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subs
 		return Subscription{}, fmt.Errorf("cooldownMin must be between %d and 1440", MinCooldown)
 	}
 	kind, label := KindOwner, ""
-	if in.ChatID > 0 {
+	if in.Desk != "" {
+		kind, label, exp, maxFires = KindDesk, in.Desk, deskExpiry, deskMaxFires
+	} else if in.ChatID > 0 {
 		s.mu.Lock()
 		w := s.waker
 		s.mu.Unlock()
@@ -840,8 +860,10 @@ func (s *Service) SubscribeContext(ctx context.Context, in SubscribeInput) (Subs
 		}
 	}
 	var active, mine int
-	s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(chat_id=? AND kind='chat'),0) FROM signal_subs WHERE status='active'`, in.ChatID).Scan(&active, &mine)
-	if active >= s.opts.MaxActive {
+	s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(chat_id=? AND kind='chat'),0) FROM signal_subs WHERE status='active' AND kind<>'desk'`, in.ChatID).Scan(&active, &mine)
+	if kind == KindDesk {
+		// the desk's standing scans are the owner's configuration, outside the agent's caps
+	} else if active >= s.opts.MaxActive {
 		return Subscription{}, fmt.Errorf("%d subscriptions are active; the cap is %d — cancel one first (list_signals)", active, s.opts.MaxActive)
 	}
 	if kind == KindChat && mine >= MaxPerChat {
@@ -1041,7 +1063,9 @@ func scanSub(row interface{ Scan(...any) error }) (Subscription, error) {
 	}
 	x.Levels = x.Spec.levels()
 	x.Subscriber = "主人"
-	if x.Kind == KindChat {
+	if x.Kind == KindDesk {
+		x.Subscriber = "交易台 · " + x.Label
+	} else if x.Kind == KindChat {
 		x.Subscriber = fmt.Sprintf("AI 对话 #%d · %s", x.ChatID, x.Label)
 	}
 	return x, nil
@@ -1120,6 +1144,10 @@ func (s *Service) List(q ListQuery) ([]Subscription, error) {
 	if q.Kind != "" {
 		where = append(where, "kind=?")
 		args = append(args, q.Kind)
+	} else {
+		// the trading desk's standing scans are its configuration (shown and changed there), not
+		// subscriptions someone waits on: listed only when asked for by kind
+		where = append(where, "kind<>'desk'")
 	}
 	if q.Limit <= 0 || q.Limit > 500 {
 		q.Limit = 100
@@ -1182,7 +1210,7 @@ type Caps struct {
 func (s *Service) Caps() Caps {
 	c := Caps{MaxActive: s.opts.MaxActive, PerChat: MaxPerChat, WakesPerDay: s.opts.WakesPerDay, WakesToday: s.wakesToday(s.now()), MaxDays: int(MaxExpiry.Hours() / 24),
 		Scripts: s.limits()}
-	s.db.QueryRow(`SELECT COUNT(*) FROM signal_subs WHERE status='active'`).Scan(&c.Active)
+	s.db.QueryRow(`SELECT COUNT(*) FROM signal_subs WHERE status='active' AND kind<>'desk'`).Scan(&c.Active)
 	return c
 }
 

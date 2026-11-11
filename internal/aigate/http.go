@@ -24,7 +24,7 @@ import (
 //	POST   /api/v1/ai/chat                  {chatId?, message, instId?} → SSE of the new turn
 //	GET    /api/v1/ai/busy                  {running} — public (no owner key): checked before deploys
 //	GET    /api/v1/ai/chats                 recent conversations
-//	GET    /api/v1/ai/chats/{id}            messages (+ running)
+//	GET    /api/v1/ai/chats/{id}?last=      messages (+ running); last=N keeps the newest N (truncated = how many are older)
 //	GET    /api/v1/ai/chats/{id}/stream     SSE: re-attach to a running turn (replays its events)
 //	POST   /api/v1/ai/chats/{id}/stop
 //	DELETE /api/v1/ai/chats/{id}
@@ -69,7 +69,8 @@ func (g *Gate) Register(mux *http.ServeMux) {
 		writeJSON(w, 200, cs)
 	})
 	mux.HandleFunc("GET /api/v1/ai/chats/{id}", func(w http.ResponseWriter, r *http.Request) {
-		c, err := g.ChatByID(qInt(r.PathValue("id")))
+		last, _ := strconv.Atoi(r.URL.Query().Get("last")) // ?last=N: only the newest N messages
+		c, err := g.ChatTail(qInt(r.PathValue("id")), max(last, 0))
 		if err != nil {
 			writeErr(w, 404, "chat not found")
 			return

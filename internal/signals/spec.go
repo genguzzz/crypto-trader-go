@@ -28,7 +28,7 @@ import (
 //	plan     {planId, state: active|tp1|done|stopped|invalid|missed|expired|settled}
 //	script   {code}                                    a ctg.Condition class run on its timeframe's bar close (script.go);
 //	                                                   validation stores what it declares in script; one per subscription
-//	pool     {scope: pool|watch|list, top?, instIds?, exclude?, metric: move|range|field, …}
+//	pool     {scope: pool|watch|list, top?, instIds?, exclude?, metric: move|range|field|combo, …}
 //	                                                   every member checked on its own (pool.go); root only
 //	all|any  {of: [...]}                               at most 6 leaves, 2 levels deep
 type Spec struct {
@@ -60,6 +60,7 @@ type Spec struct {
 	WindowMin int      `json:"windowMin,omitempty"` // move / range: window in minutes
 	Dir       string   `json:"dir,omitempty"`       // move: up | down | both
 	Pct       float64  `json:"pct,omitempty"`       // move / range: threshold in percent
+	Legs      []Spec   `json:"legs,omitempty"`      // metric combo: 2–4 move / range / field conditions one coin must meet together
 	// Every (root only) is how often it is checked: tick (each ~2 s price broadcast), 1m, 5m, 15m or 1H
 	// (on that confirmed minute). "" = tick when a leaf reads the last price (and there is no script),
 	// else 1m. Coarser = cheaper and calmer; a brief spike between checks can be missed. A script runs

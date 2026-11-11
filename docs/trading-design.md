@@ -284,3 +284,57 @@ The loop is: signals → subscriptions → wake-up → decision (the agent, with
 - **Approval policy** (not implemented, must stay off without the owner's explicit decision): a policy between `Propose` and `Approve` in `internal/realtrade` (e.g. auto-approve dry-run proposals, or live ones under a smaller margin cap with a stricter reward:risk) — it would call the same `Approve` path with `by = policy:<name>` so re-validation and every cap still apply and the audit trail shows it.
 - **Wake budget**: the daily wake cap and per-chat caps are the cost and attention limits; a scheduler that subscribes on its own (e.g. the `scan` trigger subscribing to its best setup instead of proposing at once) uses the same tools.
 - **Position follow-up** (2026-11-01, implemented): the agent leaves signals with `tradeId` for each position it manages and is told after every execution; closes, reduces, adds and TP/SL moves are proposals the owner approves (§7).
+- **Trading desk** (2026-11-11, implemented, §9): the loop above run by the server in one standing chat, with a decision journal. It adds no way to trade: the approval step is unchanged.
+
+## 9. Trading desk: one standing AI chat run by the server (2026-11-11)
+
+Owner request: a fully automatic AI session — a special conversation that keeps running, listed with the others but visibly different, that the owner can also talk to; pool-wide signal strategies deliver to it without burning tokens on every tick; when nothing fires it still runs on a clock (every 2 hours, 10 minutes before the hour, close to OKX's funding settlements); and its trading memory is data in the database, so decisions can be traced back and counted. `internal/autopilot`; the chat kind in `internal/aigate`; the standing subscriber and the `combo` scan in `internal/signals`.
+
+```
+strategy scans (pool-wide, edge + per-coin cooldown) ─fire─▶ inbox ─batch 90 s, gap ≥ 20 min, ≤ 10 / 24 h─▶ run ─┐
+schedule: LeadMin before every EveryHours-th hour, UTC+8 (23:50, 01:50, … by default) ─────────────────────▶ run ─┤
+owner: "run now", or simply writing in the chat ───────────────────────────────────────────────────────────▶      ┘
+   brief: what fired · AI positions and resting orders · proposals waiting · recent decisions with their outcomes · reviews due · memory · budget
+   agent: fresh data → desk_journal per coin → propose_trade (owner approves, §7) → subscribe_signal → desk_review / desk_remember
+   server: stamps each decision with price + fact panel, follows it 1 h / 4 h / 24 h, MFE / MAE, the proposal's fate → statistics
+```
+
+| Piece | Owns |
+|---|---|
+| `internal/autopilot` | the configuration (setting `autopilot.config`), the built-in strategies and their reconciliation into desk subscriptions, the inbox, pacing and the schedule, the brief, runs, the journal with its follow-up, the memory, statistics, REST `/api/v1/autopilot*`, the four `desk_*` tools |
+| `internal/aigate` | `ai_chats.kind` (`desk`): `EnsureChat`, listed first, not deletable; `SteerChatWith` (model / effort of the turn it starts); `ChatTail` / `GET ai/chats/{id}?last=N` (the chat never ends, clients load its tail); `LastAnswer`; `ResetSession`; `SetNotifyFilter` (no "answer ready" push per desk run — proposals are pushed by the trade bot) |
+| `internal/signals` | subscriber kind `desk` (`SubscribeInput.Desk` = the strategy key): no expiry, no fire limit, outside the caps and the daily wake cap, fires go to `DeskSink` (`signal_fires.wake = desk`) instead of waking a chat or pushing a note; pool metric `combo` |
+| `internal/devapi` | owner-only MCP `desk_journal`, `desk_review`, `desk_remember` (desk chat only) and `desk_recall` (any chat) |
+| `internal/realtrade` | unchanged. A proposal made in the desk's chat within 15 minutes of a run gets source `signal` and label `交易台 · <run label>`; executions and closes are steered into the chat as for any other chat |
+| `ai/` | `chat_v2.md` `<desk>`; tool allow-list and step labels 记录决策 / 复盘决策 / 写入长期记忆 / 翻交易台记录 |
+
+**The chat.** One row in `ai_chats` with kind `desk`, created when the desk is first enabled. A run is a `signal`-role message that starts with `🤖 交易台 #<run>` delivered with `SteerChat`: a new turn, or injected into the turn that is running (the owner was talking to it). The owner's own messages are ordinary turns in the same session. Every `SessionRuns` runs (default 12 ≈ a day) the agent's session is reset before the brief is sent: the stored messages stay, the model's context starts empty, and the brief says so — what must survive is in the journal and the memory, which every brief carries. This bounds the context a never-ending chat would otherwise re-read on every run.
+
+**Strategies** are pool scans (§8) owned by the desk, built from parameters the owner can change (`Strategies` in `config.go`; each has a hint the brief gives the agent when it fires):
+
+| key | fires when a coin of the pool's top N … | default |
+|---|---|---|
+| `surge` 急涨急跌 | moves ≥ pct % either way within windowMin | top 60, 15 min, 3 %, cooldown 120 min |
+| `momo_up` 放量上攻 | rises ≥ pct % in 1 h **and** volume ≥ volX × the 7-day median **and** OI +oiPct % in 1 h | 4 %, 2×, 2 % |
+| `flush_down` 放量下杀去杠杆 | falls ≥ pct % in 1 h **and** volume ≥ volX × **and** OI −oiPct % in 1 h | 4 %, 2×, 2 % |
+| `oi_build` 持仓激增 | OI +oiPct % in 1 h **and** a 1 h range ≥ rangePct % | 6 %, 2 % |
+| `funding_extreme` 资金费极端 | funding per hour ≥ ratePct % or ≤ −ratePct % (two scans) | top 100, 0.03 %/h, cooldown 480 min |
+
+`Custom` (≤ 8) are pool specs the owner writes himself. The new pool metric `combo` is what makes "several of my indicators at once" one signal: `{"type":"pool","metric":"combo","legs":[{"metric":"move",…},{"metric":"field",…}]}` — 2–4 legs of move / range / field that must all be true for the same coin; unknown if any leg is unknown; the first leg's value ranks the hits; replayable when no leg reads a field. `reconcile` keeps the subscriptions equal to the configuration (a hash of spec + cooldown per key in `desk_strategy_subs`): a changed parameter replaces that scan only; a scan that cannot start (no pool data yet, an invalid custom spec) is reported on its strategy and retried each minute.
+
+**Pacing** (the token budget). Scans are edge-triggered with a per-coin cooldown, so a coin is news once. A fire becomes inbox items (`desk_inbox`, one per coin) and never wakes anyone by itself. A signal run starts when the oldest pending item has waited `BatchSec` (90 s: fires of the same minute travel together), the last run started ≥ `MinGapMin` (20) ago, no run is in flight and fewer than `MaxRunsDay` (10) signal runs started in the last 24 h. What does not fit waits: it is folded into the next scheduled run, or dropped as stale after `StaleMin` (120). A run that cannot be delivered (agent down, the turn cannot take it) leaves no row; the slot or the items stay due and are retried every 2 minutes — a schedule slot for 30 minutes, then it is skipped (also after downtime: no burst of late runs). Enabling the desk inside that window runs the current slot at once.
+
+**Schedule.** Slots start `LeadMin` (0–30, default 10) before every multiple of `EveryHours` (1 / 2 / 4 / 8, default 2) on the UTC+8 clock, so with the defaults the desk looks at the market at 23:50, 01:50, … — before each 8 h funding settlement (00 / 08 / 16), each 4 h settlement and each 4 h bar close. A scheduled run takes the pending signals with it and otherwise reviews BTC / ETH, the open positions and the pool. The older `scan` trigger (§7 triggers, a new chat every 4 h) does the same job without memory: leave it off when the desk is on.
+
+**Journal** (`desk_decisions`). `desk_journal` records one decision per coin the agent seriously looked at: action (open / add / reduce / close / adjust = made with a `propose_trade`, whose id it carries; hold / watch / skip = passes), side, conviction, thesis, entry / stop / target, invalidation, tags. The server adds the run and its trigger, the strategies that put the coin in front of the desk, the last price and the fact-panel values and BTC's price at that moment (`snapshot`). `follow` (each minute) fills in what happened: the close 1 h / 4 h / 24 h later and the return in percent **signed by the decision's side** (a short that fell is positive; for a pass the side is the trade that was considered, so a positive return means the pass missed a move), the best and worst excursion within 24 h (`mfe_24h`, `mae_24h` from 1m highs and lows), and the linked proposal's status, close kind and P&L (an action on a position is settled with its position). A decision recorded without a fresh price is never scored. Decisions whose outcome is in (a closed position, a trade after 24 h, a pass after which the coin moved ≥ 5 %) appear under 待复盘 in the next briefs until `desk_review` stores a verdict (right / wrong / mixed / na) and the reason.
+
+**Memory** (`desk_memory`, ≤ 60 active). `desk_remember` keeps short reusable statements: `rule` (how the desk trades; the owner's own are written from the app), `lesson` (from a reviewed decision, linked to it), `regime`, `coin`. Rewritten in place (`replaces`), retired rather than deleted. A brief carries up to 14: rules first, then what is about the coins in play, then the newest. It is separate from the chat agent's notes (`ai/notes`), which are about the owner, not about trading outcomes.
+
+**Statistics** (`GET autopilot/stats?days=`, `desk_recall what=stats`): runs and cost; proposals made / executed / rejected / expired, closed positions with wins and realised P&L; and for decisions with a side the count, the share with a positive 4 h return and the average 1 h / 4 h / 24 h return — overall and by action, conviction, strategy and trigger. Small samples are what they are: the app says so.
+
+REST (owner key): `GET autopilot` → {status, config, strategies (definition, setting, running scans with progress, fires in 24 h, error), options} · `PUT autopilot/config` · `POST autopilot/run` {note} · `GET autopilot/runs` · `GET autopilot/inbox` · `GET autopilot/journal?instId&action&days&runId&reviewed&before&limit` · `GET autopilot/journal/{id}` · `POST autopilot/journal/{id}/review` · `GET|POST autopilot/memory` · `DELETE autopilot/memory/{id}` · `GET autopilot/stats`. Every change is the SSE event `autopilot` {kind: config | run | inbox | journal | memory}.
+
+What the desk cannot do: approve, execute, change a limit, or raise its own budget. `Propose` → the owner's `Approve` is the only path to an order, as in §7; the desk off (the default) means no scans, no runs and no cost.
+
+How it is tested: `internal/autopilot` drives the real service with fakes for the gate, the signal service, the proposals and the market on a controlled clock — slots and the grace period, batching, the gap, the daily cap, folding into the schedule, staleness, retries, session rotation, reconciliation on parameter changes and failures, the journal's validation, follow-up (signed returns, excursions, a decision without a price), reviews, memory, statistics, the tools' chat check, and a restart during a run. `internal/signals` checks `combo` replays against a brute force on the real-history fixture and the desk subscriber (never used up, outside the caps, no wake-up, no push); `internal/aigate` the standing chat (creation, order in the list, tail, no delete, model per run, session reset) and the notify filter.
+

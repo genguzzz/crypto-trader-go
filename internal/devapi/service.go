@@ -123,12 +123,24 @@ type Service struct {
 	propose    func(ctx context.Context, chat int64, args map[string]string) (any, error) // trade proposal for the owner's approval (optional)
 	proposals  func(ctx context.Context, args map[string]string) (any, error)             // the proposals and where they stand (optional)
 	signals    *SignalTools                                                               // the agent's signal subscriptions (optional)
+	desk       *DeskTools                                                                 // the trading desk's journal and memory (optional)
 }
 
 // SignalTools are the owner-only subscribe_signal / list_signals / unsubscribe_signal / test_signal_script
 // handlers (internal/signals); chat is the X-Ctg-Chat of the call (0 when absent). TestScript and TestSpec are optional.
 type SignalTools struct {
 	Subscribe, List, Unsubscribe, TestScript, TestSpec func(ctx context.Context, chat int64, args map[string]string) (any, error)
+}
+
+// DeskTools are the owner-only tools of the trading desk (internal/autopilot): its decision journal,
+// reviews, long-term memory and the read side of all three; chat is the X-Ctg-Chat of the call.
+type DeskTools struct {
+	Journal, Review, Remember, Recall func(ctx context.Context, chat int64, args map[string]string) (any, error)
+}
+
+// SetDesk enables the desk tools (call before Mount).
+func (s *Service) SetDesk(t DeskTools) {
+	s.desk = &t
 }
 
 // SetSignals enables the signal tools (call before Mount).

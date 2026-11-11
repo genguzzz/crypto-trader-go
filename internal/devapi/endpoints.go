@@ -525,6 +525,87 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			},
 		})
 	}
+	if s.desk != nil {
+		chatOf := func(ctx context.Context) int64 {
+			if c := callerFrom(ctx); c != nil {
+				return c.Chat
+			}
+			return 0
+		}
+		eps = append(eps, &Endpoint{
+			Name: "desk_journal", Path: "desk-journal", Summary: "Trading desk: record one decision about one coin",
+			Desc: "Only in the trading desk conversation (交易台). Records what you decided about one coin in this run — including decisions not " +
+				"to act. The server stamps it with the price and fact-panel values now, then follows it: the price 1 h / 4 h / 24 h later, the " +
+				"best and worst excursion within 24 h, and the linked proposal's fate; you are asked to review it when the outcome is in. " +
+				"One call per coin per run. action: open | add | reduce | close | adjust (give proposalId of the propose_trade you made) · " +
+				"hold (keep the position as it is) · watch (a setup worth waiting for; say what you wait for) · skip (looked, not worth it).",
+			Params: []Param{
+				{Name: "instId", In: "query", Type: "string", Required: true, Desc: "e.g. ENA-USDT-SWAP"},
+				{Name: "action", In: "query", Type: "string", Required: true, Enum: []string{"open", "add", "reduce", "close", "adjust", "hold", "watch", "skip"}, Desc: "the decision"},
+				{Name: "side", In: "query", Type: "string", Enum: []string{"long", "short"}, Desc: "the position's side, or for hold / watch / skip the direction of the trade you considered; it signs the follow-up returns (for a pass, a positive return later means the pass missed a move). Omit only when you had no direction in mind"},
+				{Name: "conviction", In: "query", Type: "string", Enum: []string{"low", "medium", "high"}, Desc: "how sure you are"},
+				{Name: "thesis", In: "query", Type: "string", Required: true, Desc: "why, in Chinese, one or two sentences with the deciding numbers"},
+				{Name: "entry", In: "query", Type: "number", Desc: "planned or actual entry price"},
+				{Name: "sl", In: "query", Type: "number", Desc: "stop price"},
+				{Name: "tp", In: "query", Type: "number", Desc: "target price"},
+				{Name: "invalidation", In: "query", Type: "string", Desc: "what would prove the view wrong, in Chinese"},
+				{Name: "tags", In: "query", Type: "string", Desc: "a few comma-separated tags for later counting, e.g. 顺势,回踩,资金费"},
+				{Name: "proposalId", In: "query", Type: "integer", Desc: "the propose_trade this decision made"},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.desk.Journal(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "desk_review", Path: "desk-review", Summary: "Trading desk: write the conclusion on a past decision",
+			Desc: "Only in the trading desk conversation. For a decision whose outcome is in (listed under 待复盘 in the brief): was the call right, " +
+				"and what explains it — the thesis, the timing, the sizing, or luck. Be honest about luck; a lesson worth keeping goes to desk_remember.",
+			Params: []Param{
+				{Name: "decisionId", In: "query", Type: "integer", Required: true, Desc: "the decision"},
+				{Name: "verdict", In: "query", Type: "string", Required: true, Enum: []string{"right", "wrong", "mixed", "na"}, Desc: "na = cannot be judged"},
+				{Name: "review", In: "query", Type: "string", Required: true, Desc: "what happened and why, in Chinese, two or three sentences"},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.desk.Review(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "desk_remember", Path: "desk-remember", Summary: "Trading desk: keep (or rewrite, or retire) a long-term memory",
+			Desc: "Only in the trading desk conversation. The desk's long-term memory travels in every brief, so keep it short and reusable: " +
+				"rule (how this desk trades: the owner's standing instructions, sizing, what never to do) · lesson (what a reviewed decision taught) · " +
+				"regime (the market state that matters for the next days; rewrite it when it changes) · coin (a lasting fact about one coin). " +
+				"Not for single observations — those belong in desk_journal. Rewrite with replaces rather than adding a near-duplicate; " +
+				"retire=<memoryId> with reason takes one out.",
+			Params: []Param{
+				{Name: "kind", In: "query", Type: "string", Enum: []string{"rule", "lesson", "regime", "coin"}, Desc: "required unless retiring"},
+				{Name: "text", In: "query", Type: "string", Desc: "one statement in Chinese, ≤ 300 characters"},
+				{Name: "instId", In: "query", Type: "string", Desc: "the coin it is about (required for kind coin)"},
+				{Name: "replaces", In: "query", Type: "integer", Desc: "memoryId to rewrite"},
+				{Name: "decisionId", In: "query", Type: "integer", Desc: "the decision this lesson comes from"},
+				{Name: "retire", In: "query", Type: "integer", Desc: "memoryId to retire instead of writing"},
+				{Name: "reason", In: "query", Type: "string", Desc: "why it is retired"},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.desk.Remember(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "desk_recall", Path: "desk-recall", Summary: "Trading desk: read its journal, memory, runs or statistics",
+			Desc: "The trading desk's records (any conversation). what=journal: past decisions, newest first, each with the follow-up returns " +
+				"(percent, signed by the decision's side) and the proposal's fate — filter by instId, action (one action, trades = the five " +
+				"that act, passes = hold/watch/skip), days, reviewed (yes/no); decisionId returns one decision with the market snapshot taken " +
+				"when it was made. what=memory: the long-term memory. what=stats: counts, 4 h win rate and average returns by action, " +
+				"conviction, strategy and trigger over days. what=runs: the recent runs with cost.",
+			Params: []Param{
+				{Name: "what", In: "query", Type: "string", Default: "journal", Enum: []string{"journal", "memory", "stats", "runs"}, Desc: "which record"},
+				{Name: "instId", In: "query", Type: "string", Desc: "journal: one coin"},
+				{Name: "action", In: "query", Type: "string", Desc: "journal: open|add|reduce|close|adjust|hold|watch|skip|trades|passes"},
+				{Name: "days", In: "query", Type: "integer", Min: 1, Max: 365, Desc: "journal / stats: look back this many days (stats default 30)"},
+				{Name: "reviewed", In: "query", Type: "string", Enum: []string{"yes", "no"}, Desc: "journal: only reviewed / not yet reviewed"},
+				{Name: "decisionId", In: "query", Type: "integer", Desc: "journal: one decision in full"},
+				{Name: "limit", In: "query", Type: "integer", Default: 20, Min: 1, Max: 60, Desc: "rows"},
+			},
+			owner: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.desk.Recall(ctx, chatOf(ctx), a) },
+		})
+	}
 	if s.signals != nil {
 		chatOf := func(ctx context.Context) int64 {
 			if c := callerFrom(ctx); c != nil {

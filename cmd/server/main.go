@@ -25,6 +25,7 @@ import (
 	"crypto-trader-go/internal/aigate"
 	"crypto-trader-go/internal/alerts"
 	"crypto-trader-go/internal/api"
+	"crypto-trader-go/internal/autopilot"
 	"crypto-trader-go/internal/devapi"
 	"crypto-trader-go/internal/interact"
 	"crypto-trader-go/internal/market"
@@ -250,7 +251,17 @@ func main() {
 		return err
 	})
 	rt.SetSignals(sig.BriefFor, sig.CancelForTrade)
-	gate.SetOnChatDone(func(chat int64) { sig.ChatDone(chat); rt.ChatDone(chat) })
+	// The trading desk: one standing chat run on strategy scans and on a schedule, with a decision journal
+	// (internal/autopilot). It only proposes; approval stays with the owner.
+	desk, err := autopilot.New(st, gate, sig, rt, deskMarket{eng}, autopilot.Options{TradeMode: func() string { return string(rt.Mode()) }})
+	if err != nil {
+		log.Fatal(err)
+	}
+	sig.SetDesk(desk.OnFire)
+	desk.SetOnChange(func(kind string) { eng.Publish("autopilot", map[string]any{"kind": kind}) })
+	dev.SetDesk(devapi.DeskTools{Journal: desk.JournalTool, Review: desk.ReviewTool, Remember: desk.RememberTool, Recall: desk.RecallTool})
+	gate.SetNotifyFilter(func(chat int64) bool { return !desk.IsDeskChat(chat) }) // its proposals are pushed by the trade bot; no note per run
+	gate.SetOnChatDone(func(chat int64) { sig.ChatDone(chat); rt.ChatDone(chat); desk.ChatDone(chat) })
 	gate.SetOnPlan(sig.LinkPlan)
 	if tradeBot != nil {
 		sig.SetNotifier(tradeBot.Note)
@@ -273,6 +284,9 @@ func main() {
 	})
 	dev.SetSignals(devapi.SignalTools{Subscribe: sig.SubscribeTool, List: sig.ListTool, Unsubscribe: sig.UnsubscribeTool, TestScript: sig.TestScriptTool, TestSpec: sig.TestSpecTool})
 	rt.SetSignalSource(func(chat int64) (string, bool) {
+		if label, ok := desk.SourceLabel(chat); ok {
+			return label, true
+		}
 		id, ok := sig.WokenBy(chat)
 		if !ok {
 			return "", false
@@ -306,6 +320,7 @@ func main() {
 		}
 	}()
 	go sig.Run(ctx)
+	go desk.Run(ctx)
 	go func() {
 		if err := gate.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("ai gate: %v", err)
@@ -327,7 +342,7 @@ func main() {
 	}
 	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al, Dev: dev,
 		Icons:    &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()},
-		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, acct.Register, rt.Register, sig.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
+		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, acct.Register, rt.Register, sig.Register, desk.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
 		AdminKey: os.Getenv("CTG_ADMIN_KEY"), AgentKey: agentKey, WebUI: os.Getenv("CTG_WEB_UI") == "on"}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

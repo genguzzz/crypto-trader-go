@@ -40,7 +40,7 @@ CTG_DIRECT = ("get_instrument", "get_universe", "search_instruments", "get_order
               "list_rules", "list_fields", "get_alert_events", "get_system_status", "get_positions", "okx_api", "okx_history",
               "propose_trade", "get_trade_proposals", "subscribe_signal", "list_signals", "unsubscribe_signal",
               "test_signal_script", "test_signal", "assess_manipulation", "analyze_trades", "get_book_analysis", "get_wall_history",
-              "get_dex_activity")
+              "get_dex_activity", "desk_journal", "desk_review", "desk_remember", "desk_recall")
 SHELL_MODEL_LIMIT = 8000  # characters of shell output the model sees; the rest stays in files
 CTG_HIDDEN = ("get_candles", "get_series", "get_liquidation_map", "compare_with_majors", "get_rule_track_record", "get_usage",
               "get_trades")
@@ -55,6 +55,7 @@ TOOL_LABELS = {
     "compare_with_majors": "对比 BTC/ETH", "get_universe": "监控池", "search_instruments": "搜索合约",
     "list_rules": "规则", "get_rule_track_record": "规则战绩", "get_alert_events": "告警", "get_system_status": "数据状态",
     "list_fields": "字段定义", "get_usage": "接口额度", "get_positions": "我的仓位", "memory_save": "记一笔", "memory_search": "翻记忆", "memory_forget": "删掉记忆", "okx_api": "查询 OKX 账户", "okx_history": "OKX 账户统计", "propose_trade": "提交交易提议", "get_trade_proposals": "交易提议", "subscribe_signal": "订阅信号", "unsubscribe_signal": "取消订阅", "list_signals": "查看信号", "test_signal_script": "测试信号脚本", "test_signal": "回放信号", "list_chats": "查看历史对话", "assess_manipulation": "砸盘/控盘体检", "analyze_trades": "逐笔成交分析",
+    "desk_journal": "记录决策", "desk_review": "复盘决策", "desk_remember": "写入长期记忆", "desk_recall": "翻交易台记录",
     "get_book_analysis": "盘口分布", "get_wall_history": "大单挂撤记录", "get_dex_activity": "链上 DEX 大单", "read_chat": "读取对话", "WebSearch": "联网搜索", "WebFetch": "读取网页", "Skill": "加载分析流程",
 }
 # the analysis CLI's commands, as the owner would call them
@@ -134,6 +135,15 @@ def brief_input(name: str, inp: Any) -> str:
         return f"#{inp.get('id', '')}"
     if short == "propose_trade":
         return propose_brief(inp)
+    if short == "desk_journal":
+        coin = str(inp.get("instId", "")).replace("-USDT-SWAP", "")
+        return f"{coin} {inp.get('action', '')} {inp.get('side', '') or ''}".strip()[:80]
+    if short == "desk_review":
+        return f"#{inp.get('decisionId', '')} {inp.get('verdict', '')}"
+    if short == "desk_remember":
+        return (f"停用 #{inp.get('retire')}" if inp.get("retire") else str(inp.get("text", "")))[:80]
+    if short == "desk_recall":
+        return " · ".join(str(v) for k, v in inp.items() if k in ("what", "instId", "action", "days"))[:80]
     keep = [str(v) for k, v in inp.items() if k in ("instId", "q")]
     keep += [f"{v}" for k, v in inp.items() if k in ("bar", "field", "days")]
     return " · ".join(keep)[:80]
