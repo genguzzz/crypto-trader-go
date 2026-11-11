@@ -21,12 +21,27 @@ watch (OKXWatchApp, SwiftUI) ──WatchConnectivity sendMessage {op}──▶ i
   (`internal/realtrade`); the watch shows its verdict.
 - One snapshot = pending proposals, positions with equity, trading desk status. A part that fails is
   listed, the rest still shows.
+- Pages sit side by side (swipe left / right) and each scrolls on its own: a vertical page view around
+  scrolling lists could not tell a scroll from a page turn and stopped between pages.
+- Latency: the phone makes the three reads at once on one kept-alive connection, answers from a
+  snapshot younger than 4 s, shares one fetch between concurrent asks, and answers approve / reject as
+  soon as the server has (the fresh state follows as a message). The watch shows its last snapshot at
+  launch and refreshes every 15 s while on screen.
+- Widgets: watch face / Smart Stack (circular, corner, rectangular, inline) and the iPhone home and lock
+  screens. They read the newest snapshot from the app group `group.top.gugenzzz.okxwatch`; the iPhone
+  widget also fetches its own every 15 min (the owner key is in the keychain under that group), and the
+  phone wakes the watch with complication user info when the proposals or positions change.
+- Notifications: the server pushes new proposals through Bark (`CTG_BARK_URL`, see
+  docs/operations.md); iOS mirrors them to the watch.
 
 | Path | What |
 |---|---|
 | `project.yml` | XcodeGen definition: iOS app `top.gugenzzz.okxwatch` embedding watchOS app `top.gugenzzz.okxwatch.watchkitapp` |
 | `Shared/Models.swift` | snapshot types (server JSON field names), wire keys, formatting |
-| `Phone/Relay.swift` | keychain, the three reads and approve / reject, the `WCSessionDelegate` that answers the watch |
+| `Phone/Api.swift` | keychain, the three reads and approve / reject (shared with the iPhone widget) |
+| `Phone/Relay.swift` | the cache and the `WCSessionDelegate` that answers the watch, background refresh |
+| `Widgets/Widgets.swift` | the widgets of both platforms |
+| `UITests/ScrollTests.swift` | turns and scrolls the pages on the simulator with demo data, a screenshot per step |
 | `Phone/PhoneApp.swift` | the companion's one screen: owner key, connection state, what the watch sees |
 | `Watch/Store.swift` | asks the phone, keeps the newest snapshot, haptics on a new proposal |
 | `Watch/WatchApp.swift` | the three pages and the proposal detail |

@@ -146,3 +146,31 @@ func clockText(_ ms: Double) -> String {
     f.dateFormat = "HH:mm"
     return f.string(from: Date(timeIntervalSince1970: ms / 1000))
 }
+
+// ---------- the copy the widgets read ----------
+
+/// The newest snapshot, kept in the app group so the widgets (and the next launch) can show it at once.
+enum SharedSnapshot {
+    static let group = "group.top.gugenzzz.okxwatch"
+    private static let key = "snapshot"
+    private static let atKey = "snapshotAt"
+
+    static var defaults: UserDefaults? { UserDefaults(suiteName: group) }
+
+    static func save(_ s: Snapshot) {
+        guard let d = defaults else { return }
+        d.set(Wire.encode(s), forKey: key)
+        d.set(Date().timeIntervalSince1970, forKey: atKey)
+    }
+
+    /// The snapshot and when this device received it.
+    static func load() -> (Snapshot, Date)? {
+        guard let d = defaults, let s = Wire.decode(d.data(forKey: key)) else { return nil }
+        return (s, Date(timeIntervalSince1970: d.double(forKey: atKey)))
+    }
+}
+
+extension Snapshot {
+    /// Unrealized P&L over all open positions (USDT).
+    var totalUpl: Double { equity?.upl ?? positions.reduce(0) { $0 + $1.upl } }
+}

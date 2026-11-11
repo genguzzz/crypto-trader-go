@@ -11,28 +11,60 @@ settings:
     DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "2"
     GENERATE_INFOPLIST_FILE: YES
 targets:
   OKXWatch:
     type: application
     platform: iOS
     sources: [Phone, Shared]
+    info:
+      path: Phone/Info.plist
+      properties:
+        CFBundleDisplayName: OKX 手表助手
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIBackgroundModes: [fetch]
+        BGTaskSchedulerPermittedIdentifiers: [top.gugenzzz.okxwatch.refresh]
+    entitlements:
+      path: Phone/OKXWatch.entitlements
+      properties:
+        com.apple.security.application-groups: [group.top.gugenzzz.okxwatch]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: top.gugenzzz.okxwatch
-        INFOPLIST_KEY_CFBundleDisplayName: OKX 手表助手
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
     dependencies:
       - target: OKXWatchApp
+      - target: OKXWidgetsPhone
+  OKXWidgetsPhone:
+    type: app-extension
+    platform: iOS
+    sources: [Widgets, Shared, Phone/Api.swift]
+    info:
+      path: Widgets/Phone-Info.plist
+      properties:
+        CFBundleDisplayName: OKX 助手
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widgets/Phone.entitlements
+      properties:
+        com.apple.security.application-groups: [group.top.gugenzzz.okxwatch]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: top.gugenzzz.okxwatch.widgets
+        TARGETED_DEVICE_FAMILY: "1"
   OKXWatchApp:
     type: application
     platform: watchOS
     sources: [Watch, Shared]
+    entitlements:
+      path: Watch/OKXWatchApp.entitlements
+      properties:
+        com.apple.security.application-groups: [group.top.gugenzzz.okxwatch]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: top.gugenzzz.okxwatch.watchkitapp
@@ -40,3 +72,38 @@ targets:
         INFOPLIST_KEY_WKCompanionAppBundleIdentifier: top.gugenzzz.okxwatch
         INFOPLIST_KEY_WKApplication: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: OKXWidgetsWatch
+  OKXWidgetsWatch:
+    type: app-extension
+    platform: watchOS
+    sources: [Widgets, Shared]
+    info:
+      path: Widgets/Watch-Info.plist
+      properties:
+        CFBundleDisplayName: OKX 助手
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widgets/Watch.entitlements
+      properties:
+        com.apple.security.application-groups: [group.top.gugenzzz.okxwatch]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: top.gugenzzz.okxwatch.watchkitapp.widgets
+  OKXWatchUITests:
+    type: bundle.ui-testing
+    platform: watchOS
+    sources: [UITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: OKXWatchApp
+schemes:
+  OKXWatchApp:
+    build:
+      targets:
+        OKXWatchApp: all
+    test:
+      targets: [OKXWatchUITests]

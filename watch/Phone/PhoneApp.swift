@@ -6,7 +6,10 @@ import SwiftUI
 struct PhoneApp: App {
     @Environment(\.scenePhase) private var phase
 
-    init() { Relay.shared.start() }
+    init() {
+        Relay.shared.registerBackground()
+        Relay.shared.start()
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -16,6 +19,7 @@ struct PhoneApp: App {
         }
         .onChange(of: phase) { _, p in
             if p == .active { Task { await Relay.shared.refresh() } }
+            if p == .background { Relay.shared.scheduleBackground() }
         }
     }
 }
@@ -34,7 +38,7 @@ struct HomeView: View {
                 } header: {
                     Text("连接")
                 } footer: {
-                    Text("手表通过这台手机请求服务器：这个 App 不需要开着，手表发来请求时系统会在后台唤醒它。")
+                    Text("手表通过这台手机请求服务器：这个 App 不需要开着，手表发来请求时系统会在后台唤醒它。新提议的推送走 Bark。")
                 }
 
                 Section {
@@ -48,7 +52,7 @@ struct HomeView: View {
                         Button("保存并测试") { save() }.disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || busy)
                     }
                 } header: {
-                    Text("服务器 \(Relay.origin.replacingOccurrences(of: "https://", with: ""))")
+                    Text("服务器 \(Server.origin.replacingOccurrences(of: "https://", with: ""))")
                 } footer: {
                     Text("密钥只保存在这台手机的钥匙串里，不会发到手表。")
                 }
