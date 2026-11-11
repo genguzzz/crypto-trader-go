@@ -176,7 +176,13 @@ func main() {
 	if tradeBot != nil {
 		go tradeBot.Run(ctx)
 	}
-	log.Printf("real trading: %s (proposals need the owner's approval), trade bot %v", orders.Mode(), tradeBot != nil)
+	// Bark: proposals and their outcomes as iPhone / Apple Watch notifications
+	bark := realtrade.BarkFromEnv(rt, &http.Client{Timeout: 20 * time.Second})
+	if bark != nil {
+		rt.AddNotifier(bark)
+		go bark.Run(ctx)
+	}
+	log.Printf("real trading: %s (proposals need the owner's approval), trade bot %v, bark %v", orders.Mode(), tradeBot != nil, bark != nil)
 
 	// Paper trading: order layer + strategy runtime + interaction layer + optional AI review.
 	tsvc, err := trade.New(st, mdlive.New(eng), trade.Options{})
