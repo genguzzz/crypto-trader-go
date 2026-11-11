@@ -35,6 +35,14 @@ final class ScrollTests: XCTestCase {
         app.swipeUp()
         sleep(1)
         shot("9-detail-bottom")
+        app.navigationBars.buttons.firstMatch.tap()
+        sleep(1)
+        app.swipeUp(); app.swipeUp(); app.swipeUp()
+        sleep(1)
+        shot("a-proposals-end")
+        app.cells.allElementsBoundByIndex.last(where: { $0.isHittable })?.tap()
+        sleep(1)
+        shot("b-cancel-detail")
     }
 
     private func shot(_ name: String) {

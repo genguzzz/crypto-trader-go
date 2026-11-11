@@ -27,6 +27,7 @@ struct Proposal: Codable, Identifiable, Hashable {
     let rationale: String?
     let invalidation: String?
     let note: String?
+    let tpsl: String?           // cancel / amend / adjust: what happens to the order or the TP/SL
     let expiresAt: Double
     let status: String
     let mode: String?           // dryrun | live
@@ -130,7 +131,7 @@ func usd(_ v: Double?, sign: Bool = false) -> String {
     return String(format: sign ? "%+.2f" : "%.2f", v)
 }
 
-let kindText: [String: String] = ["open": "开仓", "add": "补仓", "reduce": "减仓", "close": "平仓", "adjust": "调整止盈止损",
+let kindText: [String: String] = ["open": "开仓", "add": "补仓", "reduce": "减仓", "close": "平仓", "adjust": "改止盈止损",
                                   "cancel": "撤单", "amend": "改单"]
 
 func sideText(_ s: String) -> String { s == "long" ? "多" : "空" }

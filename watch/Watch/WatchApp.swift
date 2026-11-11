@@ -173,10 +173,7 @@ struct ProposalRow: View {
                 Tag(text: p.mode == "live" ? "实盘" : "模拟", color: p.mode == "live" ? down : .orange)
             }
             Tag(text: (kindText[p.kind] ?? p.kind) + sideText(p.side), color: p.side == "long" ? up : down)
-            if p.kind == "open" || p.kind == "add" {
-                Text("\(usd(p.marginUsdt)) U × \(p.leverage ?? 0) · \(p.orderType == "limit" ? "限 " + px(p.px) : "市价")")
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
-            }
+            Text(brief(p)).font(.caption2).foregroundStyle(.secondary).lineLimit(2).minimumScaleFactor(0.7)
             TimelineView(.periodic(from: .now, by: 20)) { _ in
                 let left = p.expiresAt - store.now
                 Label(left > 0 ? "还剩 \(minutesText(p.expiresAt, from: store.now))" : "已过期", systemImage: "timer")
@@ -184,6 +181,18 @@ struct ProposalRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// One line under the coin: what the proposal does.
+func brief(_ p: Proposal) -> String {
+    let ord = p.orderType == "limit" ? "限 " + px(p.px) : "市价"
+    switch p.kind {
+    case "open", "add": return "\(usd(p.marginUsdt)) U × \(p.leverage ?? 0) · \(ord)"
+    case "reduce": return "\(Int((p.fraction ?? 0) * 100))% · \(ord)"
+    case "close": return "全部 · \(ord)"
+    case "adjust": return "损 \(px(p.sl)) · 盈 \(px(p.tp))"
+    default: return p.tpsl ?? ""
     }
 }
 
@@ -195,8 +204,14 @@ struct ProposalDetail: View {
 
     private var what: String {
         var s = "#\(p.id) \(coin(p.instId)) \(kindText[p.kind] ?? p.kind)\(sideText(p.side))"
-        if p.kind == "open" || p.kind == "add" { s += " \(usd(p.marginUsdt)) U × \(p.leverage ?? 0)" }
-        if p.kind == "reduce", let f = p.fraction { s += " \(Int(f * 100))%" }
+        switch p.kind {
+        case "open", "add": s += " \(usd(p.marginUsdt)) U × \(p.leverage ?? 0)"
+        case "reduce": if let f = p.fraction { s += " \(Int(f * 100))%" }
+        case "close": s += " 全部\(p.contracts.map { " \(px($0)) 张" } ?? "")"
+        case "adjust": s += " 止损 \(px(p.sl)) / 止盈 \(px(p.tp))"
+        default: break
+        }
+        if let t = p.tpsl, !t.isEmpty, p.kind == "cancel" || p.kind == "amend" { s += "\n" + t }
         return s
     }
 
@@ -212,6 +227,7 @@ struct ProposalDetail: View {
                         row("名义", "\(usd(p.notionalUsdt)) U")
                     }
                     if p.kind == "reduce", let f = p.fraction { row("比例", "\(Int(f * 100))%") }
+                    if p.kind == "close" || p.kind == "reduce" || p.kind == "cancel", let c = p.contracts, c > 0 { row("张数", px(c)) }
                     row(p.orderType == "limit" ? "限价" : "参考价", px(p.orderType == "limit" ? p.px : p.refPx))
                     if (p.sl ?? 0) > 0 { row("止损", "\(px(p.sl)) −\(String(format: "%.1f", p.slPct ?? 0))%", down) }
                     if (p.tp ?? 0) > 0 { row("止盈", "\(px(p.tp)) +\(String(format: "%.1f", p.tpPct ?? 0))%", up) }
@@ -225,6 +241,9 @@ struct ProposalDetail: View {
                 .padding(.vertical, 2)
             } header: {
                 Text("#\(p.id) \(coin(p.instId))")
+            }
+            if let t = p.tpsl, !t.isEmpty {
+                Section(p.kind == "cancel" || p.kind == "amend" ? "委托" : "止盈止损") { Text(t).font(.footnote) }
             }
             if let r = p.rationale, !r.isEmpty {
                 Section("理由") { Text(r).font(.footnote) }
@@ -253,7 +272,7 @@ struct ProposalDetail: View {
         }
         .navigationTitle(coin(p.instId))
         .confirmationDialog(live ? "实盘执行这笔交易？" : "模拟执行（dry run）？", isPresented: $confirming, titleVisibility: .visible) {
-            Button(live ? "确认下单" : "确认") {
+            Button(live ? "确认（实盘）" : "确认") {
                 store.answer(p, approve: true) { ok in if ok { dismiss() } }
             }
             Button("取消", role: .cancel) {}
