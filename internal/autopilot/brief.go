@@ -252,6 +252,7 @@ func (s *Service) brief(cfg Config, in briefInput) string {
 	b.WriteString("2. 每个认真看过的币都用 desk_journal 记一笔决策（open / add / reduce / close / adjust / hold / watch / skip），写清方向、把握、" +
 		"一句话理由、关键价位和失效条件——包括决定不做的，这是以后复盘的依据。\n" +
 		"3. 要交易只能 propose_trade（主人批准后才执行），并把 proposalId 写进那笔 desk_journal。" + proposeRule(cfg.Risk) + "\n" +
+		"   已有仓位和挂单同样要管：改止盈止损用 adjust，减仓 / 平仓用 reduce / close，撤掉或修改自己的限价挂单用 cancel / amend——都通过 propose_trade 交给主人批准（他在手表上确认）；该动就提，不要只在文字里建议。\n" +
 		"4. 还差一步的用 subscribe_signal 盯具体条件；【待复盘】里的用 desk_review 写结论；能复用的经验用 desk_remember 存成长期记忆（每轮都会带给你，宁少勿滥）。\n" +
 		"5. 回答从简：先一句结论，再每个币一两行。\n" +
 		"（这是自动触发的交易台运行，主人此刻不一定在看。你不能下单，只能提交待审核的提议。）")
