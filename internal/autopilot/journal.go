@@ -55,7 +55,10 @@ type Decision struct {
 	Strategy     string  `json:"strategy,omitempty"` // the scans that put the coin in front of the desk
 	Trigger      string  `json:"trigger,omitempty"`  // schedule | signal | manual | "" (the owner's own question)
 	ProposalID   int64   `json:"proposalId,omitempty"`
-	Px           float64 `json:"px"` // last price when recorded
+	// PosID: the AI position the proposal belongs to (its open's id). PnlUSDT / ClosedAt / CloseKind are
+	// that position's, so every action on one position carries the same result.
+	PosID int64   `json:"posId,omitempty"`
+	Px    float64 `json:"px"` // last price when recorded
 	// Snapshot: the fact-panel values and BTC's price at that moment.
 	Snapshot json.RawMessage `json:"snapshot,omitempty"`
 	// Outcome (nil = not due yet or no data). Ret* in percent, signed by Side (unsigned price change when there is no side).
@@ -80,7 +83,7 @@ type Decision struct {
 
 const decisionCols = `id, ts, run_id, chat_id, inst_id, action, side, conviction, thesis, entry, sl, tp, invalidation, tags, strategy, trigger,
 	proposal_id, px, snapshot, px_1h, px_4h, px_24h, ret_1h, ret_4h, ret_24h, mfe_24h, mae_24h, outcome_at, proposal_status, pnl_usdt,
-	closed_at, close_kind, review, verdict, reviewed_at`
+	closed_at, close_kind, review, verdict, reviewed_at, pos_id`
 
 func scanDecision(row interface{ Scan(...any) error }) (Decision, error) {
 	var d Decision
@@ -88,7 +91,7 @@ func scanDecision(row interface{ Scan(...any) error }) (Decision, error) {
 	var f [8]sql.NullFloat64
 	err := row.Scan(&d.ID, &d.Ts, &d.RunID, &d.ChatID, &d.InstID, &d.Action, &d.Side, &d.Conviction, &d.Thesis, &d.Entry, &d.SL, &d.TP,
 		&d.Invalidation, &d.Tags, &d.Strategy, &d.Trigger, &d.ProposalID, &d.Px, &snap, &f[0], &f[1], &f[2], &f[3], &f[4], &f[5], &f[6], &f[7],
-		&d.OutcomeAt, &d.ProposalStatus, &d.PnlUSDT, &d.ClosedAt, &d.CloseKind, &d.Review, &d.Verdict, &d.ReviewedAt)
+		&d.OutcomeAt, &d.ProposalStatus, &d.PnlUSDT, &d.ClosedAt, &d.CloseKind, &d.Review, &d.Verdict, &d.ReviewedAt, &d.PosID)
 	if err != nil {
 		return d, err
 	}
@@ -131,7 +134,7 @@ func (d Decision) line() string {
 		}
 		p := fmt.Sprintf("提议 #%d %s", d.ProposalID, st)
 		if d.ClosedAt > 0 {
-			p += fmt.Sprintf("，已平仓 %+.2f USDT", d.PnlUSDT)
+			p += fmt.Sprintf("，仓位已平 %+.2f USDT", d.PnlUSDT)
 		}
 		out = append(out, p)
 	}
@@ -229,7 +232,7 @@ func (s *Service) Record(in JournalInput) (Decision, error) {
 			strategy = strings.Join(keys, ",")
 		}
 	}
-	status := ""
+	status, posID := "", int64(0)
 	if in.ProposalID > 0 {
 		p, err := s.trades.Get(in.ProposalID)
 		if err != nil {
@@ -238,18 +241,32 @@ func (s *Service) Record(in JournalInput) (Decision, error) {
 		if p.InstID != inst {
 			return Decision{}, fmt.Errorf("proposal %d is for %s, not %s", in.ProposalID, p.InstID, inst)
 		}
-		status = p.Status
+		status, posID = p.Status, positionOf(p)
+	}
+	if runID > 0 { // one decision per coin per run: a later call is the run's final word on that coin
+		s.db.Exec(`DELETE FROM desk_decisions WHERE run_id=? AND inst_id=? AND reviewed_at=0`, runID, inst)
 	}
 	res, err := s.db.Exec(`INSERT INTO desk_decisions(ts, run_id, chat_id, inst_id, action, side, conviction, thesis, entry, sl, tp, invalidation,
-		tags, strategy, trigger, proposal_id, px, snapshot, proposal_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		tags, strategy, trigger, proposal_id, px, snapshot, proposal_status, pos_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now.UnixMilli(), runID, in.ChatID, inst, in.Action, in.Side, conv, in.Thesis, in.Entry, in.SL, in.TP, clip(strings.TrimSpace(in.Invalidation), 300),
-		clip(strings.TrimSpace(in.Tags), 120), strategy, trigger, in.ProposalID, px, string(raw), status)
+		clip(strings.TrimSpace(in.Tags), 120), strategy, trigger, in.ProposalID, px, string(raw), status, posID)
 	if err != nil {
 		return Decision{}, err
 	}
 	id, _ := res.LastInsertId()
 	s.changed("journal")
 	return s.Decision(id)
+}
+
+// positionOf is the AI position a proposal belongs to: its own id for an open, else the open's.
+func positionOf(p realtrade.Proposal) int64 {
+	if p.PosID > 0 {
+		return p.PosID
+	}
+	if p.Kind == realtrade.KindOpen {
+		return p.ID
+	}
+	return 0
 }
 
 // Decision returns one journal row.
@@ -445,7 +462,8 @@ func (s *Service) followPrice(d Decision, now time.Time) bool {
 		return changed // the bar may still arrive (backfill)
 	}
 	var mfe, mae sql.NullFloat64
-	if bars := s.mkt.Bars1m(d.InstID, d.Ts/60_000*60_000, end); len(bars) > 0 {
+	// from the first whole minute after the decision: the minute it was made in also holds what came before it
+	if bars := s.mkt.Bars1m(d.InstID, (d.Ts/60_000+1)*60_000, end); len(bars) > 0 {
 		hi, lo := 0.0, math.Inf(1)
 		for _, b := range bars {
 			hi, lo = math.Max(hi, b.H), math.Min(lo, b.L)
@@ -472,10 +490,11 @@ func (s *Service) followProposal(d Decision) bool {
 			closedAt, kind, pnl = root.ClosedAt, root.CloseKind, root.PnlUSDT
 		}
 	}
-	if p.Status == d.ProposalStatus && closedAt == d.ClosedAt {
+	pos := positionOf(p)
+	if p.Status == d.ProposalStatus && closedAt == d.ClosedAt && pos == d.PosID {
 		return false
 	}
-	s.db.Exec(`UPDATE desk_decisions SET proposal_status=?, closed_at=?, close_kind=?, pnl_usdt=? WHERE id=?`, p.Status, closedAt, kind, pnl, d.ID)
+	s.db.Exec(`UPDATE desk_decisions SET proposal_status=?, closed_at=?, close_kind=?, pnl_usdt=?, pos_id=? WHERE id=?`, p.Status, closedAt, kind, pnl, pos, d.ID)
 	return true
 }
 
@@ -589,7 +608,7 @@ func (s *Service) Remember(kind, instID, text, by string, replaces, sourceDecisi
 			return MemoryItem{}, fmt.Errorf("memory %d not found or retired", replaces)
 		}
 		s.changed("memory")
-		return s.memory(`id=?`, replaces)[0], nil
+		return s.memoryByID(replaces)
 	}
 	var n int
 	s.db.QueryRow(`SELECT COUNT(*) FROM desk_memory WHERE status=?`, MemoryActive).Scan(&n)
@@ -603,7 +622,14 @@ func (s *Service) Remember(kind, instID, text, by string, replaces, sourceDecisi
 	}
 	id, _ := res.LastInsertId()
 	s.changed("memory")
-	return s.memory(`id=?`, id)[0], nil
+	return s.memoryByID(id)
+}
+
+func (s *Service) memoryByID(id int64) (MemoryItem, error) {
+	if ms := s.memory(`id=?`, id); len(ms) == 1 {
+		return ms[0], nil
+	}
+	return MemoryItem{}, fmt.Errorf("memory %d could not be read back", id)
 }
 
 // Retire takes a memory out of the briefs (kept for the record).
@@ -724,7 +750,7 @@ func (s *Service) Stats(days int) (Stats, error) {
 		}
 		groups[g][k].add(d)
 	}
-	seenProposal := map[int64]bool{}
+	seenProposal, seenPos := map[int64]bool{}, map[int64]bool{}
 	for rows.Next() {
 		d, err := scanDecision(rows)
 		if err != nil {
@@ -760,12 +786,15 @@ func (s *Service) Stats(days int) (Stats, error) {
 			case realtrade.StatusExpired:
 				p.Expired++
 			}
-			if d.ClosedAt > 0 && d.Action == "open" {
-				p.Closed++
-				p.PnlUSDT += d.PnlUSDT
-				if d.PnlUSDT > 0 {
-					p.Wins++
-				}
+		}
+		// a closed position is counted once, whichever of its actions were journaled
+		if d.ClosedAt > 0 && d.PosID > 0 && !seenPos[d.PosID] {
+			seenPos[d.PosID] = true
+			p := &st.Proposals
+			p.Closed++
+			p.PnlUSDT += d.PnlUSDT
+			if d.PnlUSDT > 0 {
+				p.Wins++
 			}
 		}
 	}
@@ -885,7 +914,8 @@ func (s *Service) JournalTool(_ context.Context, chat int64, a map[string]string
 		return nil, err
 	}
 	return map[string]any{"decisionId": d.ID, "recorded": d.line(), "note": "Stored with the price and fact-panel values now; the server follows the price " +
-		"1 h / 4 h / 24 h later and the proposal's outcome. You will be asked to review it when the outcome is in."}, nil
+		"1 h / 4 h / 24 h later and the proposal's outcome. You will be asked to review it when the outcome is in. " +
+		"One decision per coin per run: journaling the same coin again in this run replaces this entry."}, nil
 }
 
 // ReviewTool is desk_review.

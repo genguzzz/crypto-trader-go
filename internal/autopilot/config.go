@@ -373,8 +373,8 @@ func (d scanDef) hash() string {
 // wanted (or whose parameters changed) are cancelled, missing ones subscribed. A scan that cannot
 // start (no pool data yet, an invalid custom spec) is reported per strategy and retried each minute.
 func (s *Service) reconcile(ctx context.Context) {
-	s.runMu.Lock()
-	defer s.runMu.Unlock()
+	s.recMu.Lock()
+	defer s.recMu.Unlock()
 	cfg := s.Config()
 	want := cfg.desired()
 	have, err := s.scans.DeskSubs()

@@ -253,14 +253,24 @@ func main() {
 	rt.SetSignals(sig.BriefFor, sig.CancelForTrade)
 	// The trading desk: one standing chat run on strategy scans and on a schedule, with a decision journal
 	// (internal/autopilot). It only proposes; approval stays with the owner.
-	desk, err := autopilot.New(st, gate, sig, rt, deskMarket{eng}, autopilot.Options{TradeMode: func() string { return string(rt.Mode()) }})
+	desk, err := autopilot.New(st, gate, sig, rt, deskMarket{eng}, autopilot.Options{TradeMode: func() string { return string(rt.Mode()) },
+		Notify: func(text string) { // a run that failed, or runs that cannot start (once per outage)
+			go func() {
+				nctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				if err := al.Notify(nctx, text); err != nil {
+					log.Printf("autopilot: notify: %v", err)
+				}
+			}()
+		}})
 	if err != nil {
 		log.Fatal(err)
 	}
 	sig.SetDesk(desk.OnFire)
 	desk.SetOnChange(func(kind string) { eng.Publish("autopilot", map[string]any{"kind": kind}) })
 	dev.SetDesk(devapi.DeskTools{Journal: desk.JournalTool, Review: desk.ReviewTool, Remember: desk.RememberTool, Recall: desk.RecallTool})
-	gate.SetNotifyFilter(func(chat int64) bool { return !desk.IsDeskChat(chat) }) // its proposals are pushed by the trade bot; no note per run
+	// no "answer ready" note per desk run (its proposals are pushed by the trade bot, its failures by the desk)
+	gate.SetNotifyFilter(func(chat int64) bool { return !desk.RunInFlight(chat) })
 	gate.SetOnChatDone(func(chat int64) { sig.ChatDone(chat); rt.ChatDone(chat); desk.ChatDone(chat) })
 	gate.SetOnPlan(sig.LinkPlan)
 	if tradeBot != nil {

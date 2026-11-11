@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"crypto-trader-go/internal/realtrade"
+	"crypto-trader-go/internal/signals"
 )
 
 // The brief is the message a run delivers to the desk's chat. It is self-contained: the agent's
@@ -198,6 +199,20 @@ func (s *Service) brief(cfg Config, in briefInput) string {
 		b.WriteString("\n【待主人审核的提议】\n" + strings.Join(pend, "\n") + "\n")
 	}
 
+	// what the desk's agent is waiting for: a fresh context would otherwise subscribe to it again
+	if subs, _ := s.scans.List(signals.ListQuery{Status: signals.StatusActive, ChatID: in.Chat, Limit: 10}); len(subs) > 0 {
+		b.WriteString("\n【你在等的信号】（触发时会单独唤醒你；不要重复订阅，过时的用 unsubscribe_signal 取消）\n")
+		for _, x := range subs {
+			line := fmt.Sprintf("· #%d %s（%s 到期）", x.ID, x.Desc, time.UnixMilli(x.ExpiresAt).In(tz8).Format("01-02 15:04"))
+			if x.TradeID > 0 {
+				line += fmt.Sprintf(" · 管理仓位 #%d", x.TradeID)
+			}
+			if x.Intent != "" {
+				line += "：" + clip(x.Intent, 80)
+			}
+			b.WriteString(line + "\n")
+		}
+	}
 	if ds, _ := s.Journal(JournalQuery{Limit: briefDecisions}); len(ds) > 0 {
 		b.WriteString("\n【最近决策】（新 → 旧；括号里是之后的价格变化，按你的方向计正负）\n")
 		for _, d := range ds {

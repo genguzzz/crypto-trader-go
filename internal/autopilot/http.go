@@ -110,8 +110,8 @@ func (s *Service) StrategyViews() []StrategyView {
 				continue
 			}
 			sc := ScanView{SignalID: sub.ID, Desc: sub.Desc, CooldownMin: sub.CooldownMin, FireCount: sub.FireCount, LastFiredAt: sub.LastFiredAt}
-			if full, err := s.scans.Get(sub.ID); err == nil && full.Progress != nil {
-				sc.Progress = full.Progress.Text
+			if sub.Progress != nil {
+				sc.Progress = sub.Progress.Text
 			}
 			v.Scans = append(v.Scans, sc)
 		}

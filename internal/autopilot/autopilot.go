@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS desk_decisions(id INTEGER PRIMARY KEY AUTOINCREMENT, 
   trigger TEXT NOT NULL DEFAULT '', proposal_id INTEGER NOT NULL DEFAULT 0, px REAL NOT NULL DEFAULT 0, snapshot TEXT NOT NULL DEFAULT '',
   px_1h REAL, px_4h REAL, px_24h REAL, ret_1h REAL, ret_4h REAL, ret_24h REAL, mfe_24h REAL, mae_24h REAL,
   outcome_at INTEGER NOT NULL DEFAULT 0, proposal_status TEXT NOT NULL DEFAULT '', pnl_usdt REAL NOT NULL DEFAULT 0,
-  closed_at INTEGER NOT NULL DEFAULT 0, close_kind TEXT NOT NULL DEFAULT '',
+  closed_at INTEGER NOT NULL DEFAULT 0, close_kind TEXT NOT NULL DEFAULT '', pos_id INTEGER NOT NULL DEFAULT 0,
   review TEXT NOT NULL DEFAULT '', verdict TEXT NOT NULL DEFAULT '', reviewed_at INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS desk_decisions_ts ON desk_decisions(ts);
 CREATE INDEX IF NOT EXISTS desk_decisions_inst ON desk_decisions(inst_id, ts);
@@ -109,8 +109,10 @@ type Chats interface {
 type Scans interface {
 	SubscribeContext(ctx context.Context, in signals.SubscribeInput) (signals.Subscription, error)
 	Cancel(id int64, by, reason string) (signals.Subscription, error)
+	// DeskSubs are the desk's active scans by strategy key, each with its progress.
 	DeskSubs() (map[string]signals.Subscription, error)
-	Get(id int64) (signals.Subscription, error)
+	// List: the desk chat's own subscriptions (what its agent is waiting for).
+	List(q signals.ListQuery) ([]signals.Subscription, error)
 }
 
 // Trades is the part of the proposal service the desk reads (it never approves or executes).
@@ -135,6 +137,9 @@ type Options struct {
 	Logf func(format string, args ...any)
 	// TradeMode is shown in the status and the brief ("dryrun" | "live").
 	TradeMode func() string
+	// Notify pushes a short note to the owner when the desk cannot work: a run that failed, or runs
+	// that cannot start (once per outage). Ordinary runs are not pushed. Must not block.
+	Notify func(text string)
 }
 
 // Service is the trading desk.
@@ -155,9 +160,11 @@ type Service struct {
 	stratErr  map[string]string // strategy key → why its scan is not running
 	lastTry   time.Time         // last attempt to start a run that failed
 	lastError string
+	outage    bool // the owner was told that runs cannot start
 	onChange  func(kind string)
 
 	runMu sync.Mutex // one run decision at a time (tick, manual run)
+	recMu sync.Mutex // one reconciliation of the scans at a time
 	nudge chan struct{}
 }
 
@@ -185,8 +192,10 @@ func New(st *store.Store, chats Chats, scans Scans, trades Trades, mkt Market, o
 			s.cfg = c
 		}
 	}
-	// a run that was in flight when the server stopped never reports back
-	s.db.Exec(`UPDATE desk_runs SET status=?, error='服务重启，运行中断', finished_at=? WHERE status=?`, RunFailed, s.now().UnixMilli(), RunRunning)
+	// a run that was in flight when the server stopped never reports back: it failed, its slot is due
+	// again (within the grace period) and the signals it carried go back to the inbox
+	s.db.Exec(`UPDATE desk_inbox SET status=?, run_id=0 WHERE status=? AND run_id IN (SELECT id FROM desk_runs WHERE status=?)`, InboxPending, InboxDelivered, RunRunning)
+	s.db.Exec(`UPDATE desk_runs SET status=?, slot=0, error='服务重启，运行中断', finished_at=? WHERE status=?`, RunFailed, s.now().UnixMilli(), RunRunning)
 	return s, nil
 }
 
@@ -492,8 +501,15 @@ func (s *Service) start(_ context.Context, cfg Config, trigger string, slot int6
 	fail := func(err error) (int64, error) {
 		s.mu.Lock()
 		s.lastTry, s.lastError = now, err.Error()
+		first := !s.outage && trigger != TriggerManual // the owner sees a manual run's error himself
+		if first {
+			s.outage = true
+		}
 		s.mu.Unlock()
 		s.logf("autopilot: %s run not started: %v", trigger, err)
+		if first {
+			s.note("交易台无法启动运行：" + err.Error() + "\n恢复之前不会再提醒；到点的巡检和待处理信号会继续重试。")
+		}
 		return 0, err
 	}
 	chat, err := s.ensureChat()
@@ -541,7 +557,7 @@ func (s *Service) start(_ context.Context, cfg Config, trigger string, slot int6
 		s.db.Exec(q+")", ids...)
 	}
 	s.mu.Lock()
-	s.lastTry, s.lastError = time.Time{}, ""
+	s.lastTry, s.lastError, s.outage = time.Time{}, "", false
 	s.mu.Unlock()
 	s.logf("autopilot: run #%d started (%s, %d signals)", runID, trigger, len(items))
 	s.changed("run")
@@ -592,7 +608,24 @@ func (s *Service) settle(now time.Time) {
 	s.db.Exec(`UPDATE desk_runs SET status=?, error=?, finished_at=?, answer_msg=?, summary=?, cost_usd=?, tokens=?, latency_ms=?, decisions=?, proposals=? WHERE id=?`,
 		status, errText, now.UnixMilli(), a.MsgID, clip(a.Text, 600), a.CostUSD, a.Tokens, a.LatencyMs, decisions, proposals, r.ID)
 	s.logf("autopilot: run #%d %s (%d decisions, %d proposals, $%.3f)", r.ID, status, decisions, proposals, a.CostUSD)
+	if status == RunFailed && errText != "已停止" {
+		s.note(fmt.Sprintf("交易台 #%d（%s）没有完成：%s", r.ID, r.Label, errText))
+	}
 	s.changed("run")
+}
+
+// note pushes a short message to the owner (Options.Notify).
+func (s *Service) note(text string) {
+	if s.opts.Notify != nil {
+		s.opts.Notify(text)
+	}
+}
+
+// RunInFlight reports whether chat is the desk's and a run is in flight there: that turn's answer is
+// not pushed as "answer ready" (its proposals are pushed by the trade bot, its failure by note). The
+// owner's own questions in the desk's chat are announced like in any other chat.
+func (s *Service) RunInFlight(chat int64) bool {
+	return s.IsDeskChat(chat) && s.running() != nil
 }
 
 // currentRun is the run a journal entry made now belongs to (0: the owner's own conversation).

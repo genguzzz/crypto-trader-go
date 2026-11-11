@@ -87,11 +87,12 @@ func (f *fakeChats) last() string {
 func (f *fakeChats) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.steers) }
 
 type fakeScans struct {
-	mu     sync.Mutex
-	next   int64
-	subs   map[int64]signals.Subscription
-	fail   map[string]error
-	cancel []string
+	mu      sync.Mutex
+	next    int64
+	subs    map[int64]signals.Subscription
+	fail    map[string]error
+	cancel  []string
+	watches []signals.Subscription // the desk chat's own subscriptions
 }
 
 func (f *fakeScans) SubscribeContext(_ context.Context, in signals.SubscribeInput) (signals.Subscription, error) {
@@ -104,7 +105,8 @@ func (f *fakeScans) SubscribeContext(_ context.Context, in signals.SubscribeInpu
 		return signals.Subscription{}, fmt.Errorf("unexpected subscribe %+v", in)
 	}
 	f.next++
-	sub := signals.Subscription{ID: f.next, Kind: signals.KindDesk, Label: in.Desk, Spec: in.Spec, CooldownMin: in.CooldownMin, Status: signals.StatusActive, Desc: in.Desk}
+	sub := signals.Subscription{ID: f.next, Kind: signals.KindDesk, Label: in.Desk, Spec: in.Spec, CooldownMin: in.CooldownMin, Status: signals.StatusActive, Desc: in.Desk,
+		Progress: &signals.Progress{Text: "最接近：" + in.Desk}}
 	if f.subs == nil {
 		f.subs = map[int64]signals.Subscription{}
 	}
@@ -131,13 +133,13 @@ func (f *fakeScans) DeskSubs() (map[string]signals.Subscription, error) {
 	}
 	return out, nil
 }
-func (f *fakeScans) Get(id int64) (signals.Subscription, error) {
+func (f *fakeScans) List(q signals.ListQuery) ([]signals.Subscription, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if s, ok := f.subs[id]; ok {
-		return s, nil
+	if q.ChatID != 7 || q.Status != signals.StatusActive {
+		return nil, fmt.Errorf("unexpected list %+v", q)
 	}
-	return signals.Subscription{}, signals.ErrNotFound
+	return f.watches, nil
 }
 func (f *fakeScans) keys() map[string]int64 {
 	out := map[string]int64{}
@@ -235,6 +237,13 @@ type env struct {
 	mkt    *fakeMarket
 	now    time.Time
 	mu     sync.Mutex
+	notes  []string
+}
+
+func (e *env) noted() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string(nil), e.notes...)
 }
 
 func (e *env) clock() time.Time { e.mu.Lock(); defer e.mu.Unlock(); return e.now }
@@ -258,7 +267,8 @@ func newEnv(t *testing.T, start time.Time) *env {
 	t.Cleanup(func() { st.DB.Close() })
 	e := &env{t: t, chats: &fakeChats{}, scans: &fakeScans{}, trades: &fakeTrades{}, now: start}
 	e.mkt = &fakeMarket{now: e.clock, px: map[string]float64{ena: 0.5, btc: 100000}, bars: map[string][]signals.Bar{}}
-	e.s, err = New(st, e.chats, e.scans, e.trades, e.mkt, Options{Now: e.clock, Logf: func(string, ...any) {}, TradeMode: func() string { return "dryrun" }})
+	e.s, err = New(st, e.chats, e.scans, e.trades, e.mkt, Options{Now: e.clock, Logf: func(string, ...any) {}, TradeMode: func() string { return "dryrun" },
+		Notify: func(text string) { e.mu.Lock(); e.notes = append(e.notes, text); e.mu.Unlock() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,9 +398,15 @@ func TestScheduleRuns(t *testing.T) {
 	if e.chats.count() != 1 || e.s.Status().Running == nil {
 		t.Fatal("a second run started while the first is in flight")
 	}
+	if !e.s.RunInFlight(7) || e.s.RunInFlight(8) {
+		t.Fatal("RunInFlight should hold for the desk's chat only, while its run is in flight")
+	}
 	e.chats.finish("结论：没有机会。", 0.12)
 	e.s.ChatDone(7)
 	e.step()
+	if e.s.RunInFlight(7) || len(e.noted()) != 0 {
+		t.Fatalf("after a good run: in flight %v, notes %v", e.s.RunInFlight(7), e.noted())
+	}
 	rs := e.runs()
 	if len(rs) != 1 || rs[0].Status != RunDone || rs[0].CostUSD != 0.12 || rs[0].Tokens != 1234 || rs[0].Summary != "结论：没有机会。" || rs[0].Trigger != TriggerSchedule {
 		t.Fatalf("run %+v", rs)
@@ -401,14 +417,27 @@ func TestScheduleRuns(t *testing.T) {
 	if e.chats.count() != 1 {
 		t.Fatal("slot ran twice")
 	}
+	e.scans.watches = []signals.Subscription{{ID: 31, Desc: "ENA ≤ 0.428", ExpiresAt: at(23, 0).UnixMilli(), TradeID: 12, Intent: "回踩企稳后加仓"}}
 	e.set(at(15, 51))
 	e.step()
 	if e.chats.count() != 2 {
 		t.Fatal("no run at 15:50")
 	}
+	if msg := e.chats.last(); !strings.Contains(msg, "【你在等的信号】") || !strings.Contains(msg, "· #31 ENA ≤ 0.428（11-11 23:00 到期） · 管理仓位 #12：回踩企稳后加仓") {
+		t.Fatalf("the brief does not list what the desk waits for:\n%s", msg)
+	}
 	st2 := e.s.Status()
 	if st2.Runs24h != 2 || st2.Running == nil || st2.LastRun == nil || st2.LastRun.ID != 1 || st2.NextScheduleAt != at(17, 50).UnixMilli() {
 		t.Fatalf("status %+v", st2)
+	}
+	// a run whose answer failed is pushed to the owner (a good one is not)
+	e.chats.mu.Lock()
+	e.chats.msgID++
+	e.chats.running, e.chats.answer = false, &aigate.Answer{MsgID: e.chats.msgID, Error: "模型过载"}
+	e.chats.mu.Unlock()
+	e.step()
+	if n := e.noted(); len(n) != 1 || n[0] != "交易台 #2（定时巡检）没有完成：模型过载" {
+		t.Fatalf("failed run notes %v", n)
 	}
 }
 
@@ -419,6 +448,11 @@ func TestRunThatCannotStartIsRetried(t *testing.T) {
 	e.step()
 	if rs := e.runs(); len(rs) != 0 || !strings.Contains(e.s.Status().LastError, "AI 未就绪") {
 		t.Fatalf("a run that never started: rows %+v, status error %q", rs, e.s.Status().LastError)
+	}
+	e.add(2*time.Minute + time.Second)
+	e.step() // fails again: the owner was told once
+	if n := e.noted(); len(n) != 1 || !strings.Contains(n[0], "交易台无法启动运行") || !strings.Contains(n[0], "AI 未就绪") {
+		t.Fatalf("outage notes %v", n)
 	}
 	e.chats.err = nil
 	e.add(time.Minute) // within the retry gap
@@ -652,6 +686,9 @@ func TestReconcileScans(t *testing.T) {
 	if view.Error != "no current data" || len(view.Scans) != 0 || !e.s.strategiesBroken() {
 		t.Fatalf("broken strategy view %+v", view)
 	}
+	if v := e.s.StrategyViews()[0]; len(v.Scans) != 1 || v.Scans[0].Progress != "最接近：surge" {
+		t.Fatalf("scan view %+v", v)
+	}
 	e.scans.fail = nil
 	e.s.reconcile(context.Background())
 	if e.scans.keys()["oi_build"] == 0 || e.s.strategiesBroken() {
@@ -691,9 +728,19 @@ func TestJournalFollowAndStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	first := out.(map[string]any)["decisionId"].(int64)
+	// the same coin again in the same run is the run's final word: the earlier row is replaced
+	out, err = e.s.JournalTool(ctx, 7, map[string]string{"instId": "ena", "action": "open", "side": "short", "conviction": "medium",
+		"thesis": "急涨后量能衰减，资金费转正，做空回落", "entry": "0.5", "sl": "0.52", "tp": "0.46", "invalidation": "15m 收盘站上 0.52", "tags": "逆势,资金费", "proposalId": "5"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	id := out.(map[string]any)["decisionId"].(int64)
+	if _, err := e.s.Decision(first); err == nil || id == first {
+		t.Fatal("a second decision on the same coin in one run did not replace the first")
+	}
 	d, _ := e.s.Decision(id)
-	if d.RunID != 1 || d.Trigger != TriggerSignal || d.Strategy != "surge" || d.Px != 0.5 || d.Conviction != "medium" || d.ProposalStatus != "pending" ||
+	if d.RunID != 1 || d.Trigger != TriggerSignal || d.Strategy != "surge" || d.Px != 0.5 || d.PosID != 5 || d.Conviction != "medium" || d.ProposalStatus != "pending" ||
 		!strings.Contains(string(d.Snapshot), `"ret_1h":0.031`) || !strings.Contains(string(d.Snapshot), `"btcPx":100000`) {
 		t.Fatalf("decision %+v", d)
 	}
@@ -753,10 +800,24 @@ func TestJournalFollowAndStats(t *testing.T) {
 		t.Fatalf("excursions %+v / %+v (want about +6 / -6)", *d.MFE24h, *d.MAE24h)
 	}
 	line := d.line()
-	for _, want := range []string{"ENA 开仓空（中） @0.5", "1h +4.0%", "4h +1.0%", "24h -2.0%", "提议 #5 executed，已平仓 -12.50 USDT"} {
+	for _, want := range []string{"ENA 开仓空（中） @0.5", "1h +4.0%", "4h +1.0%", "24h -2.0%", "提议 #5 executed，仓位已平 -12.50 USDT"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line lacks %q: %s", want, line)
 		}
+	}
+	// a reduce on the same position, journaled by the owner's conversation, carries the position's result
+	// and the position is still counted once
+	e.trades.put(realtrade.Proposal{ID: 6, InstID: ena, Kind: realtrade.KindReduce, Side: "short", Status: realtrade.StatusExecuted, PosID: 5})
+	red, err := e.s.Record(JournalInput{ChatID: 7, InstID: ena, Action: "reduce", Side: "short", Thesis: "到第一目标先减一半", ProposalID: 6})
+	if err != nil || red.PosID != 5 {
+		t.Fatalf("reduce %+v %v", red, err)
+	}
+	e.s.follow()
+	if red, _ = e.s.Decision(red.ID); red.ClosedAt != closed || red.PnlUSDT != -12.5 {
+		t.Fatalf("the reduce does not carry its position's result: %+v", red)
+	}
+	if _, err := e.s.Review(red.ID, "na", "同一仓位的减仓，结论见开仓那笔"); err != nil {
+		t.Fatal(err)
 	}
 	// the review is due; the pass on BTC (+1% only) is not worth one
 	due := e.s.reviewsDue(5)
@@ -813,14 +874,14 @@ func TestJournalFollowAndStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Decisions != 2 || st.Runs != 2 || st.Directional.N != 2 || st.Directional.Followed != 1 || *st.Directional.WinRate4h != 1 ||
-		st.Proposals.Made != 1 || st.Proposals.Executed != 1 || st.Proposals.Closed != 1 || st.Proposals.Wins != 0 || st.Proposals.PnlUSDT != -12.5 ||
-		st.Verdicts["mixed"] != 1 || st.ByStrategy[0].N != 1 || len(st.ByAction) != 2 {
+	if st.Decisions != 3 || st.Runs != 2 || st.Directional.N != 3 || st.Directional.Followed != 1 || *st.Directional.WinRate4h != 1 ||
+		st.Proposals.Made != 2 || st.Proposals.Executed != 2 || st.Proposals.Closed != 1 || st.Proposals.Wins != 0 || st.Proposals.PnlUSDT != -12.5 ||
+		st.Verdicts["mixed"] != 1 || len(st.ByAction) != 3 {
 		t.Fatalf("stats %+v", st)
 	}
 	// desk_recall reads it from any conversation
 	rec, err := e.s.RecallTool(ctx, 99, map[string]string{"what": "journal", "action": "trades"})
-	if err != nil || len(rec.(map[string]any)["decisions"].([]map[string]any)) != 1 {
+	if err != nil || len(rec.(map[string]any)["decisions"].([]map[string]any)) != 2 {
 		t.Fatalf("recall %+v %v", rec, err)
 	}
 	if _, err := e.s.RecallTool(ctx, 99, map[string]string{"what": "nope"}); err == nil {
@@ -844,11 +905,18 @@ func TestFollowWithoutPrice(t *testing.T) {
 	}
 }
 
+// A run cut off by a restart failed; its slot is due again and the signals it carried are back in the inbox.
 func TestRestartClosesInterruptedRun(t *testing.T) {
 	e := newEnv(t, at(13, 50))
 	e.enable(nil)
+	e.fire("surge", ena, "ENA 15 分钟内 +3%")
 	e.step()
-	s2, err := New(e.s.st, e.chats, e.scans, e.trades, e.mkt, Options{Now: e.clock, Logf: func(string, ...any) {}})
+	if e.chats.count() != 1 || e.s.Status().Pending != 0 {
+		t.Fatal("the scheduled run should have taken the signal")
+	}
+	e.add(3 * time.Minute)
+	chats := &fakeChats{chat: 7}
+	s2, err := New(e.s.st, chats, e.scans, e.trades, e.mkt, Options{Now: e.clock, Logf: func(string, ...any) {}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -858,5 +926,15 @@ func TestRestartClosesInterruptedRun(t *testing.T) {
 	rs, _ := s2.Runs(10, 0)
 	if len(rs) != 1 || rs[0].Status != RunFailed || !strings.Contains(rs[0].Error, "重启") {
 		t.Fatalf("interrupted run %+v", rs)
+	}
+	if st := s2.Status(); st.Pending != 1 || st.Running != nil {
+		t.Fatalf("after the restart: %+v", st)
+	}
+	s2.mu.Lock()
+	s2.chatID = 7
+	s2.mu.Unlock()
+	s2.step(context.Background())
+	if chats.count() != 1 || !strings.Contains(chats.last(), "定时巡检") || !strings.Contains(chats.last(), "[急涨急跌] 15 分钟内 +3%") {
+		t.Fatal("the interrupted slot was not run again with its signal")
 	}
 }

@@ -18,7 +18,7 @@ type DeskSink func(d Delivery, sub Subscription)
 // SetDesk wires the trading desk's inbox.
 func (s *Service) SetDesk(f DeskSink) { s.mu.Lock(); s.desk = f; s.mu.Unlock() }
 
-// DeskSubs are the active desk subscriptions, by strategy key (Label).
+// DeskSubs are the active desk subscriptions with their progress, by strategy key (Label).
 func (s *Service) DeskSubs() (map[string]Subscription, error) {
 	subs, err := s.query(`status='active' AND kind='desk'`, nil, 200)
 	if err != nil {
