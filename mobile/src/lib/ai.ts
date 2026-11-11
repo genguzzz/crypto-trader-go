@@ -24,7 +24,8 @@ export type Part = { t: "text"; v: string } | ThinkPart | ToolPart;
 export type MsgRole = "user" | "assistant" | "signal" | "trade";
 export interface Usage { input: number; output: number; cacheWrite: number; cacheRead: number; searches: number }
 export interface Msg { id?: number; ts?: number; role: MsgRole; parts: Part[]; error?: string; costUsd?: number; usage?: Usage; latencyMs?: number; live?: boolean }
-export interface ChatSummary { id: number; title: string; instId?: string; updated: number; costUsd: number; running: boolean }
+/** kind "desk" = the standing trading desk chat (lib/desk.ts): server-run, listed first, not deletable. */
+export interface ChatSummary { id: number; title: string; kind?: string; instId?: string; updated: number; costUsd: number; running: boolean }
 export interface Note { id: number; ts: number; text: string; by: "ai" | "owner" }
 
 // The model menu's choices (models, thinking levels, web search default) come from the server — see
@@ -37,6 +38,9 @@ export const ai = {
   open: false,
   chatId: 0,
   title: "",
+  /** kind of the chat on screen ("desk" = the trading desk) and how many older messages were not loaded */
+  kind: "",
+  truncated: 0,
   msgs: [] as Msg[],
   running: false,
   chats: [] as ChatSummary[],
@@ -430,6 +434,7 @@ export async function stop() {
   await kfetch(`/api/v1/ai/chats/${ai.chatId}/stop`, { method: "POST" }).catch((e) => log.warn("stop failed", e));
 }
 
+const CHAT_TAIL = 160;
 interface StoredMsg { id: number; ts?: number; role: MsgRole; content: string; steps: any[]; costUsd?: number; usage?: Usage; latencyMs?: number; error?: string }
 function fromStored(m: StoredMsg): Msg {
   const parts: Part[] =
@@ -440,7 +445,8 @@ function fromStored(m: StoredMsg): Msg {
 /** Load a chat from the server and, while it is answering, follow it to the end. Throws on HTTP errors. */
 async function sync(id: number): Promise<End> {
   const my = ++syncSeq;
-  const r = await kfetch(`/api/v1/ai/chats/${id}`);
+  // the desk's chat never ends: every chat is loaded by its tail (an ordinary chat is far shorter)
+  const r = await kfetch(`/api/v1/ai/chats/${id}?last=${CHAT_TAIL}`);
   if (my !== syncSeq) return "replaced";
   if (!r.ok) {
     if (r.status === 404 && id === ai.chatId) newChat();
@@ -450,6 +456,8 @@ async function sync(id: number): Promise<End> {
   if (my !== syncSeq) return "replaced";
   setChat(c.id);
   ai.title = c.title;
+  ai.kind = c.kind ?? "";
+  ai.truncated = c.truncated ?? 0;
   ai.msgs = ((c.messages ?? []) as StoredMsg[]).map(fromStored);
   ai.interrupted = !!c.interrupted;
   ai.error = "";
@@ -523,6 +531,8 @@ export function newChat() {
   setChat(0);
   setPending(0);
   ai.title = "";
+  ai.kind = "";
+  ai.truncated = 0;
   ai.msgs = [];
   ai.error = "";
   ai.interrupted = false;

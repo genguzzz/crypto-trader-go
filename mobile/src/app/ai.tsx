@@ -23,7 +23,9 @@ import { Markdown } from "@/components/ai/Markdown";
 import { Orb } from "@/components/ai/Orb";
 import { ScrollLock } from "@/components/ai/InnerScroll";
 import { ChatRail, railLabel, type RailMark } from "@/components/ai/ChatRail";
-import { HistoryPane, NotesPane, ProposalsPane, SelectPane, onShowFullText, plainText } from "@/components/ai/AiPanes";
+import { HistoryPane, NotesPane, PaneHeader, ProposalsPane, SelectPane, onShowFullText, plainText } from "@/components/ai/AiPanes";
+import { DESK, DeskBar, DeskBubble, DeskPane } from "@/components/ai/DeskPane";
+import { isDeskBrief } from "@/lib/desk";
 import { ProposalById, ProposalChartHost, TradeBubble, proposalIds } from "@/components/ai/ProposalCard";
 import { SignalBubble, SignalById, SignalHost, signalIds } from "@/components/ai/SignalCard";
 import { usePendingProposals, useRealtrade } from "@/lib/realtrade";
@@ -74,7 +76,7 @@ function phaseOf(m: Msg, now: number): "thinking" | "typing" | "tool" | "reasoni
 }
 
 const flash = (m: string) => toast(m, undefined, undefined, true);
-type Pane = "history" | "notes" | "select" | "trades";
+type Pane = "history" | "notes" | "select" | "trades" | "desk";
 
 export default function AiScreen() {
   const { width } = useWindowDimensions();
@@ -85,12 +87,12 @@ export default function AiScreen() {
   // history / memory slide over the chat inside this sheet (a modal pushed from the sheet took no touches)
   // ?pane=trades (the 「AI 提议了一笔交易」 toast) opens with the proposals pane in place
   const { pane: paneParam, chat: chatParam } = useLocalSearchParams<{ pane?: string; chat?: string }>();
-  const [pane, setPane] = useState<Pane | null>(paneParam === "trades" ? "trades" : null);
+  const [pane, setPane] = useState<Pane | null>(paneParam === "trades" ? "trades" : paneParam === "desk" ? "desk" : null);
   const [menu, setMenu] = useState(false);
   const [headH, setHeadH] = useState(60);
   const [selText, setSelText] = useState("");
   const [selFull, setSelFull] = useState<{ title: string } | null>(null); // a step's request / result, monospace
-  const [slide] = useState(() => new Animated.Value(paneParam === "trades" ? 1 : 0));
+  const [slide] = useState(() => new Animated.Value(paneParam === "trades" || paneParam === "desk" ? 1 : 0));
   const showPane = (p: Pane | null) => {
     if (p) {
       setPane(p);
@@ -140,6 +142,7 @@ export default function AiScreen() {
   const inputRef = useRef<TextInputInstance>(null);
   const stick = useRef(true);
   const sym = s.instId.split("-")[0];
+  const desk = s.kind === "desk"; // the standing trading desk chat: its own accent, a status strip, run briefs
 
   useFocusEffect(
     useCallback(() => {
@@ -218,8 +221,14 @@ export default function AiScreen() {
         {/* title with the model chip under it: tap opens model / thinking / web search */}
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
-            <Orb size={14} ring={7} period={4000} glow={0.6} />
-            <Text numberOfLines={1} style={{ flex: 1, fontSize: fs.xl, fontWeight: "600", color: colors.text }}>{s.title || "AI 研究助手"}</Text>
+            {desk ? <Ionicons name="pulse" size={16} color={DESK} /> : <Orb size={14} ring={7} period={4000} glow={0.6} />}
+            <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: fs.xl, fontWeight: "600", color: colors.text }}>{desk ? "交易台" : s.title || "AI 研究助手"}</Text>
+            {desk ? (
+              <View style={{ paddingHorizontal: 6, height: 18, borderRadius: 9, justifyContent: "center", borderWidth: 1, borderColor: "rgba(47,224,255,0.4)" }}>
+                <Text style={{ fontSize: 10, fontWeight: "600", color: DESK }}>常驻</Text>
+              </View>
+            ) : null}
+            <View style={{ flex: 1 }} />
           </View>
           <View style={{ marginLeft: 21 }}>
             <ModelChip onPress={() => { Keyboard.dismiss(); setMenu(true); }} />
@@ -231,6 +240,7 @@ export default function AiScreen() {
         <HeadButton icon="create-outline" label="新对话" onPress={fresh} />
       </View>
       </GestureDetector>
+      {desk ? <DeskBar onOpenDesk={() => showPane("desk")} /> : null}
 
       <KeyboardAvoidingView style={{ flex: 1, overflow: "hidden" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollLock.Provider value={lockOuter}>
@@ -251,7 +261,13 @@ export default function AiScreen() {
           }}
           onContentSizeChange={(_, h) => { setRailContent(h); if (stick.current) scroller.current?.scrollToEnd({ animated: false }); }}
         >
-          {!s.msgs.length ? (
+          {!s.msgs.length && desk ? (
+            <View style={{ alignItems: "center", gap: 10, paddingTop: 40, paddingHorizontal: 20 }}>
+              <Ionicons name="pulse" size={40} color={DESK} />
+              <Text style={{ fontSize: fs.x2, fontWeight: "700", color: colors.text }}>交易台 · 全自动</Text>
+              <Text style={{ fontSize: fs.sm, lineHeight: 20, color: colors.textFaint, textAlign: "center", maxWidth: 340 }}>这是一个常驻会话：策略信号触发和定时巡检都会在这里唤醒 AI，它分析后记录决策、提交交易提议，由你批准。你也可以随时在这里直接对话或下指示。</Text>
+            </View>
+          ) : !s.msgs.length ? (
             <View style={{ alignItems: "center", gap: 10, paddingTop: 26, paddingHorizontal: 4, paddingBottom: 8 }}>
               <View {...hold.handlers}>
                 <Orb size={64} period={hold.phase === "rec" ? 1400 : 5000} scale={hold.phase === "rec" ? 1.15 + hold.level * 0.2 : hold.phase === "arming" ? 0.92 : 1} danger={hold.cancelZone} glow={hold.phase === "rec" ? 0.6 + hold.level * 0.4 : 0.3}>
@@ -287,11 +303,12 @@ export default function AiScreen() {
             </View>
           ) : null}
 
+          {desk && s.truncated ? <Text style={{ alignSelf: "center", marginTop: 8, fontSize: fs.xs, color: colors.textFaint }}>更早的 {s.truncated} 条消息未加载 · 决策都在交易台日志里</Text> : null}
           {s.msgs.map((m, mi) => {
             const k = String(m.id ?? "m" + mi);
             const at = (e: { nativeEvent: { layout: { y: number } } }) => railAt(k, e.nativeEvent.layout.y);
             return m.role === "user" ? <View key={k} onLayout={at}><UserBubble text={textOf(m)} ts={m.ts} onSelect={selectText} /></View>
-              : m.role === "signal" ? <View key={k} onLayout={at}><Stamp ts={m.ts} align="flex-start" /><SignalBubble text={textOf(m)} onSelect={selectText} /></View>
+              : m.role === "signal" ? <View key={k} onLayout={at}><Stamp ts={m.ts} align="flex-start" />{isDeskBrief(textOf(m)) ? <DeskBubble text={textOf(m)} onSelect={selectText} /> : <SignalBubble text={textOf(m)} onSelect={selectText} />}</View>
               : m.role === "trade" ? <View key={k} onLayout={at}><Stamp ts={m.ts} align="flex-start" /><TradeBubble text={textOf(m)} onSelect={selectText} /></View>
               : <Answer key={k} m={m} now={now} onSelect={selectText} />;
           })}
@@ -370,7 +387,8 @@ export default function AiScreen() {
       {pane ? (
         <Animated.View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 10, backgroundColor: colors.bg,
           transform: [{ translateX: slide.interpolate({ inputRange: [0, 1], outputRange: [width, 0] }) }] }}>
-          {pane === "history" ? <HistoryPane onClose={() => showPane(null)} />
+          {pane === "history" ? <HistoryPane onClose={() => showPane(null)} onDesk={() => showPane("desk")} />
+            : pane === "desk" ? <DeskPane onClose={() => showPane(null)} header={(title, right) => <PaneHeader title={title} right={right} onClose={() => showPane(null)} />} />
             : pane === "select" ? <SelectPane text={selText} title={selFull?.title} mono={!!selFull} onClose={() => showPane(null)} />
             : pane === "trades" ? <ProposalsPane onClose={() => showPane(null)} />
             : <NotesPane onClose={() => showPane(null)} />}

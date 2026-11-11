@@ -9,10 +9,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { copy } from "@/lib/device";
 import { EmptyState, ErrorBox, Loading, Pull, Tag, confirm, tap, toast, toastError, styles } from "@/components/ui";
 import { ProposalCard } from "@/components/ai/ProposalCard";
+import { DeskCard } from "@/components/ai/DeskPane";
 import { useQuery } from "@/lib/query";
 import { refreshProposals, rtApi, usePendingProposals, useRealtrade, useRecentProposals, type RtConfig } from "@/lib/realtrade";
 
-function PaneHeader({ title, onClose, right }: { title: string; onClose: () => void; right?: ReactNode }) {
+export function PaneHeader({ title, onClose, right }: { title: string; onClose: () => void; right?: ReactNode }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingTop: Platform.OS === "web" ? 12 : 18, paddingHorizontal: 8, paddingBottom: 8, borderBottomWidth: 1, borderColor: colors.border }}>
       <Pressable hitSlop={10} accessibilityLabel="返回对话" onPress={() => { tap(); onClose(); }} style={{ width: 40, height: 36, justifyContent: "center", alignItems: "center" }}>
@@ -29,7 +30,7 @@ const ago = (t: number) => {
   return s < 60 ? "刚刚" : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : s < 86400 ? `${Math.floor(s / 3600)} 小时前` : `${Math.floor(s / 86400)} 天前`;
 };
 
-export function HistoryPane({ onClose }: { onClose: () => void }) {
+export function HistoryPane({ onClose, onDesk }: { onClose: () => void; onDesk: () => void }) {
   const s = useAi();
   const [state, setState] = useState<"loading" | "ok" | string>(s.chats.length ? "ok" : "loading");
   const load = () =>
@@ -45,6 +46,7 @@ export function HistoryPane({ onClose }: { onClose: () => void }) {
     onClose();
     openChat(id).catch((e) => toastError("未能打开对话", e));
   };
+  const chats = s.chats.filter((c) => c.kind !== "desk");
   const remove = (id: number, title: string) =>
     confirm("删除对话", `「${title}」会从服务器删除。`, "删除", () => void deleteChat(id).catch((e) => toastError("未能删除", e)), true);
 
@@ -57,8 +59,10 @@ export function HistoryPane({ onClose }: { onClose: () => void }) {
         <ErrorBox text={state} onRetry={load} />
       ) : (
         <ScrollView contentContainerStyle={{ padding: 8, paddingBottom: 40 }} refreshControl={<Pull onRefresh={load} />}>
-          {!s.chats.length ? <EmptyState icon="chatbubbles-outline" text="还没有对话" /> : null}
-          {s.chats.map((c) => (
+          {/* the standing trading desk is not one of the conversations: pinned, its own look, never deleted */}
+          <DeskCard active={s.kind === "desk"} onOpenChat={pick} onOpenDesk={() => { tap(); onDesk(); }} />
+          {!chats.length ? <EmptyState icon="chatbubbles-outline" text="还没有对话" /> : null}
+          {chats.map((c) => (
             <Pressable key={c.id} onPress={() => pick(c.id)} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, paddingLeft: 10, paddingRight: 4, borderRadius: 10, backgroundColor: c.id === s.chatId ? colors.primarySoft : pressed ? colors.raised : undefined })}>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text numberOfLines={1} style={{ fontSize: fs.lg, color: colors.text }}>{c.title}</Text>
