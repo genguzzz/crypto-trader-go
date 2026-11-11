@@ -252,3 +252,49 @@ func (e *Engine) KeepMany(on, off []string) {
 		e.updateSubscriptions()
 	}
 }
+
+// KeepFor replaces the set of instruments one named holder needs streaming (e.g. "signals" for the
+// agent's signal subscriptions). Holders are independent of each other and of Keep, so one releasing
+// an instrument never stops another's stream.
+func (e *Engine) KeepFor(holder string, ids []string) {
+	want := map[string]bool{}
+	for _, id := range ids {
+		if e.instFor(id) != nil {
+			want[id] = true
+		}
+	}
+	e.mu.Lock()
+	if e.keepBy == nil {
+		e.keepBy = map[string]map[string]bool{}
+	}
+	prev := e.keepBy[holder]
+	changed := len(prev) != len(want)
+	for id := range want {
+		if !prev[id] {
+			changed = true
+		}
+	}
+	e.keepBy[holder] = want
+	e.mu.Unlock()
+	if changed {
+		e.updateSubscriptions()
+	}
+}
+
+// FieldValues returns an instrument's live fact-panel values (features.Fields keys) as of the last
+// confirmed minute: its pool row when it has one, else computed on demand like a detail view.
+func (e *Engine) FieldValues(id string) (map[string]float64, bool) {
+	snap := e.snap.Load()
+	if snap == nil {
+		return nil, false
+	}
+	for _, r := range snap.Rows {
+		if r.InstID == id {
+			return r.Values, r.Values != nil
+		}
+	}
+	if r := e.adhocRow(id, snap); r != nil && r.Values != nil {
+		return r.Values, true
+	}
+	return nil, false
+}

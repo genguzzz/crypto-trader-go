@@ -287,7 +287,10 @@ func (c *REST) HistoryCandles(ctx context.Context, instID, bar string, after int
 }
 
 // BookLevel is one price level: price and size in contracts.
-type BookLevel struct{ Px, Sz float64 }
+type BookLevel struct {
+	Px, Sz float64
+	N      int // orders resting at this price (OKX's last field)
+}
 
 type Book struct {
 	Asks, Bids []BookLevel // asks ascending, bids descending (as OKX returns them)
@@ -316,7 +319,7 @@ func (c *REST) Books(ctx context.Context, instID string, depth int) (Book, error
 		out := make([]BookLevel, 0, len(xs))
 		for _, x := range xs {
 			if len(x) >= 2 {
-				out = append(out, BookLevel{f(x[0]), f(x[1])})
+				out = append(out, BookLevel{Px: f(x[0]), Sz: f(x[1]), N: int(i64(x[len(x)-1]))})
 			}
 		}
 		return out

@@ -5,20 +5,23 @@ description: Full analysis of one OKX USDT perpetual and a trade plan — market
 
 # Perpetual analysis
 
-The research flow follows TradingAgents (TauricResearch, Apache-2.0) — analysts → bull/bear debate → a decisive manager — done by you in one pass: you argue both sides yourself, then decide. ctg places no orders; the owner executes.
+The research flow follows TradingAgents (TauricResearch, Apache-2.0) — analysts → bull/bear debate → a decisive manager — done by you in one pass: you argue both sides yourself, then decide. ctg places no orders on its own: the owner executes, or approves a `propose_trade` proposal when he asked you to trade.
 
-## 1. Collect (one round of parallel calls; summaries, not raw data)
+## 1. Collect (one call first, then only what is missing)
 
-| What | Call |
+Start with **`ca brief <SYM>`**: one call, about 3 s, all in parallel — market (BTC/ETH, breadth, fear & greed), the 1H move risk (`rev`: extended or not, continuation risk, move size, squeeze veto), the full risk report (`ca analyze`: long/short danger, control, funding, OI, long/short ratios, order book, taker flow, technicals, supports/resistances, max leverage), realised liquidations with estimated clusters, and news/events as one-line digests with ids. It replaces six or seven separate calls; do not repeat its parts.
+
+Then add only what the decision still needs, in one parallel round:
+
+| Gap | Call |
 |---|---|
-| Market context | `ca market` (skip if this conversation already has it from the last hour) |
-| Exhaustion | `rev <SYM>` (1H; add `-b 15m` for an intraday turn): top/bottom exhaustion, checklist, stage, fade plan |
-| The coin, overall | `ca analyze <SYM>` — long/short danger, control score, max leverage, supports/resistances, events. Covers most of the picture. |
-| Positioning | `ca funding <SYM>`, `ca oi <SYM>`, `ca liq <SYM>` (estimated liquidation clusters) |
-| Flow and trend | `ca flow <SYM> -b 1H`, `ca indicators <SYM> -b 4H` |
-| News | `ca events <SYM>`; WebSearch only to verify something material (hack, unlock, listing, ETF flows) |
+| The checklist on another bar size | `rev <SYM> -b 15m` (description only) |
+| The detail behind a headline that matters | `ca news --read <id>` (the article's main text, ~1.8k chars) |
+| Funding or OI history, hourly flow | `ca funding <SYM>`, `ca oi <SYM>`, `ca flow <SYM> -b 1H` |
+| 庄 / 控盘 / 砸盘 / 吸筹, who drives the move | `assess_manipulation` (both markets, 24 h); then `analyze_trades` sections or `get_wall_history` only for the point in doubt |
+| A level or ratio the plan needs (ATR, swing, relative strength) | raw series to a file, print only the result |
 
-Add a computation only when a level or ratio the plan needs is missing (ATR, swing high/low, relative strength vs BTC): fetch the raw series to a file and print just the result. Typical total: 6–10 calls. Interpret danger/control scores with [references/risk-scores.md](references/risk-scores.md).
+Typical total: 1–3 calls. Interpret danger/control scores with [references/risk-scores.md](references/risk-scores.md).
 
 ## 2. Argue both sides
 
@@ -26,7 +29,7 @@ Write the strongest bull case and the strongest bear case, 2–4 points each. Ev
 
 ## 3. Decide
 
-Consider both setups: continuation with the move, and a reversal against an exhausted move (rev score ≥ 50 with the turn starting). The owner trades aggressively and prefers reversals (see his notes): when a credible exhaustion exists, lead with the fade; when it does not, say what would make one (e.g. a volume climax with short liquidations, then a wick) and give the continuation view.
+Consider both setups: continuation with the move, and a fade against an extended move. No exhaustion sign predicts direction (2-year OKX study, AUC ≈ 0.5) and fading extended moves lost ≈ 0.2% per trade with 59% stopped out, so a fade needs: P_tail clearly below its base (≈ 37%; never at ≥ 50%), no squeeze veto, and the turn already visible (wick, flow flip, close back inside the range). The owner likes reversals (his notes): when those conditions hold, give the fade with those base numbers; when they don't, say so and give the continuation or stand-aside view with what would change it. Size and stop width follow P_big3.
 
 Take the side with the stronger evidence. Do not stand aside just because both sides have points; stand aside only for a concrete reason (event within 24 h, no structural edge, reward/risk < 1.5), and give the plan that applies once the trigger hits.
 

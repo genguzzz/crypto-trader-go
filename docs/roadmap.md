@@ -43,6 +43,7 @@ The backlog of smaller, not yet filed items is listed in the Roadmap issue. Issu
 | 2026-10-10 | Altcoin strategy `alt-regime-trend` (regime-gated breakouts + weak-alt shorts, owner sizing with equity-based suggested margin), market-wide turnover screener (`scope="market"`, top ≤ 300), offline multi-coin backtest `research/altbt`; research in [research-alt-perps](research-alt-perps.md) (#8) |
 | 2026-10-17 | Faster instrument detail (#15): OI series sent at the chart's bar resolution (15m chart: ~630 KB → ~40 KB raw, 164 KB → 12 KB gzip), candles paint before the overlays arrive |
 | 2026-10-24 | iOS app ([ios](ios.md)): Capacitor shell around the web build, self-hosted over-the-air web bundles published from the workstation (`scripts/ios-ota.sh`, native live-update plugin with rollback), unsigned IPA built in GitHub Actions and published to the owner's software source |
+| 2026-11-11 | Trading desk ([design §9](trading-design.md)): one standing AI chat the server runs on pool-wide strategy scans (five built-in, parameters and custom scans, new `combo` pool metric; fires batched and paced by an inbox) and every 2 h ten minutes before the hour; a decision journal stamped with the market state and followed 1 h / 4 h / 24 h with excursions and the proposal's fate, reviews, long-term memory and statistics; owner-only `desk_*` agent tools; the desk only proposes |
 
 ## Rules
 

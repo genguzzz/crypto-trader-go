@@ -4,7 +4,7 @@ A personal **research desk for OKX USDT-margined perpetual swaps**: it finds con
 
 > Uses OKX **public** market data only: no API key, no account access, **no orders**. A score is a rule-based ranking, not a win rate or trading advice.
 
-Live: **https://ctg.gugenzzz.top** (ctg-prod, Docker; no login yet, see the [roadmap](docs/roadmap.md)).
+Live: **https://ctg.gugenzzz.top** (ctg-prod, Docker; no login yet: the API needs the owner key and the web UI is paused in favour of the iOS app, see [operations](docs/operations.md#flags-and-environment) and the [roadmap](docs/roadmap.md)).
 
 ![Scanner](docs/images/scanner.png)
 

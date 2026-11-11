@@ -194,6 +194,7 @@ type supervisor struct {
 	mu      sync.Mutex
 	pending map[int64]chan []describedClass
 	checks  map[int64]chan checkResult
+	conds   map[int64]chan json.RawMessage
 	gone    chan struct{}
 }
 
@@ -205,7 +206,8 @@ func (h *Host) Available() bool {
 }
 
 func (h *Host) supervise(w *wire) {
-	sp := &supervisor{w: w, pending: map[int64]chan []describedClass{}, checks: map[int64]chan checkResult{}, gone: make(chan struct{})}
+	sp := &supervisor{w: w, pending: map[int64]chan []describedClass{}, checks: map[int64]chan checkResult{},
+		conds: map[int64]chan json.RawMessage{}, gone: make(chan struct{})}
 	h.mu.Lock()
 	old := h.sup
 	h.sup = sp
@@ -265,6 +267,14 @@ func (h *Host) supervise(w *wire) {
 				ch <- *m.Result
 			} else if ch != nil {
 				ch <- checkResult{Diagnostics: []trade.Diagnostic{{Line: 1, Severity: "error", Message: "empty check result"}}}
+			}
+		case "cond_result":
+			sp.mu.Lock()
+			ch := sp.conds[m.ID]
+			delete(sp.conds, m.ID)
+			sp.mu.Unlock()
+			if ch != nil {
+				ch <- append(json.RawMessage(nil), m.Reply...)
 			}
 		case "exited":
 			h.exited(m.Instance, m.Token, m.Code, m.Stderr)
@@ -414,6 +424,40 @@ func (h *Host) Check(ctx context.Context, code string) (trade.CheckResult, error
 		out.Strategies = append(out.Strategies, v)
 	}
 	return out, nil
+}
+
+// Conditions relays one signal-script request (check, eval or replay; internal/signals owns its shape)
+// to the supervisor's script worker (strategies/ctg/condworker.py) and returns the worker's reply.
+// The supervisor runs one request at a time; ctx bounds the wait, including the queue.
+func (h *Host) Conditions(ctx context.Context, req any) (json.RawMessage, error) {
+	h.mu.Lock()
+	sp := h.sup
+	h.nextID++
+	id := h.nextID
+	h.mu.Unlock()
+	if sp == nil {
+		return nil, ErrUnavailable
+	}
+	ch := make(chan json.RawMessage, 1)
+	sp.mu.Lock()
+	sp.conds[id] = ch
+	sp.mu.Unlock()
+	defer func() {
+		sp.mu.Lock()
+		delete(sp.conds, id)
+		sp.mu.Unlock()
+	}()
+	if err := sp.w.send(map[string]any{"type": "cond", "id": id, "req": req}); err != nil {
+		return nil, fmt.Errorf("conditions: %w", err)
+	}
+	select {
+	case r := <-ch:
+		return r, nil
+	case <-sp.gone:
+		return nil, ErrUnavailable
+	case <-ctx.Done():
+		return nil, fmt.Errorf("conditions: %w", ctx.Err())
+	}
 }
 
 // Start spawns a process for inst through the supervisor, waits for its authenticated hello and

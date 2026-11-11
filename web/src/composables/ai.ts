@@ -242,7 +242,7 @@ export async function stop() {
 
 interface StoredMsg { id: number; role: 'user' | 'assistant'; content: string; steps: any[]; costUsd?: number; latencyMs?: number; error?: string }
 function fromStored(m: StoredMsg): Msg {
-  const parts: Part[] = Array.isArray(m.steps) && m.steps.length ? m.steps.map((s: any) => (s.t === 'text' ? { t: 'text', v: s.v } : { ...s, t: 'tool' })) : m.content ? [{ t: 'text', v: m.content }] : []
+  const parts: Part[] = Array.isArray(m.steps) && m.steps.length ? m.steps.filter((s: any) => s.t !== 'think').map((s: any) => (s.t === 'text' ? { t: 'text', v: s.v } : { ...s, t: 'tool' })) : m.content ? [{ t: 'text', v: m.content }] : []
   return { id: m.id, role: m.role, parts, error: m.error, costUsd: m.costUsd, latencyMs: m.latencyMs }
 }
 

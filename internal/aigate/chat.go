@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS ai_chats(id INTEGER PRIMARY KEY AUTOINCREMENT, create
   cost_usd REAL NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS ai_chat_msgs(id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, ts INTEGER NOT NULL,
   role TEXT NOT NULL, content TEXT NOT NULL, steps TEXT NOT NULL DEFAULT '[]', cost_usd REAL NOT NULL DEFAULT 0,
-  latency_ms INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '');
+  latency_ms INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', usage TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS ai_chat_msgs_chat ON ai_chat_msgs(chat_id, id);
 `
 
@@ -43,12 +43,22 @@ type Agent struct {
 	MCPToken string `json:"mcpToken"`
 	// SandboxToken is the same kind of key, handed to the sandboxed shell for the public ctg API.
 	SandboxToken string `json:"sandboxToken"`
+	// SessionsToken lets the worker read the owner's chats (GET /api/v1/ai/chats[/id], header
+	// X-CTG-Agent) for its list_chats / read_chat tools; random per process, memory only.
+	SessionsToken string `json:"sessionsToken"`
 }
 
 // SetNotify sets where "answer ready" messages go when nobody was watching a chat finish.
 func (g *Gate) SetNotify(f func(ctx context.Context, text string) error) {
 	g.mu.Lock()
 	g.notify = f
+	g.mu.Unlock()
+}
+
+// SetNotifyFilter limits the "answer ready" messages to chats it returns true for (nil = all).
+func (g *Gate) SetNotifyFilter(f func(chat int64) bool) {
+	g.mu.Lock()
+	g.notifyFilter = f
 	g.mu.Unlock()
 }
 
@@ -62,27 +72,34 @@ func (g *Gate) SetAgent(a Agent) {
 
 // Chat is one conversation.
 type Chat struct {
-	ID      int64   `json:"id"`
-	Created int64   `json:"created"`
-	Updated int64   `json:"updated"`
-	Title   string  `json:"title"`
+	ID      int64  `json:"id"`
+	Created int64  `json:"created"`
+	Updated int64  `json:"updated"`
+	Title   string `json:"title"`
+	// Kind: "" = an ordinary conversation; KindDesk = the standing trading desk (internal/autopilot):
+	// one long-lived chat the server wakes on signals and on a schedule, listed first.
+	Kind    string  `json:"kind,omitempty"`
 	InstID  string  `json:"instId,omitempty"`
 	CostUSD float64 `json:"costUsd"`
 	Running bool    `json:"running"`
 	// Interrupted: the last turn has no answer and nothing is running (the server restarted mid-answer).
-	Interrupted bool        `json:"interrupted,omitempty"`
-	Messages    []ChatMsg   `json:"messages,omitempty"`
-	Events      []chatEvent `json:"events,omitempty"` // a running chat: events so far
+	Interrupted bool `json:"interrupted,omitempty"`
+	// Truncated: older messages not in Messages (ChatTail).
+	Truncated int         `json:"truncated,omitempty"`
+	Messages  []ChatMsg   `json:"messages,omitempty"`
+	Events    []chatEvent `json:"events,omitempty"` // a running chat: events so far
 }
 
 // ChatMsg is one stored turn. Steps are the tool calls of an assistant turn.
 type ChatMsg struct {
-	ID        int64           `json:"id"`
-	Ts        int64           `json:"ts"`
-	Role      string          `json:"role"`
-	Content   string          `json:"content"`
-	Steps     json.RawMessage `json:"steps"`
-	CostUSD   float64         `json:"costUsd,omitempty"`
+	ID      int64           `json:"id"`
+	Ts      int64           `json:"ts"`
+	Role    string          `json:"role"`
+	Content string          `json:"content"`
+	Steps   json.RawMessage `json:"steps"`
+	CostUSD float64         `json:"costUsd,omitempty"`
+	// Usage: the turn's tokens {input, output, cacheWrite, cacheRead, searches} (the agent's result), as in 影库.
+	Usage     json.RawMessage `json:"usage,omitempty"`
 	LatencyMs int64           `json:"latencyMs,omitempty"`
 	Error     string          `json:"error,omitempty"`
 }
@@ -96,6 +113,7 @@ type chatRun struct {
 	subs   map[chan chatEvent]struct{}
 	done   bool
 	cancel context.CancelFunc
+	callID string // the worker call running the turn: a steer names it
 }
 
 func (r *chatRun) publish(ev chatEvent) {
@@ -154,21 +172,83 @@ type ChatInput struct {
 	Message string `json:"message"`
 	InstID  string `json:"instId"` // the instrument page the owner is on (context only)
 	Model   string `json:"model"`  // one of ChatModels; empty = the configured model
+	// Effort (low / medium / high) and WebSearch for this turn, picked in the app; empty / nil = the configured ones.
+	Effort    string `json:"effort"`
+	WebSearch *bool  `json:"webSearch"`
 	// Retry re-runs the chat's last question (after an error or an interrupted turn) instead of
 	// adding a new one; Message is ignored.
 	Retry bool `json:"retry"`
+	// Title names a new chat instead of its first words (server-started runs: "信号 · …").
+	Title string `json:"-"`
+	// Role stores the message as RoleSignal instead of a question the owner typed (server-started runs).
+	Role string `json:"-"`
 }
 
-// ChatModels the app may pick per turn.
-var ChatModels = []string{"claude-sonnet-5", "claude-opus-5-5"}
+// Message roles. A signal message is injected by the server when a subscribed signal fires
+// (internal/signals); a trade message when an approved trade proposal of the chat ran or its position
+// closed (internal/realtrade). The agent answers them like a question; the app shows them as system
+// messages, not as the owner.
+const (
+	RoleUser      = "user"
+	RoleAssistant = "assistant"
+	RoleSignal    = "signal"
+	RoleTrade     = "trade"
+)
 
-var errChatBusy = errors.New("这个对话还在回答中")
+// ChatOption is one choice in the app's model menu.
+type ChatOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Hint  string `json:"hint"`
+}
+
+// The app's model menu comes from here (GET /api/v1/ai/options), so every app shows the same choices.
+// Effort "" (默认) sends nothing: the agent's configured effort applies; "off" turns thinking off.
+var (
+	chatModelOptions = []ChatOption{
+		{"claude-sonnet-5", "Sonnet", "快，日常分析够用"},
+		{"claude-opus-5-5", "Opus", "最强，慢一些、更费 token"},
+	}
+	chatEffortOptions = []ChatOption{
+		{"", "默认", "不指定，用服务器的设置"},
+		{"off", "关", "不思考，最快最省，适合查数据"},
+		{"low", "低", "想得少，省 token，适合简单问答"},
+		{"medium", "中", "平衡，大多数行情分析"},
+		{"high", "高", "想得最久，复杂的多空研判和复盘"},
+	}
+	ChatModels  = values(chatModelOptions)
+	ChatEfforts = values(chatEffortOptions[1:])
+)
+
+func values(o []ChatOption) []string {
+	out := make([]string, len(o))
+	for i, x := range o {
+		out[i] = x.Value
+	}
+	return out
+}
+
+// ChatOptions is what the app's model menu shows.
+func (g *Gate) ChatOptions() map[string]any {
+	return map[string]any{
+		"models":    chatModelOptions,
+		"efforts":   chatEffortOptions,
+		"webSearch": map[string]any{"default": true, "hint": "查新闻、公告时搜网页；关掉更省"},
+		"defaults":  map[string]any{"model": g.currentModel(), "effort": ""},
+	}
+}
+
+// ErrChatBusy: the chat is answering; a new turn has to wait until it ends.
+var ErrChatBusy = errors.New("这个对话还在回答中")
 
 // StartChat stores the user's message and starts the agent run; the caller streams it with Attach.
 func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	in.Message = strings.TrimSpace(in.Message)
 	if in.Model != "" && !slices.Contains(ChatModels, in.Model) {
 		return 0, errors.New("unknown model")
+	}
+	if in.Effort != "" && !slices.Contains(ChatEfforts, in.Effort) {
+		return 0, errors.New("unknown effort")
 	}
 	if in.Retry {
 		if in.ChatID == 0 || g.run(in.ChatID) != nil {
@@ -186,6 +266,10 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	if utf8.RuneCountInString(in.Message) > 8000 {
 		return 0, errors.New("message too long")
 	}
+	role := RoleUser
+	if in.Role == RoleSignal || in.Role == RoleTrade {
+		role = in.Role
+	}
 	g.mu.Lock()
 	ready := g.cred.configured() && g.w != nil && g.w.info.Ready
 	g.mu.Unlock()
@@ -198,6 +282,9 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		title := []rune(in.Message)
 		if len(title) > 40 {
 			title = append(title[:40], '…')
+		}
+		if in.Title != "" {
+			title = []rune(in.Title)
 		}
 		res, err := g.st.DB.Exec(`INSERT INTO ai_chats(created, updated, title, inst_id) VALUES(?,?,?,?)`, now, now, string(title), in.InstID)
 		if err != nil {
@@ -212,21 +299,21 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 			return 0, err
 		}
 	}
-	run := &chatRun{subs: map[chan chatEvent]struct{}{}}
+	run := &chatRun{subs: map[chan chatEvent]struct{}{}, callID: newID()}
 	g.runMu.Lock()
 	if g.runs == nil {
 		g.runs = map[int64]*chatRun{}
 	}
 	if _, busy := g.runs[in.ChatID]; busy {
 		g.runMu.Unlock()
-		return 0, errChatBusy
+		return 0, ErrChatBusy
 	}
 	g.runs[in.ChatID] = run
 	g.runMu.Unlock()
 	if in.Retry {
 		// drop the failed answer (if any) so the question is answered once
-		g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=? AND role='assistant' AND id > (SELECT MAX(id) FROM ai_chat_msgs WHERE chat_id=? AND role='user')`, in.ChatID, in.ChatID)
-	} else if _, err := g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content) VALUES(?,?,?,?)`, in.ChatID, now, "user", in.Message); err != nil {
+		g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=? AND role='assistant' AND id > (SELECT MAX(id) FROM ai_chat_msgs WHERE chat_id=? AND role IN ('user','signal','trade'))`, in.ChatID, in.ChatID)
+	} else if _, err := g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content) VALUES(?,?,?,?)`, in.ChatID, now, role, in.Message); err != nil {
 		g.endRun(in.ChatID)
 		return 0, err
 	}
@@ -236,15 +323,32 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 	run.cancel = cancel
 	go func() {
 		defer cancel()
+		defer g.chatDone(in.ChatID) // after endRun: the chat takes a new turn again
 		defer g.endRun(in.ChatID)
 		start := g.now()
-		msg := map[string]any{"type": "chat", "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "notes": g.Notes()}
-		resp, err := g.callStream(ctx, msg, func(ev chatEvent) { g.onAgentEvent(ev); run.publish(ev) })
+		msg := map[string]any{"type": "chat", "id": run.callID, "chatId": in.ChatID, "sessionId": session, "message": in.Message, "instId": in.InstID, "model": in.Model, "turnEffort": in.Effort, "webSearch": in.WebSearch, "notes": g.MemoryFor(in.Message)}
+		// the session id comes early (agent.py): kept even when the turn is stopped or fails, so the next
+		// question resumes the conversation instead of starting a new one without context
+		var early struct {
+			Type      string `json:"type"`
+			SessionID string `json:"sessionId"`
+		}
+		resp, err := g.callStream(ctx, msg, func(ev chatEvent) {
+			if json.Unmarshal(ev, &early) == nil && early.Type == "session" {
+				if early.SessionID != "" {
+					session = early.SessionID
+				}
+				return
+			}
+			g.onAgentEvent(ev)
+			run.publish(ev)
+		})
 		lat := g.now().Sub(start).Milliseconds()
 		var out struct {
 			Text      string          `json:"text"`
 			SessionID string          `json:"sessionId"`
 			Cost      float64         `json:"cost"`
+			Usage     json.RawMessage `json:"usage"`
 			Steps     json.RawMessage `json:"steps"`
 		}
 		errText := ""
@@ -260,8 +364,11 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 			out.Steps = json.RawMessage("[]")
 		}
 		ts := g.now().UnixMilli()
-		g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content, steps, cost_usd, latency_ms, error) VALUES(?,?,?,?,?,?,?,?)`,
-			in.ChatID, ts, "assistant", out.Text, string(out.Steps), out.Cost, lat, errText)
+		g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content, steps, cost_usd, latency_ms, error, usage) VALUES(?,?,?,?,?,?,?,?,?)`,
+			in.ChatID, ts, "assistant", out.Text, string(out.Steps), out.Cost, lat, errText, string(out.Usage))
+		if out.SessionID == "" {
+			out.SessionID = session
+		}
 		if out.SessionID != "" {
 			g.st.DB.Exec(`UPDATE ai_chats SET updated=?, session_id=?, cost_usd=cost_usd+? WHERE id=?`, ts, out.SessionID, out.Cost, in.ChatID)
 		} else {
@@ -276,7 +383,8 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 		if errText != "" {
 			run.publish(evJSON(map[string]any{"type": "error", "error": errText}))
 		} else {
-			run.publish(evJSON(map[string]any{"type": "done", "text": out.Text, "cost": out.Cost, "latencyMs": lat}))
+			g.savePlans(in.ChatID, out.Text, confidenceOf(out.Text))
+			run.publish(evJSON(map[string]any{"type": "done", "text": out.Text, "cost": out.Cost, "usage": out.Usage, "latencyMs": lat}))
 		}
 		if !run.finish() && errText != "已停止" {
 			g.notifyDone(in.ChatID, out.Text, errText)
@@ -287,7 +395,7 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 
 func (g *Gate) lastQuestion(chat int64) (string, error) {
 	var q string
-	err := g.st.DB.QueryRow(`SELECT content FROM ai_chat_msgs WHERE chat_id=? AND role='user' ORDER BY id DESC LIMIT 1`, chat).Scan(&q)
+	err := g.st.DB.QueryRow(`SELECT content FROM ai_chat_msgs WHERE chat_id=? AND role IN ('user','signal','trade') ORDER BY id DESC LIMIT 1`, chat).Scan(&q)
 	if err != nil {
 		return "", errors.New("chat has no question")
 	}
@@ -297,9 +405,9 @@ func (g *Gate) lastQuestion(chat int64) (string, error) {
 // notifyDone tells the owner (Telegram, when configured) that an answer nobody was watching is ready.
 func (g *Gate) notifyDone(chat int64, text, errText string) {
 	g.mu.Lock()
-	f := g.notify
+	f, keep := g.notify, g.notifyFilter
 	g.mu.Unlock()
-	if f == nil {
+	if f == nil || (keep != nil && !keep(chat)) {
 		return
 	}
 	var title string
@@ -323,6 +431,101 @@ func (g *Gate) notifyDone(chat int64, text, errText string) {
 	}()
 }
 
+// WakeChat continues an existing chat with a server-injected signal message (RoleSignal): the agent
+// resumes the chat's session with its full history. ErrChatBusy while a turn runs, ErrUnavailable
+// while the agent is down; the caller retries later (internal/signals queues it).
+func (g *Gate) WakeChat(chat int64, message string) error {
+	if chat <= 0 {
+		return errors.New("chat not found")
+	}
+	if g.run(chat) != nil {
+		return ErrChatBusy
+	}
+	_, err := g.StartChat(ChatInput{ChatID: chat, Message: message, Role: RoleSignal})
+	return err
+}
+
+// steerTimeout bounds the worker's acknowledgement of a steer.
+const steerTimeout = 10 * time.Second
+
+// SteerChat delivers a server message (RoleSignal or RoleTrade) to a chat now: an idle chat starts a
+// turn with it; a chat that is answering gets it injected into the running turn — the worker hands it
+// to the agent's session as a further user message, answered before the turn ends — and it is stored
+// and streamed at that point. ErrChatBusy only when the running turn can no longer take it (it is
+// finishing, or the worker does not steer), ErrUnavailable while the agent is down: the caller keeps
+// it queued and retries when the turn ends (SetOnChatDone).
+func (g *Gate) SteerChat(chat int64, role, message string) error {
+	return g.SteerChatWith(chat, role, message, "", "")
+}
+
+// SteerChatWith is SteerChat with the model and effort of the turn it starts ("" = the configured
+// ones); they do not apply when the message is injected into a turn that is already running.
+func (g *Gate) SteerChatWith(chat int64, role, message, model, effort string) error {
+	message = strings.TrimSpace(message)
+	switch {
+	case chat <= 0:
+		return errors.New("chat not found")
+	case role != RoleSignal && role != RoleTrade:
+		return errors.New("a steer is a signal or trade message")
+	case message == "" || utf8.RuneCountInString(message) > 8000:
+		return errors.New("empty or too long message")
+	}
+	for try := 0; try < 2; try++ {
+		r := g.run(chat)
+		if r == nil {
+			_, err := g.StartChat(ChatInput{ChatID: chat, Message: message, Role: role, Model: model, Effort: effort})
+			if errors.Is(err, ErrChatBusy) {
+				continue // a turn started meanwhile: steer into it
+			}
+			return err
+		}
+		return g.steer(r, chat, role, message)
+	}
+	return ErrChatBusy
+}
+
+func (g *Gate) steer(r *chatRun, chat int64, role, message string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), steerTimeout)
+	defer cancel()
+	if _, err := g.call(ctx, map[string]any{"type": "steer", "callId": r.callID, "message": message}); err != nil {
+		if errors.Is(err, ErrUnavailable) || errors.Is(err, ErrWorkerGone) {
+			return ErrUnavailable
+		}
+		g.logf("aigate: steer chat %d: %v (retried after the turn)", chat, err)
+		return ErrChatBusy
+	}
+	now := g.now().UnixMilli()
+	if _, err := g.st.DB.Exec(`INSERT INTO ai_chat_msgs(chat_id, ts, role, content) VALUES(?,?,?,?)`, chat, now, role, message); err != nil {
+		g.logf("aigate: store steer %d: %v", chat, err)
+	}
+	g.st.DB.Exec(`UPDATE ai_chats SET updated=? WHERE id=?`, now, chat)
+	r.publish(evJSON(map[string]any{"type": "steer", "role": role, "text": message}))
+	return nil
+}
+
+// ChatTitle returns a chat's title; false when there is no such chat.
+func (g *Gate) ChatTitle(chat int64) (string, bool) {
+	var t string
+	err := g.st.DB.QueryRow(`SELECT title FROM ai_chats WHERE id=?`, chat).Scan(&t)
+	return t, err == nil
+}
+
+// SetOnChatDone registers a hook called (in the run's goroutine) after any chat turn ended; must not block.
+func (g *Gate) SetOnChatDone(f func(chatID int64)) {
+	g.mu.Lock()
+	g.onDone = f
+	g.mu.Unlock()
+}
+
+func (g *Gate) chatDone(id int64) {
+	g.mu.Lock()
+	f := g.onDone
+	g.mu.Unlock()
+	if f != nil {
+		f(id)
+	}
+}
+
 func (g *Gate) endRun(id int64) {
 	g.runMu.Lock()
 	delete(g.runs, id)
@@ -333,6 +536,13 @@ func (g *Gate) run(id int64) *chatRun {
 	g.runMu.Lock()
 	defer g.runMu.Unlock()
 	return g.runs[id]
+}
+
+// Busy reports whether any chat turn is running (a restart would interrupt it).
+func (g *Gate) Busy() bool {
+	g.runMu.Lock()
+	defer g.runMu.Unlock()
+	return len(g.runs) > 0
 }
 
 // StopChat cancels a running turn.
@@ -352,7 +562,7 @@ func (g *Gate) currentModel() string {
 
 // Chats lists recent conversations.
 func (g *Gate) Chats(limit int) ([]Chat, error) {
-	rows, err := g.st.DB.Query(`SELECT id, created, updated, title, inst_id, cost_usd FROM ai_chats ORDER BY updated DESC LIMIT ?`, limit)
+	rows, err := g.st.DB.Query(`SELECT id, created, updated, title, kind, inst_id, cost_usd FROM ai_chats ORDER BY kind<>'' DESC, updated DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +570,7 @@ func (g *Gate) Chats(limit int) ([]Chat, error) {
 	out := []Chat{}
 	for rows.Next() {
 		var c Chat
-		if err := rows.Scan(&c.ID, &c.Created, &c.Updated, &c.Title, &c.InstID, &c.CostUSD); err != nil {
+		if err := rows.Scan(&c.ID, &c.Created, &c.Updated, &c.Title, &c.Kind, &c.InstID, &c.CostUSD); err != nil {
 			return nil, err
 		}
 		c.Running = g.run(c.ID) != nil
@@ -370,14 +580,25 @@ func (g *Gate) Chats(limit int) ([]Chat, error) {
 }
 
 // ChatByID returns a conversation with its messages (and the events so far when running).
-func (g *Gate) ChatByID(id int64) (*Chat, error) {
+func (g *Gate) ChatByID(id int64) (*Chat, error) { return g.ChatTail(id, 0) }
+
+// ChatTail is ChatByID with only the newest last messages (0 = all; the desk's chat never ends, so the
+// app loads its tail). Truncated says older messages exist.
+func (g *Gate) ChatTail(id int64, last int) (*Chat, error) {
 	var c Chat
-	err := g.st.DB.QueryRow(`SELECT id, created, updated, title, inst_id, cost_usd FROM ai_chats WHERE id=?`, id).
-		Scan(&c.ID, &c.Created, &c.Updated, &c.Title, &c.InstID, &c.CostUSD)
+	err := g.st.DB.QueryRow(`SELECT id, created, updated, title, kind, inst_id, cost_usd FROM ai_chats WHERE id=?`, id).
+		Scan(&c.ID, &c.Created, &c.Updated, &c.Title, &c.Kind, &c.InstID, &c.CostUSD)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := g.st.DB.Query(`SELECT id, ts, role, content, steps, cost_usd, latency_ms, error FROM ai_chat_msgs WHERE chat_id=? ORDER BY id`, id)
+	var from int64
+	if last > 0 {
+		g.st.DB.QueryRow(`SELECT COALESCE(MIN(id),0) FROM (SELECT id FROM ai_chat_msgs WHERE chat_id=? ORDER BY id DESC LIMIT ?)`, id, last).Scan(&from)
+		var older int
+		g.st.DB.QueryRow(`SELECT COUNT(*) FROM ai_chat_msgs WHERE chat_id=? AND id<?`, id, from).Scan(&older)
+		c.Truncated = older
+	}
+	rows, err := g.st.DB.Query(`SELECT id, ts, role, content, steps, cost_usd, latency_ms, error, usage FROM ai_chat_msgs WHERE chat_id=? AND id>=? ORDER BY id`, id, from)
 	if err != nil {
 		return nil, err
 	}
@@ -385,15 +606,18 @@ func (g *Gate) ChatByID(id int64) (*Chat, error) {
 	c.Messages = []ChatMsg{}
 	for rows.Next() {
 		var m ChatMsg
-		var steps string
-		if err := rows.Scan(&m.ID, &m.Ts, &m.Role, &m.Content, &steps, &m.CostUSD, &m.LatencyMs, &m.Error); err != nil {
+		var steps, usage string
+		if err := rows.Scan(&m.ID, &m.Ts, &m.Role, &m.Content, &steps, &m.CostUSD, &m.LatencyMs, &m.Error, &usage); err != nil {
 			return nil, err
 		}
 		m.Steps = json.RawMessage(steps)
+		if usage != "" {
+			m.Usage = json.RawMessage(usage)
+		}
 		c.Messages = append(c.Messages, m)
 	}
 	c.Running = g.run(id) != nil
-	if n := len(c.Messages); !c.Running && n > 0 && c.Messages[n-1].Role == "user" {
+	if n := len(c.Messages); !c.Running && n > 0 && c.Messages[n-1].Role != RoleAssistant {
 		c.Interrupted = true
 	}
 	return &c, rows.Err()
@@ -402,7 +626,12 @@ func (g *Gate) ChatByID(id int64) (*Chat, error) {
 // DeleteChat removes a conversation (not while it runs).
 func (g *Gate) DeleteChat(id int64) error {
 	if g.run(id) != nil {
-		return errChatBusy
+		return ErrChatBusy
+	}
+	var kind string
+	g.st.DB.QueryRow(`SELECT kind FROM ai_chats WHERE id=?`, id).Scan(&kind)
+	if kind != "" {
+		return ErrStandingChat
 	}
 	if _, err := g.st.DB.Exec(`DELETE FROM ai_chat_msgs WHERE chat_id=?`, id); err != nil {
 		return err
@@ -467,8 +696,11 @@ func (g *Gate) callStream(ctx context.Context, msg map[string]any, onEvent func(
 	if w == nil {
 		return inbound{}, ErrUnavailable
 	}
-	id := newID()
-	msg["id"] = id
+	id, _ := msg["id"].(string) // a chat turn brings its own (steers name it)
+	if id == "" {
+		id = newID()
+		msg["id"] = id
+	}
 	if dl, ok := ctx.Deadline(); ok {
 		msg["deadlineMs"] = dl.UnixMilli()
 	}

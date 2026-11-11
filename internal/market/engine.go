@@ -104,18 +104,20 @@ type Engine struct {
 	pub           *okx.WS
 	biz           *okx.WS
 
-	mu       sync.RWMutex
-	insts    map[string]*Inst
-	spotIDs  map[string]bool
-	watch    map[string]bool
-	catalog  map[string]okx.Instrument // every live USDT-margined linear swap (search)
-	tickers  map[string]okx.Ticker     // latest SWAP tickers (30s REST)
-	views    map[string]int64          // detail last opened (retention tier, adhoc streaming)
-	keep     map[string]bool           // held by the paper-trading layer: stream with tickers (tradeapi.go)
-	lastPool map[string]int64          // last decision minute in the active pool
-	lastMin  int64
-	removed  map[string]Removed
-	prevAct  map[string]float64
+	mu          sync.RWMutex
+	insts       map[string]*Inst
+	spotIDs     map[string]bool
+	watch       map[string]bool
+	catalog     map[string]okx.Instrument  // every live USDT-margined linear swap (search)
+	tickers     map[string]okx.Ticker      // latest SWAP tickers (30s REST)
+	spotTickers map[string]okx.Ticker      // latest SPOT tickers (15s REST)
+	views       map[string]int64           // detail last opened (retention tier, adhoc streaming)
+	keep        map[string]bool            // held by the paper-trading layer: stream with tickers (tradeapi.go)
+	keepBy      map[string]map[string]bool // held by other layers by name (KeepFor: agent signal subscriptions)
+	lastPool    map[string]int64           // last decision minute in the active pool
+	lastMin     int64
+	removed     map[string]Removed
+	prevAct     map[string]float64
 
 	rmu   sync.RWMutex
 	rules map[string]*rules.Rule
@@ -153,6 +155,9 @@ type Engine struct {
 	retKick   chan struct{}
 	dbIDs     map[string]bool // instruments present in the DB (refreshed every 6h by retention)
 	dbIDsAt   time.Time
+
+	tape  *tapeState   // raw trades of the deep set (tape.go); nil = disabled
+	walls *wallTracker // live books and wall lifecycles (walls.go)
 }
 
 func New(cfg Config, rest *okx.REST, st *store.Store) *Engine {
@@ -203,6 +208,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	go e.flowLoop(ctx)
 	go e.liqLoop(ctx)
 	go e.hourHistoryLoop(ctx)
+	e.startTape(ctx)
 	return nil
 }
 
@@ -584,6 +590,7 @@ func (e *Engine) onBusiness(m okx.Message) {
 func (e *Engine) onPublic(m okx.Message) {
 	switch m.Arg.Channel {
 	case "trades":
+		e.onTapeTrades(m)
 		e.onTrades(m)
 	case "tickers":
 		var xs []map[string]string
@@ -689,6 +696,11 @@ func (e *Engine) updateSubscriptions() {
 	for id := range e.keep {
 		tick[id] = true
 	}
+	for _, ids := range e.keepBy {
+		for id := range ids {
+			tick[id] = true
+		}
+	}
 	for id, t := range e.views {
 		if now-t < RecordViewed.Milliseconds() {
 			tick[id] = true
@@ -700,11 +712,28 @@ func (e *Engine) updateSubscriptions() {
 		}
 	}
 	flow := e.flowIDs(now)
+	taped, booked := e.tapeTargets(now)
+	books := map[string]float64{}
+	for id := range booked {
+		books[id] = 1
+		if in := e.insts[id]; in != nil {
+			books[id] = in.CtVal
+		}
+	}
 	e.mu.RUnlock()
 	e.syncFlowStates(flow)
+	e.syncTape(taped)
+	if e.walls != nil {
+		e.walls.setTargets(books)
+	}
 	var bizArgs, pubArgs []okx.Arg
 	for id := range flow {
 		pubArgs = append(pubArgs, okx.Arg{Channel: "trades", InstID: id})
+	}
+	for id := range taped {
+		if !flow[id] {
+			pubArgs = append(pubArgs, okx.Arg{Channel: "trades", InstID: id})
+		}
 	}
 	for _, id := range ids {
 		bizArgs = append(bizArgs, okx.Arg{Channel: "candle1m", InstID: id})
@@ -799,6 +828,7 @@ func (e *Engine) refreshSpot(ctx context.Context) {
 		px[t.InstID] = t
 	}
 	e.mu.Lock()
+	e.spotTickers = px
 	for _, in := range e.insts {
 		if t, ok := px[in.SpotID]; ok && in.SpotID != "" {
 			in.spotLast, in.spotTs = t.Last, t.Ts

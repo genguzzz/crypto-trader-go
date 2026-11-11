@@ -80,6 +80,7 @@ const sortOptions = computed(() => {
   ]
 })
 const selected = computed(() => (route.query.sel as string) || '')
+const proposal = computed(() => Number(route.query.proposal) || undefined) // AI trade proposal drawn on the chart (its own coin only)
 const rule = computed(() => store.meta?.rules.find(r => r.id === store.ruleId))
 
 function scoreOf(r: Row, side: 'long' | 'short') {
@@ -366,7 +367,7 @@ const cols = allCols
     <template v-if="!narrow">
       <SplitterResizeHandle class="rh" />
       <SplitterPanel id="sc-work" :order="2" :min-size="30" class="work">
-        <InstrumentWorkbench v-if="selected" :id="selected" :key="selected" with-list :list-open="listOpen" @toggle-list="toggleList" />
+        <InstrumentWorkbench v-if="selected" :id="selected" :key="selected" :proposal="proposal" with-list :list-open="listOpen" @toggle-list="toggleList" />
         <div v-else class="note pad">选择左侧合约查看详情</div>
       </SplitterPanel>
     </template>

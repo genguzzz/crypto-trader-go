@@ -1,6 +1,7 @@
 package devapi
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -275,6 +276,179 @@ func TestMCP(t *testing.T) {
 	}
 }
 
+// Owner endpoints (the owner's OKX positions) are invisible to external keys and served to OwnerKey only.
+func TestOwnerEndpoint(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.DB.Close() })
+	s, err := New(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotInst string
+	s.SetPositions(func(_ context.Context, inst string) (any, error) {
+		gotInst = inst
+		return map[string]any{"enabled": true, "positions": []any{map[string]any{"instId": "BTC-USDT-SWAP", "avgPx": 1.23456789}}}, nil
+	})
+	mux := http.NewServeMux()
+	s.Mount(mux, nil, nil)
+	ext, _ := s.Create(CreateInput{Name: "ext", RatePerMin: 60, Burst: 10})
+	tools := func(key string) string {
+		return mcpPost(mux, key, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`).Body.String()
+	}
+	call := func(key string) string {
+		return mcpPost(mux, key, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_positions","arguments":{"instId":"btc-usdt-swap"}}}`).Body.String()
+	}
+	for _, key := range []string{ext.Secret, s.InternalKey("sandbox", 60, 10)} {
+		if strings.Contains(tools(key), "get_positions") {
+			t.Fatal("owner tool listed to a non-owner key")
+		}
+		if out := call(key); !strings.Contains(out, "unknown tool") || gotInst != "" {
+			t.Fatalf("owner tool served to a non-owner key: %s", out)
+		}
+	}
+	if w := get(mux, OpenPrefix+"positions", ext.Secret); w.Code == 200 {
+		t.Fatalf("owner endpoint on the open REST API: %d", w.Code)
+	}
+	if strings.Contains(get(mux, OpenPrefix+"openapi.json", "").Body.String(), "get_positions") {
+		t.Fatal("owner endpoint in the OpenAPI document")
+	}
+	owner := s.OwnerKey("ai-agent", 60, 10)
+	if !strings.Contains(tools(owner), "get_positions") {
+		t.Fatal("owner tool not listed to the owner key")
+	}
+	if out := call(owner); !strings.Contains(out, `\"avgPx\":1.23457`) || gotInst != "BTC-USDT-SWAP" {
+		t.Fatalf("owner call: %q %s", gotInst, out)
+	}
+}
+
+// propose_trade is owner-only, linked to the agent's chat (X-Ctg-Chat, honoured for owner keys only),
+// validates numbers and is not marked read-only.
+func TestProposeTradeTool(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.DB.Close() })
+	s, err := New(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	var gotChat int64
+	var gotArgs map[string]string
+	s.SetTradeProposals(func(_ context.Context, chat int64, a map[string]string) (any, error) {
+		calls++
+		gotChat, gotArgs = chat, a
+		return map[string]any{"proposalId": 5, "status": "pending"}, nil
+	}, func(context.Context, map[string]string) (any, error) { return []any{}, nil })
+	mux := http.NewServeMux()
+	s.Mount(mux, nil, nil)
+	ext, _ := s.Create(CreateInput{Name: "ext", RatePerMin: 60, Burst: 10})
+	args := `{"instId":"BTC-USDT-SWAP","side":"long","marginUsdt":20,"leverage":3,"sl":98000.5,"tp":104000,"rationale":"r","invalidation":"i"}`
+	call := func(key, a string) string {
+		r := httptest.NewRequest("POST", MCPPath, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"propose_trade","arguments":`+a+`}}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+key)
+		r.Header.Set("X-Ctg-Chat", "12")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w.Body.String()
+	}
+	for _, key := range []string{ext.Secret, s.InternalKey("sandbox", 60, 10)} {
+		if out := call(key, args); !strings.Contains(out, "unknown tool") {
+			t.Fatalf("propose_trade served to a non-owner key: %s", out)
+		}
+		if strings.Contains(mcpPost(mux, key, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`).Body.String(), "propose_trade") {
+			t.Fatal("propose_trade listed to a non-owner key")
+		}
+	}
+	if calls != 0 {
+		t.Fatal("non-owner reached the proposal service")
+	}
+	owner := s.OwnerKey("ai-agent", 60, 10)
+	list := mcpPost(mux, owner, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`).Body.String()
+	if !strings.Contains(list, `"name":"propose_trade"`) || !strings.Contains(list, `"readOnlyHint":false`) {
+		t.Fatalf("owner tools: %s", list)
+	}
+	if out := call(owner, args); !strings.Contains(out, `proposalId`) || gotChat != 12 || gotArgs["sl"] != "98000.5" || gotArgs["expiresMin"] != "15" {
+		t.Fatalf("owner call: %d %v %s", gotChat, gotArgs, out)
+	}
+	if out := call(owner, strings.Replace(args, `"sl":98000.5`, `"sl":"abc"`, 1)); !strings.Contains(out, "must be a number") || calls != 1 {
+		t.Fatalf("bad number: %s", out)
+	}
+}
+
+// The signal tools are owner-only, carry the caller's chat and take the spec as a JSON object.
+func TestSignalTools(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.DB.Close() })
+	s, err := New(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotChat int64
+	var gotArgs map[string]string
+	h := func(_ context.Context, chat int64, a map[string]string) (any, error) {
+		gotChat, gotArgs = chat, a
+		return map[string]any{"signalId": 3}, nil
+	}
+	s.SetSignals(SignalTools{Subscribe: h, List: h, Unsubscribe: h, TestScript: h})
+	mux := http.NewServeMux()
+	s.Mount(mux, nil, nil)
+	ext, _ := s.Create(CreateInput{Name: "ext", RatePerMin: 60, Burst: 10})
+	call := func(key, tool, a string) string {
+		r := httptest.NewRequest("POST", MCPPath, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"`+tool+`","arguments":`+a+`}}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+key)
+		r.Header.Set("X-Ctg-Chat", "12")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w.Body.String()
+	}
+	sub := `{"spec":{"type":"price","instId":"AAVE-USDT-SWAP","op":"above","level":140.2},"intent":"站上 140.2 追多"}`
+	for _, tool := range []string{"subscribe_signal", "list_signals", "unsubscribe_signal", "test_signal_script"} {
+		if out := call(ext.Secret, tool, `{}`); !strings.Contains(out, "unknown tool") {
+			t.Fatalf("%s served to an external key: %s", tool, out)
+		}
+	}
+	if gotChat != 0 {
+		t.Fatal("a non-owner reached the signal service")
+	}
+	owner := s.OwnerKey("ai-agent", 60, 10)
+	list := mcpPost(mux, owner, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`).Body.String()
+	if !strings.Contains(list, `"name":"subscribe_signal"`) || !strings.Contains(list, `"spec":{"description":"the condition, see the description","type":"object"}`) {
+		t.Fatalf("owner tools: %s", list)
+	}
+	if out := call(owner, "subscribe_signal", sub); !strings.Contains(out, "signalId") || gotChat != 12 ||
+		gotArgs["spec"] != `{"instId":"AAVE-USDT-SWAP","level":140.2,"op":"above","type":"price"}` || gotArgs["expiresHours"] != "24" {
+		t.Fatalf("subscribe: %d %v %s", gotChat, gotArgs, out)
+	}
+	if out := call(owner, "subscribe_signal", `{"spec":"price above 140","intent":"x"}`); !strings.Contains(out, "must be a JSON object") {
+		t.Fatalf("non-object spec: %s", out)
+	}
+	if out := call(owner, "unsubscribe_signal", `{"id":3,"reason":"失效","ownerAsked":true}`); !strings.Contains(out, "signalId") || gotArgs["ownerAsked"] != "true" {
+		t.Fatalf("unsubscribe: %v %s", gotArgs, out)
+	}
+	code := "from ctg import Condition\nclass S(Condition):\n    pass" // arguments are trimmed
+	b, _ := json.Marshal(map[string]any{"code": code})
+	if out := call(owner, "test_signal_script", string(b)); !strings.Contains(out, "signalId") || gotArgs["code"] != code || gotChat != 12 {
+		t.Fatalf("test script: %v %s", gotArgs, out)
+	}
+	b, _ = json.Marshal(map[string]any{"spec": map[string]any{"type": "script"}, "code": code, "intent": "RSI 收回再评估"})
+	if out := call(owner, "subscribe_signal", string(b)); !strings.Contains(out, "signalId") || gotArgs["code"] != code || gotArgs["spec"] != `{"type":"script"}` {
+		t.Fatalf("subscribe script: %v %s", gotArgs, out)
+	}
+	if !strings.Contains(list, `"name":"test_signal_script"`) {
+		t.Fatal("test_signal_script not listed for the owner")
+	}
+}
+
 func TestOpenAPI(t *testing.T) {
 	_, mux, _ := newTestService(t)
 	w := get(mux, OpenPrefix+"openapi.json", "")
@@ -308,5 +482,20 @@ func TestRebaseAfterTail(t *testing.T) {
 	}
 	if pts[1].V["A"] != 110 {
 		t.Fatal("input mutated")
+	}
+}
+
+func TestOKXRows(t *testing.T) {
+	v := []any{
+		map[string]any{"ts": "1793500000000", "ccy": "USDT", "amt": "100", "txId": "", "state": "2"},
+		map[string]any{"ts": "1793400000000", "ccy": "USDT", "amt": "50", "state": "2"},
+	}
+	r := okxRows(v, "ts,amt", 1).(map[string]any)
+	if r["rows"] != 2 || r["truncated"] == nil {
+		t.Fatalf("got %v", r)
+	}
+	row := r["data"].([]any)[0].(map[string]any)
+	if row["amt"] != "100" || row["ccy"] != nil || row["ts_bj"] != "2026-11-01 10:26:40" {
+		t.Fatalf("row %v", row)
 	}
 }

@@ -64,11 +64,18 @@ type TradeFile struct {
 	SizeMB float64
 }
 
-// TradeFiles lists the daily trade files of a USDT perpetual whose day starts in [begin, end] (ms).
+// TradeFiles lists the daily trade files whose day starts in [begin, end] (ms): a USDT perpetual
+// (looked up by its family) or a spot pair.
 func (c *REST) TradeFiles(ctx context.Context, instID string, begin, end int64) ([]TradeFile, error) {
-	family := strings.TrimSuffix(instID, "-SWAP")
-	q := url.Values{"module": {"1"}, "instType": {"SWAP"}, "instFamilyList": {family}, "dateAggrType": {"daily"},
+	q := url.Values{"module": {"1"}, "dateAggrType": {"daily"},
 		"begin": {strconv.FormatInt(begin, 10)}, "end": {strconv.FormatInt(end, 10)}}
+	if strings.HasSuffix(instID, "-SWAP") {
+		q.Set("instType", "SWAP")
+		q.Set("instFamilyList", strings.TrimSuffix(instID, "-SWAP"))
+	} else {
+		q.Set("instType", "SPOT")
+		q.Set("instIdList", instID)
+	}
 	var raw []struct {
 		Details []struct {
 			GroupDetails []struct{ DateTs, Filename, SizeMB, URL string }

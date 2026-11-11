@@ -221,7 +221,7 @@ const wreq = <T>(path: string, method: string, body?: unknown) =>
  * sends X-CTG-Admin from this browser's owner key. A 401 with code admin_required opens the key
  * dialog and retries once with the entered key.
  */
-async function mreq<T>(path: string, method: string, body?: unknown): Promise<T> {
+export async function mreq<T>(path: string, method: string, body?: unknown): Promise<T> {
   const send = (key: string) => fetch(path, {
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -312,4 +312,9 @@ export const aiApi = {
   memory: (strategy: string, version?: number) =>
     req<{ strategy: string; current: MemoryDoc | null; versions: MemoryDoc[] | null }>(`/api/v1/ai/memory/${encodeURIComponent(strategy)}${qs({ version })}`),
   reflect: (strategy: string) => mreq<MemoryDoc>(`/api/v1/ai/memory/${encodeURIComponent(strategy)}/reflect`, 'POST', {}),
+  presets: () => req<{ presets: AiPresets; custom: boolean }>('/api/v1/ai/presets'),
 }
+
+/** Preset questions of the chat's empty state (server setting ai.presets): label on the button, prompt sent ({sym} = the coin). */
+export interface AiPreset { label: string; prompt?: string }
+export interface AiPresets { coin: AiPreset[]; market: AiPreset[] }

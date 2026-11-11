@@ -312,3 +312,32 @@ class ProxyCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SignalToolLabels(unittest.TestCase):
+    def test_signal_tools_allowed_and_labelled(self):
+        import agent
+
+        for t in ("subscribe_signal", "list_signals", "unsubscribe_signal"):
+            self.assertIn(t, agent.CTG_DIRECT)
+        self.assertEqual(agent.label_for("mcp__ctg__subscribe_signal"), "订阅信号")
+        self.assertEqual(agent.label_for("mcp__ctg__unsubscribe_signal"), "取消订阅")
+        self.assertEqual(agent.label_for("mcp__ctg__list_signals"), "查看信号")
+        spec = {"type": "any", "of": [{"type": "zone", "instId": "AAVE-USDT-SWAP", "lo": 139.5, "hi": 140.2},
+                                      {"type": "price", "instId": "AAVE-USDT-SWAP", "op": "above", "level": 140.2, "bar": "1H"}]}
+        self.assertEqual(agent.brief_input("mcp__ctg__subscribe_signal", {"spec": spec}), "AAVE 139.5–140.2 或 AAVE ≥ 140.2 (1H 收盘)")
+        self.assertEqual(agent.brief_input("mcp__ctg__subscribe_signal", {"spec": json.dumps(spec["of"][0])}), "AAVE 139.5–140.2")
+        self.assertEqual(agent.brief_input("mcp__ctg__unsubscribe_signal", {"id": 12, "reason": "x"}), "#12")
+
+    def test_script_signal_labels(self):
+        import agent
+
+        self.assertIn("test_signal_script", agent.CTG_DIRECT)
+        self.assertEqual(agent.label_for("mcp__ctg__test_signal_script"), "测试信号脚本")
+        code = 'from ctg import Condition, Fire, ta\n\nclass S(Condition):\n    """AAVE 15m RSI 收回 30"""\n    timeframe = "15m"\n'
+        self.assertEqual(agent.brief_input("mcp__ctg__test_signal_script", {"code": code}), "AAVE 15m RSI 收回 30")
+        self.assertEqual(agent.brief_input("mcp__ctg__test_signal_script", {"code": "x = 1"}), "脚本")
+        self.assertEqual(agent.brief_input("mcp__ctg__subscribe_signal", {"spec": {"type": "script"}, "code": code}), "脚本：AAVE 15m RSI 收回 30")
+        self.assertEqual(agent.brief_input("mcp__ctg__subscribe_signal", {"code": code}), "脚本：AAVE 15m RSI 收回 30")
+        spec = {"type": "all", "of": [{"type": "script"}, {"type": "zone", "instId": "AAVE-USDT-SWAP", "lo": 1, "hi": 2}]}
+        self.assertEqual(agent.brief_input("mcp__ctg__subscribe_signal", {"spec": spec, "code": code}), "脚本：AAVE 15m RSI 收回 30 且 AAVE 1–2")

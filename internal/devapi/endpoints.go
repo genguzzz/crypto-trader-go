@@ -2,7 +2,9 @@ package devapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -19,7 +21,7 @@ import (
 type Param struct {
 	Name     string   `json:"name"`
 	In       string   `json:"in"`   // query | path
-	Type     string   `json:"type"` // string | integer | boolean
+	Type     string   `json:"type"` // string | integer | number | boolean
 	Desc     string   `json:"desc"`
 	Required bool     `json:"required,omitempty"`
 	Enum     []string `json:"enum,omitempty"`
@@ -45,6 +47,8 @@ type Endpoint struct {
 	CostTxt string  `json:"cost"` // human description of the rate-limit cost
 	cost    func(Args) int
 	run     func(context.Context, Args) (any, error)
+	owner   bool // the owner's private data: MCP only, listed and served to owner keys only (OwnerKey)
+	write   bool // changes state (propose_trade): not marked read-only to MCP clients
 }
 
 func (e *Endpoint) Cost(a Args) int {
@@ -70,6 +74,10 @@ func (e *Endpoint) bind(get func(string) (string, bool)) (Args, error) {
 			continue
 		}
 		switch p.Type {
+		case "number":
+			if f, err := strconv.ParseFloat(v, 64); err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+				return nil, fmt.Errorf("parameter %q must be a number", p.Name)
+			}
 		case "integer":
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -77,6 +85,10 @@ func (e *Endpoint) bind(get func(string) (string, bool)) (Args, error) {
 			}
 			if (p.Min != 0 || p.Max != 0) && (n < p.Min || n > p.Max) {
 				return nil, fmt.Errorf("parameter %q must be between %d and %d", p.Name, p.Min, p.Max)
+			}
+		case "object":
+			if !strings.HasPrefix(v, "{") || !json.Valid([]byte(v)) {
+				return nil, fmt.Errorf("parameter %q must be a JSON object", p.Name)
 			}
 		case "boolean":
 			switch strings.ToLower(v) {
@@ -195,13 +207,19 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			Name: "get_instrument", Path: "instruments/{instId}", Summary: "Instrument detail: prices, funding, open interest, scores, market cap",
 			Desc: "Last/bid/ask, mark and index price, spot last, funding rate (and interval), open interest (coins and USD), 24h turnover, the fact-panel row with scores for every rule, " +
 				"and CoinGecko market cap / supply for crypto. Opening an instrument outside the recording universe starts live streaming and a history download (syncing=true).",
-			Params: []Param{instParam("path")}, CostTxt: "2", cost: func(Args) int { return 2 },
+			Params: []Param{instParam("path"),
+				{Name: "detail", In: "query", Type: "string", Enum: []string{"compact", "full"}, Default: "compact",
+					Desc: "compact: per-rule long/short scores only and rounded numbers (about a quarter of the size); full: every rule's per-field contributions"}},
+			CostTxt: "2", cost: func(Args) int { return 2 },
 			run: func(ctx context.Context, a Args) (any, error) {
 				info, ok := e.Instrument(a.Str("instId"))
 				if !ok {
 					return nil, fmt.Errorf("unknown instrument %q", a.Str("instId"))
 				}
-				return info, nil
+				if a.Str("detail") == "full" {
+					return info, nil
+				}
+				return compactInstrument(info)
 			},
 		},
 		{
@@ -303,6 +321,17 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			},
 		},
 		{
+			Name: "get_exhaustion", Path: "exhaustion", Summary: "Top / bottom exhaustion scores (0–100) with the checklist and a fade plan",
+			Desc: "How close the latest move is to topping out or bottoming: extension from EMA20 in ATR, size of the run, volume climax, " +
+				"rejection wick or pullback, RSI and divergence, liquidation spike on the squeezed side, funding percentile, taker flow; " +
+				"gated by where the extreme sits in the last 30 bars. Same checklist as the agent's rev tool. Heuristic, not validated.",
+			Params:  []Param{instParam("query"), {Name: "bar", In: "query", Type: "string", Enum: []string{"15m", "1H", "4H"}, Default: "1H", Desc: "bar size"}},
+			CostTxt: "2", cost: func(Args) int { return 2 },
+			run: func(ctx context.Context, a Args) (any, error) {
+				return e.Exhaustion(ctx, a.Str("instId"), a.Str("bar"))
+			},
+		},
+		{
 			Name: "get_liquidations", Path: "liquidations", Summary: "Liquidations per bar and recent liquidation orders",
 			Desc: "Per bar: long / short = USDT of long / short positions liquidated, nl / ns = counts. Only bars with liquidations are listed: a bar missing at or after since means zero, " +
 				"before since means unknown (not recorded). err is set when the latest sync with OKX failed and stored data was served. recent = newest liquidation orders.",
@@ -374,7 +403,428 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			},
 		})
 	}
+	if s.positions != nil {
+		eps = append(eps, &Endpoint{
+			Name: "get_positions", Path: "positions", Summary: "The owner's open OKX swap positions with TP/SL (read-only)",
+			Desc: "The owner's live OKX account, read-only (this server cannot place, change or cancel orders): per position side, contracts / coins / " +
+				"notionalUsd, avgPx (entry), markPx, liqPx, lever, upl (USDT), uplRatio (upl / margin), mgnRatio, and the resting tp / sl triggers " +
+				"(px, full = closes the whole position, else contracts), nearest first; equity = account totals in USD. enabled=false means no " +
+				"account is configured. Missing numbers are unknown. Cached ~3 s.",
+			Params: []Param{{Name: "instId", In: "query", Type: "string", Desc: "only this instrument, e.g. BTC-USDT-SWAP (default: all)"}},
+			owner:  true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				v, err := s.positions(ctx, strings.ToUpper(a.Str("instId")))
+				if err != nil {
+					return nil, err
+				}
+				b, err := json.Marshal(v)
+				if err != nil {
+					return nil, err
+				}
+				var m map[string]any
+				if err := json.Unmarshal(b, &m); err != nil {
+					return nil, err
+				}
+				return roundFloats(m), nil
+			},
+		})
+	}
+	if s.okxHistory != nil {
+		eps = append(eps, &Endpoint{
+			Name: "okx_history", Path: "okx-history", Summary: "Totals of the owner's OKX history over a period, paged on the server (read-only)",
+			Desc: "Pages through a whole period of one history and returns totals and groups — use this, not okx_api, for anything summed " +
+				"over time (this year's P&L, deposits vs withdrawals, funding fees, C2C volume, fees). kind: positions = closed swap " +
+				"positions (realizedPnl = pnl + fee + fundingFee + liqPenalty; wins / losses; goes back as far as OKX keeps, over a year) · " +
+				"orders = swap orders (back to the start of the year or more) · fills / bills = about 3 months, one row per fill / fee / funding " +
+				"payment, so long periods come back partial — use positions for P&L and funding fees · deposits / withdrawals = credited / " +
+				"completed only, all history · " +
+				"funding = funding-account bills, about 1 year (C2C: 117 completed buys; 116 sells escrowed at placement, 118 refunds of cancelled sells, completed sells = 116 + 118; transfers 130/131, Earn 75/76). " +
+				"from / to = the oldest and newest row counted; complete=false means it stopped at the cap (15k rows or 45 s) before begin — " +
+				"say so. group: inst, ccy, month, day, type, side, state (default per kind). Sums are in each row's own ccy " +
+				"(group by ccy when currencies mix).",
+			Params: []Param{
+				{Name: "kind", In: "query", Type: "string", Required: true, Enum: []string{"positions", "fills", "orders", "bills", "deposits", "withdrawals", "funding"}},
+				{Name: "begin", In: "query", Type: "string", Desc: "period start, Beijing date like 2026-01-01 (default: as far back as OKX keeps)"},
+				{Name: "end", In: "query", Type: "string", Desc: "period end, e.g. 2026-11-01 (default: now)"},
+				{Name: "instId", In: "query", Type: "string", Desc: "only this instrument (positions, fills, orders, bills)"},
+				{Name: "ccy", In: "query", Type: "string", Desc: "only this currency (bills, deposits, withdrawals, funding)"},
+				{Name: "group", In: "query", Type: "string", Enum: []string{"inst", "ccy", "month", "day", "type", "side", "state"}},
+				{Name: "sample", In: "query", Type: "integer", Default: 0, Min: 0, Max: 30, Desc: "also return this many raw rows (newest first)"},
+			},
+			owner: true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				return s.okxHistory(ctx, a)
+			},
+		})
+	}
+	if s.propose != nil {
+		eps = append(eps, &Endpoint{
+			Name: "propose_trade", Path: "propose-trade", Summary: "Propose one action on the owner's OKX account for him to approve (never executes)",
+			Desc: "Creates a pending proposal and returns its proposalId. Nothing is sent until the owner approves it (Telegram, web, app); " +
+				"approval re-checks the price, the position and the caps, then the server sends it and posts the outcome (fill, position, " +
+				"TP/SL on OKX) into this conversation. kind: open — a new position with marginUsdt, leverage, sl and tp (attached; " +
+				"triggered on the last price, closed at market) · add (补仓) — more size on the existing position of that side, same margin " +
+				"mode and leverage, with sl and tp for the whole position · reduce (减仓) — close `fraction` of the position · close (平仓) — " +
+				"all of it · adjust — new sl and tp for the whole position. After add / reduce / adjust the position has one TP/SL covering " +
+				"its whole size. A stop is only ever moved closer (add, adjust). Every kind but adjust: orderType market, or limit with " +
+				"price — it must rest (a buy below / a sell above the price) and the server cancels what is unfilled after orderExpiryMin. " +
+				"contracts = marginUsdt × leverage / (entry × contract value), rounded down. Rejected with the reason: exits on the wrong " +
+				"side, stop 0.3–10% / target ≤ 40% from the entry, reward:risk below minRR (open, add), leverage or margin outside the caps, " +
+				"the stop beyond the estimated liquidation, another proposal or resting order in the coin, an open where a position exists " +
+				"(act on it instead), too many adds or AI positions, the daily loss stop (blocks open and add only). get_trade_proposals " +
+				"shows the mode and caps; mode=dryrun means approved actions are only recorded and simulated. Resting limit orders: " +
+				"cancel — withdraw ctg's resting limit order in that coin and side (instId + side; the unfilled rest is cancelled, a partial fill " +
+				"stays a position) · amend — change that resting order: price (a buy below / a sell above the market), orderExpiryMin " +
+				"(rest time restarts at approval), and for an open also sl / tp (both re-checked); size never changes, and a partly filled " +
+				"order only takes a new orderExpiryMin. Both need no marginUsdt / leverage / invalidation, are never blocked by the caps, " +
+				"and fail if the order has meanwhile filled or expired. A new limit or market order is a plain open / add / reduce / close. " +
+				"Without marginMode an open uses cross (the owner's default); pass isolated only when asked.",
+			Params: []Param{
+				{Name: "kind", In: "query", Type: "string", Enum: []string{"open", "add", "reduce", "close", "adjust", "cancel", "amend"}, Default: "open"},
+				instParam("query"),
+				{Name: "side", In: "query", Type: "string", Required: true, Enum: []string{"long", "short"}, Desc: "the position's side"},
+				{Name: "orderType", In: "query", Type: "string", Enum: []string{"market", "limit"}, Default: "market"},
+				{Name: "price", In: "query", Type: "number", Desc: "limit price (amend: the new price)"},
+				{Name: "orderExpiryMin", In: "query", Type: "integer", Min: 5, Max: 1440, Desc: "limit / amend: minutes it rests before the server cancels the unfilled rest (default 60)"},
+				{Name: "marginMode", In: "query", Type: "string", Enum: []string{"isolated", "cross"}, Desc: "open: cross (default) or isolated; other kinds use the position's"},
+				{Name: "marginUsdt", In: "query", Type: "number", Desc: "open / add: margin in USDT"},
+				{Name: "leverage", In: "query", Type: "integer", Min: 1, Max: 125, Desc: "open: leverage (add uses the position's)"},
+				{Name: "sl", In: "query", Type: "number", Desc: "open / add / adjust / amend (an open): stop-loss trigger price (whole position)"},
+				{Name: "tp", In: "query", Type: "number", Desc: "open / add / adjust / amend (an open): take-profit trigger price (whole position)"},
+				{Name: "fraction", In: "query", Type: "number", Desc: "reduce: share of the position to close, e.g. 0.5"},
+				{Name: "rationale", In: "query", Type: "string", Required: true, Desc: "why this action and why now, in Chinese, 2–6 sentences with numbers: the evidence for and against"},
+				{Name: "invalidation", In: "query", Type: "string", Desc: "open / add (required): what proves the idea wrong before the stop, in Chinese, one sentence"},
+				{Name: "expiresMin", In: "query", Type: "integer", Default: 15, Min: 3, Max: 240, Desc: "minutes the owner has to approve: as long as the setup stays valid near this price"},
+			},
+			owner: true,
+			write: true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				var chat int64
+				if c := callerFrom(ctx); c != nil {
+					chat = c.Chat
+				}
+				return s.propose(ctx, chat, a)
+			},
+		})
+	}
+	if s.proposals != nil {
+		eps = append(eps, &Endpoint{
+			Name: "get_trade_proposals", Path: "trade-proposals", Summary: "The trade proposals and their status, plus the mode and caps",
+			Desc: "Proposals newest first: kind, status pending → executed (dryrun = recorded only) / failed / invalidated / rejected / expired; " +
+				"limit orders' ordState live / partially_filled / filled / canceled with filled and fillPx; posId = the AI position (its open's id) " +
+				"an action belongs to; an open AI position's current size, average and TP/SL (position); closeKind and pnlUsdt once it closed. " +
+				"Also mode and limits.",
+			Params: []Param{
+				{Name: "status", In: "query", Type: "string", Enum: []string{"all", "open", "pending", "executed"}, Default: "all"},
+				{Name: "posId", In: "query", Type: "integer", Desc: "only this AI position and the actions on it"},
+				limitParam(10, 50, "number of proposals"),
+			},
+			owner: true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				return s.proposals(ctx, a)
+			},
+		})
+	}
+	if s.desk != nil {
+		chatOf := func(ctx context.Context) int64 {
+			if c := callerFrom(ctx); c != nil {
+				return c.Chat
+			}
+			return 0
+		}
+		eps = append(eps, &Endpoint{
+			Name: "desk_journal", Path: "desk-journal", Summary: "Trading desk: record one decision about one coin",
+			Desc: "Only in the trading desk conversation (交易台). Records what you decided about one coin in this run — including decisions not " +
+				"to act. The server stamps it with the price and fact-panel values now, then follows it: the price 1 h / 4 h / 24 h later, the " +
+				"best and worst excursion within 24 h, and the linked proposal's fate; you are asked to review it when the outcome is in. " +
+				"One call per coin per run. action: open | add | reduce | close | adjust (give proposalId of the propose_trade you made) · " +
+				"hold (keep the position as it is) · watch (a setup worth waiting for; say what you wait for) · skip (looked, not worth it).",
+			Params: []Param{
+				{Name: "instId", In: "query", Type: "string", Required: true, Desc: "e.g. ENA-USDT-SWAP"},
+				{Name: "action", In: "query", Type: "string", Required: true, Enum: []string{"open", "add", "reduce", "close", "adjust", "hold", "watch", "skip"}, Desc: "the decision"},
+				{Name: "side", In: "query", Type: "string", Enum: []string{"long", "short"}, Desc: "the position's side, or for hold / watch / skip the direction of the trade you considered; it signs the follow-up returns (for a pass, a positive return later means the pass missed a move). Omit only when you had no direction in mind"},
+				{Name: "conviction", In: "query", Type: "string", Enum: []string{"low", "medium", "high"}, Desc: "how sure you are"},
+				{Name: "thesis", In: "query", Type: "string", Required: true, Desc: "why, in Chinese, one or two sentences with the deciding numbers"},
+				{Name: "entry", In: "query", Type: "number", Desc: "planned or actual entry price"},
+				{Name: "sl", In: "query", Type: "number", Desc: "stop price"},
+				{Name: "tp", In: "query", Type: "number", Desc: "target price"},
+				{Name: "invalidation", In: "query", Type: "string", Desc: "what would prove the view wrong, in Chinese"},
+				{Name: "tags", In: "query", Type: "string", Desc: "a few comma-separated tags for later counting, e.g. 顺势,回踩,资金费"},
+				{Name: "proposalId", In: "query", Type: "integer", Desc: "the propose_trade this decision made"},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.desk.Journal(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "desk_review", Path: "desk-review", Summary: "Trading desk: write the conclusion on a past decision",
+			Desc: "Only in the trading desk conversation. For a decision whose outcome is in (listed under 待复盘 in the brief): was the call right, " +
+				"and what explains it — the thesis, the timing, the sizing, or luck. Be honest about luck; a lesson worth keeping goes to desk_remember.",
+			Params: []Param{
+				{Name: "decisionId", In: "query", Type: "integer", Required: true, Desc: "the decision"},
+				{Name: "verdict", In: "query", Type: "string", Required: true, Enum: []string{"right", "wrong", "mixed", "na"}, Desc: "na = cannot be judged"},
+				{Name: "review", In: "query", Type: "string", Required: true, Desc: "what happened and why, in Chinese, two or three sentences"},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.desk.Review(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "desk_remember", Path: "desk-remember", Summary: "Trading desk: keep (or rewrite, or retire) a long-term memory",
+			Desc: "Only in the trading desk conversation. The desk's long-term memory travels in every brief, so keep it short and reusable: " +
+				"rule (how this desk trades: the owner's standing instructions, sizing, what never to do) · lesson (what a reviewed decision taught) · " +
+				"regime (the market state that matters for the next days; rewrite it when it changes) · coin (a lasting fact about one coin). " +
+				"Not for single observations — those belong in desk_journal. Rewrite with replaces rather than adding a near-duplicate; " +
+				"retire=<memoryId> with reason takes one out.",
+			Params: []Param{
+				{Name: "kind", In: "query", Type: "string", Enum: []string{"rule", "lesson", "regime", "coin"}, Desc: "required unless retiring"},
+				{Name: "text", In: "query", Type: "string", Desc: "one statement in Chinese, ≤ 300 characters"},
+				{Name: "instId", In: "query", Type: "string", Desc: "the coin it is about (required for kind coin)"},
+				{Name: "replaces", In: "query", Type: "integer", Desc: "memoryId to rewrite"},
+				{Name: "decisionId", In: "query", Type: "integer", Desc: "the decision this lesson comes from"},
+				{Name: "retire", In: "query", Type: "integer", Desc: "memoryId to retire instead of writing"},
+				{Name: "reason", In: "query", Type: "string", Desc: "why it is retired"},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.desk.Remember(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "desk_recall", Path: "desk-recall", Summary: "Trading desk: read its journal, memory, runs or statistics",
+			Desc: "The trading desk's records (any conversation). what=journal: past decisions, newest first, each with the follow-up returns " +
+				"(percent, signed by the decision's side) and the proposal's fate — filter by instId, action (one action, trades = the five " +
+				"that act, passes = hold/watch/skip), days, reviewed (yes/no); decisionId returns one decision with the market snapshot taken " +
+				"when it was made. what=memory: the long-term memory. what=stats: counts, 4 h win rate and average returns by action, " +
+				"conviction, strategy and trigger over days. what=runs: the recent runs with cost.",
+			Params: []Param{
+				{Name: "what", In: "query", Type: "string", Default: "journal", Enum: []string{"journal", "memory", "stats", "runs"}, Desc: "which record"},
+				{Name: "instId", In: "query", Type: "string", Desc: "journal: one coin"},
+				{Name: "action", In: "query", Type: "string", Desc: "journal: open|add|reduce|close|adjust|hold|watch|skip|trades|passes"},
+				{Name: "days", In: "query", Type: "integer", Min: 1, Max: 365, Desc: "journal / stats: look back this many days (stats default 30)"},
+				{Name: "reviewed", In: "query", Type: "string", Enum: []string{"yes", "no"}, Desc: "journal: only reviewed / not yet reviewed"},
+				{Name: "decisionId", In: "query", Type: "integer", Desc: "journal: one decision in full"},
+				{Name: "limit", In: "query", Type: "integer", Default: 20, Min: 1, Max: 60, Desc: "rows"},
+			},
+			owner: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.desk.Recall(ctx, chatOf(ctx), a) },
+		})
+	}
+	if s.signals != nil {
+		chatOf := func(ctx context.Context) int64 {
+			if c := callerFrom(ctx); c != nil {
+				return c.Chat
+			}
+			return 0
+		}
+		eps = append(eps, &Endpoint{
+			Name: "subscribe_signal", Path: "subscribe-signal", Summary: "Wait for a market condition: wake this conversation when it turns true",
+			Desc: "Subscribes this conversation to a server-side condition. When it turns from false to true, the server appends a ⚡ 信号 message " +
+				"(the values that matched + your intent) to this conversation and runs you again with its full history, so you can re-check and " +
+				"propose_trade (still needs the owner's approval), re-subscribe or explain. It never trades by itself. Use it when a setup is worth " +
+				"waiting for but its entry conditions are not met yet; one subscription per setup. A condition that already holds is rejected. " +
+				"spec (JSON object), one of: " +
+				`{"type":"price","instId":"AAVE-USDT-SWAP","op":"above"|"below","level":140.2,"bar":"1H"} (bar omitted = last trade price; ` +
+				`1m/5m/15m/1H/4H = that bar's confirmed close) · {"type":"zone","instId":…,"lo":139.5,"hi":140.2} (price enters the zone) · ` +
+				`{"type":"field","instId":…,"field":"funding_hourly","op":">","value":0} (fact-panel fields as in get_universe: ret_15m ret_1h ` +
+				"ret_4h ret_24h (log) oi_chg_1h oi_chg_4h (log) vol_surprise_4h (log of the multiple) funding_hourly funding_pred_hourly (rate per " +
+				"hour) basis trend_z_4h excess_btc_4h resid_1h resid_4h trend_ema eff_ratio_24h beta_btc_48h spread_bps; checked each minute) · " +
+				`{"type":"moverisk","instId":…,"side":"top"|"bottom","metric":"pTail"|"pBig3","op":"<","value":0.4} or metric "extended" with ` +
+				"value 0 (leaves the extended state) / 1 (enters it) (rev's continuation risk on confirmed 1H bars) · " +
+				`{"type":"alert","ruleId":12,"instId":…?} (an alert rule fires) · {"type":"time","afterMin":120} or {"type":"time","at":"2026-11-02 10:00"} ` +
+				`(UTC+8; a re-check) · {"type":"plan","planId":34,"state":"active"|"tp1"|"done"|"stopped"|"invalid"|"missed"|"expired"|"settled"} ` +
+				`(an AI plan from a plan block reaches that state; active = entry zone touched) · {"type":"script"} with the Python in code (a ctg ` +
+				"Condition class run on every close of its timeframe — for indicator, multi-condition or relative logic the built-ins cannot " +
+				"express; test it with test_signal_script first; subscribing runs the same compile + replay check and rejects scripts that error, " +
+				"are slow, would fire more than the daily cap or hold right now; at most one script per subscription, every ≠ tick) · " +
+				`{"type":"pool","scope":"pool"|"watch"|"list","top":50,"instIds":[…],"exclude":[…],"metric":"move","windowMin":15,"dir":"up"|"down"|"both","pct":3} ` +
+				`(a scan of many coins, each on its own: move = change over the last windowMin minutes ≥ pct %, windowMin 1 = minute-to-minute; ` +
+				`metric "range" = high–low swing within windowMin ≥ pct %; metric "field" with field/op/value = a fact-panel field across the scope; ` +
+				"scope pool = the active pool, top = ranks ≤ N, watch = watchlist, list = instIds (≤ 50); coins already beyond the threshold " +
+				"only fire after falling back; each coin has its own cooldownMin; coins firing on the same minute arrive in one wake-up with a " +
+				"line each; default maxFires 10 (≤ 50); checked each minute or every tick; it must be the whole spec, not inside all/any; " +
+				"test it with test_signal first) · " +
+				`{"type":"all"|"any","of":[…]} (≤ 6 conditions). ` +
+				"Put the invalidation in intent or subscribe it separately. Caps: 5 active per conversation, expiry ≤ 7 days, wake-ups per day are capped. " +
+				"A wake-up while this conversation is answering is injected into the running turn.",
+			Params: []Param{
+				{Name: "spec", In: "query", Type: "object", Required: true, Desc: "the condition, see the description"},
+				{Name: "code", In: "query", Type: "string", Desc: "the Python of a script condition ({\"type\":\"script\"} in spec), exactly as tested with test_signal_script"},
+				{Name: "intent", In: "query", Type: "string", Required: true, Desc: "in Chinese: what you will do when it fires — the plan (side, entry, stop, targets) and its invalidation; you read it back on wake-up"},
+				{Name: "expiresHours", In: "query", Type: "number", Default: 24, Desc: "hours until it lapses unfired (0.25–168)"},
+				{Name: "planId", In: "query", Type: "integer", Desc: "the AI plan (```plan block) this setup belongs to, if any"},
+				{Name: "tradeId", In: "query", Type: "integer", Desc: "the AI position this watch manages (its open's proposal id): its state comes with the wake-up and the watch is cancelled when it closes"},
+				{Name: "maxFires", In: "query", Type: "integer", Min: 1, Max: 50, Desc: "fires before it ends (default 1, ≤ 5; pool scans default 10, ≤ 50)"},
+				{Name: "cooldownMin", In: "query", Type: "integer", Default: 60, Min: 5, Max: 1440, Desc: "minutes between two fires (maxFires > 1); for a pool scan per coin"},
+				{Name: "every", In: "query", Type: "string", Enum: []string{"tick", "1m", "5m", "15m", "1H"}, Desc: "how often the server checks it: " +
+					"tick = each ~2 s price update (only for a fast level / zone you must catch at once), 1m, 5m, 15m, 1H (on that confirmed " +
+					"minute). Altcoins are always checked at least every minute (5m–1H is lowered to 1m); only BTC / ETH may wait 5m–1H. " +
+					"Default: tick for last-price levels / zones / times, else 1m. Scripts run on their own timeframe's close."},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.signals.Subscribe(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "list_signals", Path: "signals", Summary: "Signal subscriptions: this conversation's or everyone's, with distance to firing",
+			Desc: "Subscriptions made with subscribe_signal (and the owner's own): signalId, condition, subscriber, intent, expiry, fires, and " +
+				"for active ones how far the price is from firing. Also the caps and today's wake-ups. Check it before subscribing to avoid duplicates.",
+			Params: []Param{
+				{Name: "scope", In: "query", Type: "string", Enum: []string{"mine", "all"}, Default: "mine"},
+				{Name: "status", In: "query", Type: "string", Enum: []string{"active", "fired", "ended", "all"}, Default: "active"},
+				{Name: "instId", In: "query", Type: "string", Desc: "only this instrument"},
+			},
+			owner: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.signals.List(ctx, chatOf(ctx), a) },
+		}, &Endpoint{
+			Name: "unsubscribe_signal", Path: "unsubscribe-signal", Summary: "Cancel a signal subscription",
+			Desc: "Cancels an active subscription of this conversation (when the setup is invalidated or replaced). Another subscriber's only " +
+				"when the owner explicitly asked you to (ownerAsked=true).",
+			Params: []Param{
+				{Name: "id", In: "query", Type: "integer", Required: true, Desc: "signalId"},
+				{Name: "reason", In: "query", Type: "string", Required: true, Desc: "why, in Chinese, one sentence"},
+				{Name: "ownerAsked", In: "query", Type: "boolean", Default: false, Desc: "the owner asked to cancel it (needed for subscriptions of other conversations)"},
+			},
+			owner: true,
+			write: true,
+			run:   func(ctx context.Context, a Args) (any, error) { return s.signals.Unsubscribe(ctx, chatOf(ctx), a) },
+		})
+		if s.signals.TestSpec != nil {
+			eps = append(eps, &Endpoint{
+				Name: "test_signal", Path: "test-signal", Summary: "Replay a built-in signal condition over recent 1m history (stores nothing)",
+				Desc: "Before subscribe_signal: how often would this spec have fired over the last hours, and on what. Runs the same evaluator as live " +
+					"on recorded 1m bars (closes stand in for ticks, so live may fire a little earlier or on wicks). Replayable: price, zone, time, " +
+					"all/any of them, and pool scans on move / range (members = the scope's coins now). Not replayable: field, moverisk, alert, plan " +
+					"(no history) and scripts (use test_signal_script). Returns fireCount, perDay, unknownMinutes, for pool scans members and fires per coin, " +
+					"and the last fires with the matched values. Tune pct / windowMin / cooldownMin until the rate is what you want, then subscribe.",
+				Params: []Param{
+					{Name: "spec", In: "query", Type: "object", Required: true, Desc: "the condition, as for subscribe_signal"},
+					{Name: "hours", In: "query", Type: "number", Default: 24, Desc: "look-back (≤ 72; 1m history is kept 2–7 days)"},
+					{Name: "cooldownMin", In: "query", Type: "integer", Default: 60, Min: 5, Max: 1440, Desc: "as for subscribe_signal (pool: per coin)"},
+					{Name: "every", In: "query", Type: "string", Enum: []string{"tick", "1m", "5m", "15m", "1H"}, Desc: "check interval, as for subscribe_signal"},
+				},
+				owner: true,
+				run:   func(ctx context.Context, a Args) (any, error) { return s.signals.TestSpec(ctx, chatOf(ctx), a) },
+			})
+		}
+		if s.signals.TestScript != nil {
+			eps = append(eps, &Endpoint{
+				Name: "test_signal_script", Path: "test-signal-script", Summary: "Compile a script signal and replay it over recent history (stores nothing)",
+				Desc: "Checks a script condition before subscribe_signal: compiles it (imports only ctg, numpy, math, statistics, collections, " +
+					"itertools, functools, typing; no files or network), reads what it declares and replays check on every close of its timeframe " +
+					"over the last 7 days (≤ 1000 bars incl. lookback). Returns ok, or problem (compile | error | slow | often | unknown | holds | nodata) " +
+					"with the reason; the replay: closes, fires (false→true changes) and fires per day, the last fires with their values, " +
+					"unknown closes, errors, average / max ms, holdsShare, and now (the newest close). Format:\n" +
+					"from ctg import Condition, Fire, ta\n" +
+					"class AaveRsiReclaim(Condition):\n" +
+					"    \"\"\"AAVE 15m RSI 从 30 以下收回\"\"\"          # one line shown with the signal\n" +
+					"    instruments = [\"AAVE-USDT-SWAP\"]           # 1–10\n" +
+					"    timeframe = \"15m\"                          # 1m 5m 15m 1H 4H: check runs on each confirmed close\n" +
+					"    lookback = 100                               # bars per instrument, 10–500\n" +
+					"    def check(self, ctx, bars):                  # bars = {instId: Bars}, numpy ts o h l c vol volq, newest last\n" +
+					"        r = ta.rsi(bars[\"AAVE-USDT-SWAP\"].c, 14)\n" +
+					"        return Fire(r[-2] < 30 <= r[-1], values={\"rsi\": r[-1]}, note=f\"RSI {r[-1]:.1f}\")\n" +
+					"check returns True / False, Fire(hit, values={…≤12 numbers}, note=\"one line\") or None (unknown: never fires). ctx.now (ms, the close), " +
+					"ctx.bars(inst, n), ctx.factors(inst) (fact-panel fields live; NaN in replays). It must be a pure function of the bars: " +
+					"nothing persists between calls. ta: sma ema rma rsi atr tr macd bbands crossover crossunder cross highest lowest stdev change.",
+				Params: []Param{
+					{Name: "code", In: "query", Type: "string", Required: true, Desc: "the Python source (≤ 8000 bytes)"},
+				},
+				owner: true,
+				run:   func(ctx context.Context, a Args) (any, error) { return s.signals.TestScript(ctx, chatOf(ctx), a) },
+			})
+		}
+	}
+	if s.okxRead != nil {
+		eps = append(eps, &Endpoint{
+			Name: "okx_api", Path: "okx", Summary: "Read any private OKX API endpoint of the owner's account (GET only, read-only key)",
+			Desc: "One signed GET to OKX's v5 REST API for the owner's own account, for questions the other tools don't cover. Read-only: " +
+				"GET under /api/v5/account/, asset/, trade/, finance/, tradingBot/, copytrading/, users/; nothing can be placed, moved or withdrawn. " +
+				"Common paths (params; times are ms; pages via after/before = the last row's id or ts; limit ≤ 100): " +
+				"deposits /api/v5/asset/deposit-history (ccy, state 2=credited, after, before, limit) · withdrawals /api/v5/asset/withdrawal-history " +
+				"(ccy, state 2=done, after, before, limit) · funding-account bills /api/v5/asset/bills (1 month) and /api/v5/asset/bills-history (about 1 year) " +
+				"(ccy, type, after/before = ts, limit; types: 1 deposit, 2 withdrawal, 130/131 from/to trading account, 75/76 Simple Earn in/out, " +
+				"173 fee rebate; C2C (P2P): 117 = a buy, credited only when completed; 116 = a sell, USDT escrowed when placed, and 118 refunds " +
+				"it if cancelled, so completed sells = 116 + 118 — balChg is the crypto that moved; the fiat price, amount " +
+				"and counterparty are in no API, OKX's P2P API is merchant-only) · " +
+				"trading-account bills /api/v5/account/bills (7 days) and /api/v5/account/bills-archive (3 months) (instType, ccy, type 2=trade 8=funding fee, " +
+				"after/before = billId, begin/end ms) · fills /api/v5/trade/fills-history (instType=SWAP required, 3 months) · orders " +
+				"/api/v5/trade/orders-history (7 days) and orders-history-archive (3 months) (instType=SWAP required) · closed positions " +
+				"/api/v5/account/positions-history (instType, instId, limit) · funding balances /api/v5/asset/balances · account valuation " +
+				"/api/v5/asset/asset-valuation (ccy) · fee tier /api/v5/account/trade-fee (instType=SWAP) · account config /api/v5/account/config. " +
+				"Output: data rows with empty fields dropped and ms times (ts, cTime, uTime, fillTime …) also given in Beijing time; " +
+				"use fields to keep only the columns you need. Sum or count from the rows yourself and say which period they cover.",
+			Params: []Param{
+				{Name: "path", In: "query", Type: "string", Required: true, Desc: "the endpoint path, e.g. /api/v5/asset/deposit-history"},
+				{Name: "query", In: "query", Type: "string", Desc: "OKX query parameters as k=v&k=v, e.g. ccy=USDT&limit=100"},
+				{Name: "fields", In: "query", Type: "string", Desc: "comma-separated columns to keep, e.g. ts,ccy,amt,state (default all)"},
+				{Name: "limit", In: "query", Type: "integer", Default: 100, Min: 1, Max: 300, Desc: "rows returned at most"},
+			},
+			owner: true,
+			run: func(ctx context.Context, a Args) (any, error) {
+				path := a.Str("path")
+				if !strings.HasPrefix(path, "/") {
+					path = "/" + path
+				}
+				v, err := s.okxRead(ctx, path, a.Str("query"))
+				if err != nil {
+					return nil, err
+				}
+				return okxRows(v, a.Str("fields"), a.Int("limit")), nil
+			},
+		})
+	}
+	eps = append(eps, s.microEndpoints(e)...)
 	return eps
+}
+
+var tz8 = time.FixedZone("UTC+8", 8*3600)
+
+// okxRows trims an OKX data array for the model: chosen columns, no empty values, ms times also as
+// Beijing time, at most limit rows.
+func okxRows(v any, fields string, limit int) any {
+	rows, ok := v.([]any)
+	if !ok {
+		return v
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	keep := map[string]bool{}
+	for _, f := range strings.Split(fields, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			keep[f] = true
+		}
+	}
+	out := make([]any, 0, min(len(rows), limit))
+	for _, r := range rows[:min(len(rows), limit)] {
+		m, ok := r.(map[string]any)
+		if !ok {
+			out = append(out, r)
+			continue
+		}
+		c := map[string]any{}
+		for k, x := range m {
+			if len(keep) > 0 && !keep[k] {
+				continue
+			}
+			if str, ok := x.(string); ok {
+				if str == "" {
+					continue
+				}
+				if (k == "ts" || strings.HasSuffix(k, "Time")) && len(str) == 13 {
+					if ms, err := strconv.ParseInt(str, 10, 64); err == nil {
+						c[k+"_bj"] = time.UnixMilli(ms).In(tz8).Format("2006-01-02 15:04:05")
+					}
+				}
+			}
+			if arr, ok := x.([]any); ok && len(arr) == 0 {
+				continue
+			}
+			c[k] = x
+		}
+		out = append(out, c)
+	}
+	res := map[string]any{"rows": len(rows), "data": out}
+	if len(rows) > limit {
+		res["truncated"] = fmt.Sprintf("showing %d of %d rows", limit, len(rows))
+	}
+	return res
 }
 
 // tail keeps the newest n items (the engine pads short requests to at least 10 bars).
@@ -556,4 +1006,52 @@ func rebase(pts []market.ComparePoint) []market.ComparePoint {
 		out[i] = market.ComparePoint{T: p.T, V: v}
 	}
 	return out
+}
+
+// compactInstrument drops the per-field score contributions (most of the payload) and rounds floats to
+// 6 significant digits, so a quick lookup ("ETH 资金费多少") doesn't cost an agent thousands of tokens.
+func compactInstrument(info any) (any, error) {
+	b, err := json.Marshal(info)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	if row, ok := m["row"].(map[string]any); ok {
+		if sc, ok := row["scores"].(map[string]any); ok {
+			for rule, v := range sc {
+				r, _ := v.(map[string]any)
+				out := map[string]any{"gate": r["gate"]}
+				for _, side := range []string{"long", "short"} {
+					if x, ok := r[side].(map[string]any); ok {
+						out[side] = map[string]any{"score": x["score"]} // same shape as full, minus "contrib"
+					}
+				}
+				sc[rule] = out
+			}
+		}
+	}
+	return roundFloats(m), nil
+}
+
+func roundFloats(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, y := range x {
+			x[k] = roundFloats(y)
+		}
+	case []any:
+		for i, y := range x {
+			x[i] = roundFloats(y)
+		}
+	case float64:
+		if x == math.Trunc(x) || math.IsInf(x, 0) || math.IsNaN(x) {
+			return x
+		}
+		f, _ := strconv.ParseFloat(strconv.FormatFloat(x, 'g', 6, 64), 64)
+		return f
+	}
+	return v
 }

@@ -19,6 +19,7 @@ import type { ISeriesPrimitive, IPrimitivePaneView, IPrimitivePaneRenderer, Seri
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
 import type { Trade } from '../../tradeApi'
 import { apiUrl } from '../../native'
+import { withKeyParam } from '../../composables/adminKey'
 import { C, alpha } from '../../theme'
 
 // ---------- shared ----------
@@ -56,7 +57,7 @@ export function coinIcon(instId: string): HTMLImageElement | null {
   icons.set(ccy, img)
   img.onload = () => iconListeners.forEach(f => f())
   img.onerror = () => { icons.set(ccy, 'err') }
-  img.src = apiUrl(`/api/v1/icons/${ccy}.png`)
+  img.src = withKeyParam(apiUrl(`/api/v1/icons/${ccy}.png`))
   return null
 }
 

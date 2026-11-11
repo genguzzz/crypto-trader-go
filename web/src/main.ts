@@ -10,6 +10,7 @@ import SettingsView from './views/Settings.vue'
 import Dev from './views/Dev.vue'
 import { startStream } from './store'
 import { initNative, nativeReady, isEmbed } from './native'
+import { installKeyedFetch } from './composables/adminKey'
 import './style.css'
 import InfoTip from './components/InfoTip.vue'
 import ScoringExplainer from './components/ScoringExplainer.vue'
@@ -57,6 +58,7 @@ document.addEventListener('touchmove', e => { const s = (e as TouchEvent & { sca
 window.addEventListener('wheel', e => { if (e.ctrlKey && (e.target as Element | null)?.closest?.('.tv-lightweight-charts, canvas')) e.preventDefault() }, { passive: false })
 
 initNative()
+installKeyedFetch(!isEmbed)
 if (!isEmbed) startStream()
 createApp(App).use(router).component('InfoTip', InfoTip).component('ScoringExplainer', ScoringExplainer).component('Segmented', Segmented).component('USelect', Select).mount('#app')
 nativeReady(router)

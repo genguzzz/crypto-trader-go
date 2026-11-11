@@ -1,12 +1,15 @@
 // Command server runs the recorder + scanner: OKX public data → SQLite → fact panel, rules,
-// track records → HTTP/SSE + embedded web UI, plus simulated (paper) trading. Public data only;
-// never places real orders.
+// track records → HTTP/SSE + embedded web UI, plus simulated (paper) trading. Real orders only as
+// trade proposals the owner approves (internal/realtrade), dry run unless CTG_TRADE_MODE=live.
 package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -14,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,11 +25,16 @@ import (
 	"crypto-trader-go/internal/aigate"
 	"crypto-trader-go/internal/alerts"
 	"crypto-trader-go/internal/api"
+	"crypto-trader-go/internal/autopilot"
 	"crypto-trader-go/internal/devapi"
 	"crypto-trader-go/internal/interact"
 	"crypto-trader-go/internal/market"
 	"crypto-trader-go/internal/okx"
+	"crypto-trader-go/internal/okxacct"
+	"crypto-trader-go/internal/okxorder"
+	"crypto-trader-go/internal/realtrade"
 	"crypto-trader-go/internal/refdata"
+	"crypto-trader-go/internal/signals"
 	"crypto-trader-go/internal/store"
 	"crypto-trader-go/internal/strategyhost"
 	"crypto-trader-go/internal/trade"
@@ -41,6 +50,7 @@ func main() {
 	cats := flag.String("categories", "", "comma list of instCategory to include (empty = all: 1 crypto, 3 stock/ETF, 4 commodity)")
 	replayH := flag.Int("replay-hours", 336, "hourly replay depth for rule records")
 	capMB := flag.Int("storage-cap-mb", market.DefaultCapMB, "first-run default SQLite size cap in MB (settings page overrides); see retention.go")
+	tapeMB := flag.Int("tape-cap-mb", market.TapeDefaultMB, "size cap of the trade tape file (tape.db next to -db; 0 = tape off)")
 	serveWeb := flag.Bool("web", true, "also serve the embedded web UI (false = API only, e.g. behind a separate frontend container)")
 	doh := flag.Bool("doh", os.Getenv("CTG_DOH") == "1", "resolve OKX hosts via DNS-over-HTTPS (for polluted DNS)")
 	flag.Parse()
@@ -81,6 +91,13 @@ func main() {
 	eng.Ref.Load = func() (string, bool) { return st.Setting("refdata.coingecko") }
 	eng.Ref.Save = func(s string) error { return st.PutSetting("refdata.coingecko", s) }
 	go eng.Ref.Run(ctx)
+	if *tapeMB > 0 {
+		tp, err := store.OpenTape(filepath.Join(filepath.Dir(*dbPath), "tape.db"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		eng.SetTape(tp, *tapeMB)
+	}
 	if err := eng.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
@@ -95,6 +112,71 @@ func main() {
 		log.Fatal(err)
 	}
 	go dev.Run(ctx)
+
+	// The owner's own OKX positions, read-only, only through OKX_PRIVATE_PROXY (disabled without it or the key).
+	acctCfg, err := okxacct.ConfigFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	acct := okxacct.New(acctCfg)
+	acct.CtVal = func(id string) float64 { i, _ := eng.InstrumentMeta(id); return i.CtVal }
+	if acct.Enabled() {
+		log.Printf("okx account: read-only positions via private proxy %s", acctCfg.Proxy.Host)
+		dev.SetPositions(func(ctx context.Context, inst string) (any, error) { return acct.Snapshot(ctx, inst) })
+		dev.SetOKXRead(func(ctx context.Context, path, query string) (any, error) {
+			q, err := url.ParseQuery(query)
+			if err != nil {
+				return nil, fmt.Errorf("query: %w", err)
+			}
+			return acct.Read(ctx, path, q)
+		})
+		dev.SetOKXHistory(func(ctx context.Context, a map[string]string) (any, error) {
+			begin, err := okxacct.ParseDay(a["begin"])
+			if err != nil {
+				return nil, err
+			}
+			end, err := okxacct.ParseDay(a["end"])
+			if err != nil {
+				return nil, err
+			}
+			if len(strings.TrimSpace(a["end"])) == 10 { // a plain date includes that whole day
+				end += 24*3600*1000 - 1
+			}
+			n, _ := strconv.Atoi(a["sample"])
+			return acct.History(ctx, okxacct.HistoryQuery{Kind: a["kind"], InstID: strings.ToUpper(a["instId"]), Ccy: strings.ToUpper(a["ccy"]),
+				Group: a["group"], Begin: begin, End: end, Sample: n})
+		})
+	} else if acctCfg.Key != "" || acctCfg.Proxy != nil {
+		log.Printf("okx account: disabled (needs OKX_API_KEY, OKX_API_SECRET, OKX_API_PASSPHRASE and OKX_PRIVATE_PROXY)")
+	}
+
+	// Real trades: only proposals the owner approves (open / add / reduce / close / adjust TP/SL, market or
+	// limit, isolated or cross), sent only when CTG_TRADE_MODE is exactly "live"; otherwise built,
+	// validated, recorded and simulated (dry run).
+	orders, err := okxorder.New(okxorder.ModeFromEnv(), acctCfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	rt, err := realtrade.New(st, orders, realtrade.Options{Limits: realtrade.LimitsFromEnv(), PublicURL: envOr("CTG_PUBLIC_URL", "https://ctg.gugenzzz.top"),
+		Quote: func(id string) (float64, int64, bool) { q, ok := eng.TradeQuote(id); return q.Last, q.Ts, ok },
+		Spec: func(id string) (okxorder.Spec, bool) {
+			i, ok := eng.InstrumentMeta(id)
+			return okxorder.Spec{CtVal: i.CtVal, LotSz: i.LotSz, MinSz: i.MinSz, TickSz: i.TickSz, MaxLever: i.MaxLever}, ok
+		}})
+	if err != nil {
+		log.Fatal(err)
+	}
+	rt.SetAccount(acct)
+	rt.SetOnChange(func() { eng.Publish("realtrade", struct{}{}) })
+	dev.SetTradeProposals(rt.ProposeTool, rt.ListTool)
+	tradeBot, err := realtrade.BotFromEnv(rt, okx.HTTPClient())
+	if err != nil {
+		log.Fatal(err)
+	}
+	if tradeBot != nil {
+		go tradeBot.Run(ctx)
+	}
+	log.Printf("real trading: %s (proposals need the owner's approval), trade bot %v", orders.Mode(), tradeBot != nil)
 
 	// Paper trading: order layer + strategy runtime + interaction layer + optional AI review.
 	tsvc, err := trade.New(st, mdlive.New(eng), trade.Options{})
@@ -124,8 +206,17 @@ func main() {
 	if strings.HasPrefix(mcpHost, ":") || strings.HasPrefix(mcpHost, "0.0.0.0:") {
 		mcpHost = "127.0.0.1:" + mcpHost[strings.LastIndex(mcpHost, ":")+1:]
 	}
-	gate.SetAgent(aigate.Agent{MCPURL: "http://" + mcpHost + devapi.MCPPath, MCPToken: dev.InternalKey("ai-agent", 600, 120),
-		SandboxToken: dev.InternalKey("ai-sandbox", 120, 30)})
+	agentKey := randomToken()
+	gate.SetAgent(aigate.Agent{MCPURL: "http://" + mcpHost + devapi.MCPPath, MCPToken: dev.OwnerKey("ai-agent", 600, 120),
+		SandboxToken: dev.InternalKey("ai-sandbox", 120, 30), SessionsToken: agentKey})
+	gate.SetCandles(func(inst string, limit int) ([]aigate.Bar, error) { // AI plans followed on 1m candles
+		cs, err := eng.Candles(inst, "1m", limit)
+		out := make([]aigate.Bar, len(cs))
+		for i, c := range cs {
+			out[i] = aigate.Bar{T: c.T, H: c.H, L: c.L, C: c.C}
+		}
+		return out, err
+	})
 	gate.SetNotify(al.Notify) // "answer ready" for chats nobody was watching (Telegram channel, if set)
 	gate.SetApplyParams(func(instanceID int64, params map[string]float64) error {
 		_, err := tsvc.UpdateInstance(instanceID, trade.InstancePatch{Params: params})
@@ -135,6 +226,111 @@ func main() {
 		hub.Notify(trade.Event{Kind: "ai", AccountID: p.AccountID, Title: "AI 调参申请（需批准）",
 			Lines: []string{p.Strategy + "：" + p.Rationale}, Ts: time.Now().UnixMilli()})
 	})
+	rt.SetRunner(func(title, prompt, instID string) (int64, error) { // signal / schedule triggers: a headless chat
+		return gate.StartChat(aigate.ChatInput{Message: prompt, InstID: instID, Title: title})
+	})
+	go rt.Run(ctx)
+
+	// Signal subscriptions: the agent waits for a condition; a firing wakes its chat (internal/signals).
+	sigOpts := signals.OptionsFromEnv()
+	sigOpts.PublicURL = envOr("CTG_PUBLIC_URL", "https://ctg.gugenzzz.top")
+	sig, err := signals.New(st, signalSources{eng: eng, gate: gate, al: al}, sigOpts)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sig.SetWaker(signalWaker{gate})
+	sig.SetScripts(signalScripts{Host: host, eng: eng})
+	sig.SetContext(rt.WakeContext) // a wake-up carries the state of the position it manages
+	// after an approved proposal ran (and when its position closed) its chat is told at once: a new
+	// turn, or injected into the running one; queued only when that fails
+	rt.SetSteerer(func(chat int64, message string) error {
+		err := gate.SteerChat(chat, aigate.RoleTrade, message)
+		if errors.Is(err, aigate.ErrChatBusy) || errors.Is(err, aigate.ErrUnavailable) || errors.Is(err, aigate.ErrWorkerGone) {
+			return realtrade.ErrSteerLater
+		}
+		return err
+	})
+	rt.SetSignals(sig.BriefFor, sig.CancelForTrade)
+	// The trading desk: one standing chat run on strategy scans and on a schedule, with a decision journal
+	// (internal/autopilot). It only proposes; approval stays with the owner.
+	desk, err := autopilot.New(st, gate, sig, rt, deskMarket{eng}, autopilot.Options{TradeMode: func() string { return string(rt.Mode()) },
+		Notify: func(text string) { // a run that failed, or runs that cannot start (once per outage)
+			go func() {
+				nctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				if err := al.Notify(nctx, text); err != nil {
+					log.Printf("autopilot: notify: %v", err)
+				}
+			}()
+		}})
+	if err != nil {
+		log.Fatal(err)
+	}
+	sig.SetDesk(desk.OnFire)
+	desk.SetOnChange(func(kind string) { eng.Publish("autopilot", map[string]any{"kind": kind}) })
+	dev.SetDesk(devapi.DeskTools{Journal: desk.JournalTool, Review: desk.ReviewTool, Remember: desk.RememberTool, Recall: desk.RecallTool})
+	// no "answer ready" note per desk run (its proposals are pushed by the trade bot, its failures by the desk)
+	gate.SetNotifyFilter(func(chat int64) bool { return !desk.RunInFlight(chat) })
+	gate.SetOnChatDone(func(chat int64) { sig.ChatDone(chat); rt.ChatDone(chat); desk.ChatDone(chat) })
+	gate.SetOnPlan(sig.LinkPlan)
+	if tradeBot != nil {
+		sig.SetNotifier(tradeBot.Note)
+	} else {
+		sig.SetNotifier(func(text, link string) {
+			go func() {
+				nctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				if link != "" {
+					text += "\n" + link
+				}
+				if err := al.Notify(nctx, text); err != nil {
+					log.Printf("signals: notify: %v", err)
+				}
+			}()
+		})
+	}
+	sig.SetOnChange(func(kind string, id, chat int64) {
+		eng.Publish("signals", map[string]any{"kind": kind, "id": id, "chatId": chat})
+	})
+	dev.SetSignals(devapi.SignalTools{Subscribe: sig.SubscribeTool, List: sig.ListTool, Unsubscribe: sig.UnsubscribeTool, TestScript: sig.TestScriptTool, TestSpec: sig.TestSpecTool})
+	rt.SetSignalSource(func(chat int64) (string, bool) {
+		if label, ok := desk.SourceLabel(chat); ok {
+			return label, true
+		}
+		id, ok := sig.WokenBy(chat)
+		if !ok {
+			return "", false
+		}
+		label := "#" + strconv.FormatInt(id, 10)
+		if x, err := sig.Get(id); err == nil {
+			label += " " + x.Desc
+		}
+		return label, true
+	})
+	al.SetOnFired(func(evs []store.AlertEvent) {
+		for _, ev := range evs {
+			rt.Publish(realtrade.Signal{Type: "alert", InstID: ev.InstID, Vars: map[string]string{"rule": ev.RuleName, "ruleId": strconv.FormatInt(ev.RuleID, 10),
+				"message": ev.Message, "value": strconv.FormatFloat(ev.Value, 'f', -1, 64)}})
+			sig.Alert(signals.AlertHit{RuleID: ev.RuleID, Rule: ev.RuleName, InstID: ev.InstID, Message: ev.Message})
+		}
+	})
+	eng.OnConfirmed(func(s *market.Snapshot) { sig.Minute(s.AsOfMinute) })
+	go func() { // price ticks: the engine's 2 s price broadcast
+		ch := eng.Subscribe()
+		defer eng.Unsubscribe(ch)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-ch:
+				if ev.Type == "prices" {
+					sig.Tick()
+				}
+			}
+		}
+	}()
+	go sig.Run(ctx)
+	go desk.Run(ctx)
 	go func() {
 		if err := gate.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("ai gate: %v", err)
@@ -156,20 +352,30 @@ func main() {
 	}
 	srv := &http.Server{Addr: *addr, Handler: (&api.Server{E: eng, Web: dist, Alerts: al, Dev: dev,
 		Icons:    &api.Icons{Dir: filepath.Join(filepath.Dir(*dbPath), "icons"), Client: okx.HTTPClient()},
-		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
-		AdminKey: os.Getenv("CTG_ADMIN_KEY")}).Handler(), ReadHeaderTimeout: 10 * time.Second}
+		Mounts:   []func(*http.ServeMux){tsvc.Register, hub.Register, gate.Register, acct.Register, rt.Register, sig.Register, desk.Register, (&api.Mobile{Dir: filepath.Join(filepath.Dir(*dbPath), "mobile")}).Register},
+		AdminKey: os.Getenv("CTG_ADMIN_KEY"), AgentKey: agentKey, WebUI: os.Getenv("CTG_WEB_UI") == "on"}).Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		srv.Shutdown(sctx)
 	}()
+	log.Printf("owner key configured %v (required for /api/v1/), web UI %v (CTG_WEB_UI)", os.Getenv("CTG_ADMIN_KEY") != "", os.Getenv("CTG_WEB_UI") == "on")
 	log.Printf("listening on http://%s (threshold %.0f, top %d, db %s)", *addr, *threshold, *topN, *dbPath)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 	time.Sleep(500 * time.Millisecond) // let the writer flush
 	st.DB.Close()
+}
+
+// randomToken is a per-process secret (never stored or logged).
+func randomToken() string {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func envOr(k, d string) string {

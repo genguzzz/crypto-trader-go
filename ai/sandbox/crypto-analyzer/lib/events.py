@@ -85,8 +85,158 @@ def _parse_rss(xml: str, source: str) -> list[dict]:
                 break
             except (ValueError, TypeError, IndexError):
                 continue
-        out.append({"source": source, "title": title, "summary": grab("description")[:280], "url": link, "t": t})
+        out.append({"source": source, "title": title, "summary": clean_summary(grab("description"), title), "url": link, "t": t})
     return out
+
+
+_BOILER = re.compile(r"(The post .{0,200}? appeared first on .*$|Read more.*$|Continue reading.*$|点击阅读.*$|原文链接.*$|\[…\]|\[\.\.\.\])", re.S | re.I)
+
+
+def clean_summary(text: str, title: str = "", limit: int = 180) -> str:
+    """Feed description → one or two plain sentences (no boilerplate, no repeat of the title)."""
+    t = re.sub(r"\s+", " ", _BOILER.sub("", unescape(re.sub(r"<[^>]+>", " ", text or "")))).strip()
+    if title and t.startswith(title[:30]):
+        t = t[len(title):].lstrip(" .:-—|")
+    if len(t) <= limit:
+        return t
+    cut = max(t.rfind(x, 0, limit) for x in ("。", ". ", "！", "? ", "；"))
+    return (t[:cut + 1] if cut > limit * 0.5 else t[:limit].rstrip() + "…").strip()
+
+
+# ── same story from several outlets → one entry ────────────────
+
+_STOP = set("the a an and or of to in on for with by at from as is are was were be has have had its it this that after over into "
+            "says said will may could new amid about than more most first".split())
+
+
+def _tokens(title: str) -> set[str]:
+    t = title.lower()
+    words = {w for w in re.findall(r"[a-z][a-z0-9.$-]{2,}|\d+(?:\.\d+)?", t) if w not in _STOP}
+    cjk = re.findall(r"[\u4e00-\u9fff]+", t)
+    for run in cjk:  # Chinese has no spaces: character bigrams
+        words |= {run[i:i + 2] for i in range(len(run) - 1)}
+    return words
+
+
+def cluster(items: list[dict], thresh: float = 0.34) -> list[dict]:
+    """Merge items that report the same story (token overlap of the titles, numbers weigh in).
+    The kept entry is the one with the most informative summary; `sources` lists the others."""
+    groups: list[dict] = []
+    for it in items:
+        tk = _tokens(it["title"])
+        best, score = None, 0.0
+        for g in groups:
+            inter = tk & g["_tk"]
+            if not inter:
+                continue
+            j = len(inter) / len(tk | g["_tk"])
+            nums = {x for x in inter if x[0].isdigit()}
+            j += 0.15 * len(nums)  # "$6.3 billion" in both titles is a strong hint
+            if j > score:
+                best, score = g, j
+        if best is not None and score >= thresh:
+            best["sources"].append(it["source"])
+            best["_tk"] |= tk
+            best["t"] = max(best["t"], it["t"])
+            best["tags"] = sorted(set(best.get("tags") or []) | set(it.get("tags") or []))
+            if len(it.get("summary") or "") > len(best.get("summary") or ""):
+                best.update({k: it[k] for k in ("title", "summary", "url") if it.get(k)})
+            continue
+        groups.append({**it, "sources": [it["source"]], "_tk": tk})
+    for g in groups:
+        g.pop("_tk", None)
+        g["sources"] = list(dict.fromkeys(g["sources"]))
+    return groups
+
+
+# ── ids, so the agent can ask for one article without carrying URLs around ──
+
+NEWS_CACHE = ".news.json"
+
+
+def assign_ids(items: list[dict]) -> list[dict]:
+    """Give each item a short id (n1, n2…) and remember id → url in the working directory."""
+    import json
+    try:
+        known = json.load(open(NEWS_CACHE))
+    except (OSError, ValueError):
+        known = {}
+    by_url = {v["url"]: k for k, v in known.items() if v.get("url")}
+    nxt = 1 + max([int(k[1:]) for k in known if k[1:].isdigit()] or [0])
+    for it in items:
+        u = it.get("url") or ""
+        if not u:
+            continue
+        k = by_url.get(u)
+        if not k:
+            k = f"n{nxt}"
+            nxt += 1
+            known[k] = {"url": u, "title": it["title"], "source": it["source"], "t": it["t"]}
+            by_url[u] = k
+        it["id"] = k
+    try:
+        json.dump(known, open(NEWS_CACHE, "w"), ensure_ascii=False)
+    except OSError:
+        pass
+    return items
+
+
+# ── reading one article: main text only ────────────────────────
+
+_DROP_P = re.compile(r"(subscribe|newsletter|sign up|cookie|advertis|sponsored|disclaimer|all rights reserved|follow us|"
+                     r"read more|related:|also read|this article|editorial|免责声明|版权|订阅|关注我们|相关阅读|推荐阅读|广告)", re.I)
+
+
+def read_article(ref: str, limit: int = 1800) -> dict:
+    """Fetch a news article (an id from the last news list, or a URL) and return its main text:
+    the <article> body (or the page's longest run of paragraphs) without navigation and boilerplate."""
+    import json
+    meta = {}
+    if not ref.startswith("http"):
+        try:
+            meta = json.load(open(NEWS_CACHE)).get(ref) or {}
+        except (OSError, ValueError):
+            meta = {}
+        if not meta:
+            raise ValueError(f"unknown news id {ref}: run `ca news` or `ca events` first")
+        url = meta["url"]
+    else:
+        url = ref
+    html = http.get_text(url, timeout=15, retries=1, ttl=1800)
+    html = re.sub(r"(?is)<(script|style|noscript|svg|nav|header|footer|aside|form|figure)[^>]*>.*?</\1>", " ", html)
+    def ps(block: str) -> list[str]:
+        out_ = []
+        for ptxt in re.findall(r"(?is)<p[^>]*>(.*?)</p>", block):
+            t = re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", ptxt))).strip()
+            if len(t) >= 30 and not _DROP_P.search(t):
+                out_.append(t)
+        return out_
+    # the story is the <article> (or page) with the most paragraph text; related-story cards are short
+    blocks = re.findall(r"(?is)<article[^>]*>(.*?)</article>", html) + [html]
+    body, paras = html, []
+    for b in blocks:
+        cand = ps(b)
+        if sum(map(len, cand)) > sum(map(len, paras)) * 1.2:
+            body, paras = b, cand
+    if not paras:  # some Chinese sites put text in <div>s: fall back to visible text blocks
+        txt = unescape(re.sub(r"<[^>]+>", "\n", body))
+        paras = [x.strip() for x in txt.split("\n") if len(x.strip()) >= 40 and not _DROP_P.search(x)]
+    title = meta.get("title") or unescape(re.sub(r"<[^>]+>", "", (re.search(r"(?is)<title[^>]*>(.*?)</title>", html) or [None, ""])[1])).strip()
+    text, out = "", []
+    for ptxt in dict.fromkeys(paras):  # keep order, drop repeats
+        if len(text) + len(ptxt) > limit:
+            if not out:
+                out.append(ptxt[:limit] + "…")
+            break
+        out.append(ptxt)
+        text += ptxt
+    return {"id": ref if not ref.startswith("http") else "", "title": title, "source": meta.get("source", ""), "t": meta.get("t", 0),
+            "url": url, "paragraphs": out, "truncated": sum(len(x) for x in paras) > sum(len(x) for x in out)}
+
+
+# roundups, price predictions and promos carry no new information for a trade
+_FILLER = re.compile(r"what happened in crypto today|price predictions?|price analysis|technical analysis:|daily recap|weekly recap|"
+                     r"morning brief|newsletter|podcast|sponsored|press release|how to buy|best crypto to buy|早报|晚报|周报|日报|行情分析", re.I)
 
 
 def _blockbeats(size: int = 30) -> list[dict]:
@@ -118,10 +268,13 @@ def news(hours: int = 24, symbol: str | None = None, name: str | None = None, li
             if k in seen:
                 continue
             seen.add(k)
+            if _FILLER.search(it["title"]):
+                continue
             it["tags"] = tag(it["title"])
             items.append(it)
     items.sort(key=lambda x: x["t"], reverse=True)
-    return {"items": items[:limit], "errors": errs}
+    items = assign_ids(cluster(items)[:limit])
+    return {"items": items, "errors": errs}
 
 
 # ── exchange announcements ─────────────────────────────────────

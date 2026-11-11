@@ -9,8 +9,9 @@ import { api } from '../api'
  * /embed/chart/BTC-USDT-SWAP?spot=1&oi=1&bar=15m&layer=k&full=0
  * spot / oi say whether the contract has a spot pair and open interest (fetched when absent);
  * bar / layer preset the chart's own choices (it remembers them in this web view afterwards);
- * full=1 is the app's landscape full-screen chart. Messages to the app (window.ReactNativeWebView):
- * {type:'live', price} for the forming bar, {type:'fullscreen'} / {type:'exitFullscreen'} from the
+ * full=1 is the app's landscape full-screen chart; compact=1 the app's signal/proposal popups (candles and levels only, a period switch, no other controls); proposal=<n> draws that AI trade proposal's levels, signal=<n> that signal subscription's. The app injects its owner key as window.ctgAdminKey
+ * before the page loads (kept in memory only; main.ts installKeyedFetch): every API request needs it.
+ * Messages to the app (window.ReactNativeWebView): {type:'live', price} for the forming bar, {type:'fullscreen'} / {type:'exitFullscreen'} from the
  * chart's full-screen button.
  */
 const props = defineProps<{ id: string }>()
@@ -25,6 +26,9 @@ for (const [k, key] of Object.entries(presets)) {
 }
 
 const full = q('full') === '1'
+const compact = q('compact') === '1'
+const proposal = Number(q('proposal')) || undefined
+const signal = Number(q('signal')) || undefined
 const hasSpot = ref<boolean | null>(q('spot') === undefined ? null : q('spot') === '1')
 const hasOi = ref<boolean | null>(q('oi') === undefined ? null : q('oi') === '1')
 const ready = computed(() => hasSpot.value != null && hasOi.value != null)
@@ -52,7 +56,7 @@ function onLive(price: number) {
 
 <template>
   <div class="embed">
-    <PriceChart v-if="ready" :id="id" :has-spot="!!hasSpot" :has-oi="!!hasOi" fill :embed="full ? 'full' : 'inline'" @live="onLive" @fullscreen="post({ type: full ? 'exitFullscreen' : 'fullscreen' })" />
+    <PriceChart v-if="ready" :id="id" :has-spot="!!hasSpot" :has-oi="!!hasOi" fill :embed="full ? 'full' : 'inline'" :proposal="proposal" :signal="signal" :compact="compact" @live="onLive" @fullscreen="post({ type: full ? 'exitFullscreen' : 'fullscreen' })" />
     <div v-else class="note pad">{{ err || '加载中…' }}</div>
   </div>
 </template>

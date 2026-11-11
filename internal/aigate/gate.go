@@ -95,8 +95,14 @@ type Gate struct {
 	agent   Agent
 	notesMu sync.Mutex
 	notify  func(ctx context.Context, text string) error
-	runMu   sync.Mutex
-	runs    map[int64]*chatRun
+	// notifyFilter: only chats it returns true for get an "answer ready" message (nil = all)
+	notifyFilter func(chat int64) bool
+	runMu        sync.Mutex
+	runs         map[int64]*chatRun
+	onDone       func(chatID int64) // a chat turn ended (signals retry their queued wake-ups)
+	onPlan       func(chatID int64, instID string, planID int64)
+
+	candles Candles1m // plan tracker's price source
 
 	reflectMu sync.Mutex
 	propMu    sync.Mutex // serializes proposal decisions
@@ -136,8 +142,23 @@ func New(st *store.Store, opts Options) (*Gate, error) {
 	if opts.Logf == nil {
 		opts.Logf = log.Printf
 	}
-	if _, err := st.DB.Exec(schema + chatSchema); err != nil {
+	if _, err := st.DB.Exec(schema + chatSchema + planSchema); err != nil {
 		return nil, fmt.Errorf("aigate schema: %w", err)
+	}
+	var hasKind int // added with the trading desk: older databases get the column
+	st.DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_chats') WHERE name='kind'`).Scan(&hasKind)
+	if hasKind == 0 {
+		if _, err := st.DB.Exec(`ALTER TABLE ai_chats ADD COLUMN kind TEXT NOT NULL DEFAULT ''`); err != nil {
+			return nil, fmt.Errorf("aigate schema: %w", err)
+		}
+	}
+	// columns added after the table existed
+	var hasUsage int
+	st.DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_chat_msgs') WHERE name='usage'`).Scan(&hasUsage)
+	if hasUsage == 0 {
+		if _, err := st.DB.Exec(`ALTER TABLE ai_chat_msgs ADD COLUMN usage TEXT NOT NULL DEFAULT ''`); err != nil {
+			return nil, fmt.Errorf("aigate schema: %w", err)
+		}
 	}
 	g := &Gate{st: st, opts: opts, sock: SocketPath(opts), sealer: newSealer(opts.SecretKey), model: opts.Model}
 	g.opts.SecretKey = "" // only the derived cipher is kept

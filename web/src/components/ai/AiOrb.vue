@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { Sparkles, Mic, X } from 'lucide-vue-next'
 import { ai, send, resume } from '../../composables/ai'
 import { useHoldToTalk } from '../../composables/holdToTalk'
+import { rt, startRealtrade } from '../../composables/realtrade'
 
 /**
  * Floating AI orb centred above the phone tab bar (bottom centre on desktop). Tap opens the chat panel;
@@ -24,7 +25,7 @@ const { phase, cancelZone, levels, level, handlers } = useHoldToTalk({
 const rec = computed(() => phase.value === 'rec')
 // an answer that finished while the panel was closed (or the app was away): say so once
 watch(() => ai.unread, u => { if (u) flash('AI 回答好了，点按钮查看') })
-onMounted(() => resume()) // app start: pick up a question left running
+onMounted(() => { resume(); startRealtrade() }) // app start: pick up a question left running; follow trade proposals
 const style = computed(() => ({ '--lv': String(level.value) }))
 </script>
 
@@ -39,7 +40,8 @@ const style = computed(() => ({ '--lv': String(level.value) }))
         <Sparkles v-else :size="22" />
       </span>
       <span v-if="ai.running" class="sat"></span>
-      <span v-if="ai.unread && !ai.running" class="dot"></span>
+      <span v-if="rt.pending.length" class="pbd tnum" :title="`${rt.pending.length} 笔交易待审核`">{{ rt.pending.length }}</span>
+      <span v-else-if="ai.unread && !ai.running" class="dot"></span>
       <span v-if="rec" class="ripple r1"></span><span v-if="rec" class="ripple r2"></span>
     </button>
   </div>
@@ -87,6 +89,8 @@ const style = computed(() => ({ '--lv': String(level.value) }))
 /* agent running: a satellite circles the orb */
 .sat { position: absolute; inset: -5px; border-radius: 50%; animation: spin 1.6s linear infinite; pointer-events: none; }
 .sat::before { content: ''; position: absolute; top: -1px; left: 50%; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; background: #bcff2f; box-shadow: 0 0 8px #bcff2f; }
+.pbd { position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: 9px; border: 2px solid #000;
+  background: var(--warn); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 14px; text-align: center; }
 .dot { position: absolute; top: 2px; right: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--warn); border: 2px solid #000; }
 
 .ripple { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(188, 255, 47, .55); animation: ripple 1.6s ease-out infinite; pointer-events: none; }

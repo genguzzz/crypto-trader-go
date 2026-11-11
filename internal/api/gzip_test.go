@@ -40,7 +40,7 @@ func TestGzipJSONButNotSSE(t *testing.T) {
 }
 
 func TestUnknownAPIRouteIs404(t *testing.T) {
-	h := spa(fstest.MapFS{"index.html": {Data: []byte("<html>")}})
+	h := spa(fstest.MapFS{"index.html": {Data: []byte("<html>")}}, true)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/nope", nil))
 	if rec.Code != 404 {

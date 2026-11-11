@@ -22,8 +22,9 @@ import (
 //	GET    /api/v1/ai/memory/{strategy}?version=
 //	POST   /api/v1/ai/memory/{strategy}/reflect
 //	POST   /api/v1/ai/chat                  {chatId?, message, instId?} → SSE of the new turn
+//	GET    /api/v1/ai/busy                  {running} — public (no owner key): checked before deploys
 //	GET    /api/v1/ai/chats                 recent conversations
-//	GET    /api/v1/ai/chats/{id}            messages (+ running)
+//	GET    /api/v1/ai/chats/{id}?last=      messages (+ running); last=N keeps the newest N (truncated = how many are older)
 //	GET    /api/v1/ai/chats/{id}/stream     SSE: re-attach to a running turn (replays its events)
 //	POST   /api/v1/ai/chats/{id}/stop
 //	DELETE /api/v1/ai/chats/{id}
@@ -31,8 +32,11 @@ import (
 //	GET    /api/v1/ai/notes                 the owner's preferences / long-term notes for the chat agent
 //	POST   /api/v1/ai/notes                 {text, replaces?}
 //	DELETE /api/v1/ai/notes/{id}
+//	GET|PUT|DELETE /api/v1/ai/presets   the chat's preset questions (presets.go)
 func (g *Gate) Register(mux *http.ServeMux) {
+	g.planRoutes(mux)
 	g.registerNotes(mux)
+	g.registerPresets(mux)
 	mux.HandleFunc("POST /api/v1/ai/chat", func(w http.ResponseWriter, r *http.Request) {
 		var in ChatInput
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
@@ -44,7 +48,7 @@ func (g *Gate) Register(mux *http.ServeMux) {
 		case errors.Is(err, ErrUnavailable):
 			writeErr(w, 503, err.Error())
 			return
-		case errors.Is(err, errChatBusy):
+		case errors.Is(err, ErrChatBusy):
 			writeErr(w, 409, err.Error())
 			return
 		case err != nil:
@@ -52,6 +56,9 @@ func (g *Gate) Register(mux *http.ServeMux) {
 			return
 		}
 		g.streamChat(w, r, id)
+	})
+	mux.HandleFunc("GET /api/v1/ai/busy", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]bool{"running": g.Busy()})
 	})
 	mux.HandleFunc("GET /api/v1/ai/chats", func(w http.ResponseWriter, r *http.Request) {
 		cs, err := g.Chats(100)
@@ -62,7 +69,8 @@ func (g *Gate) Register(mux *http.ServeMux) {
 		writeJSON(w, 200, cs)
 	})
 	mux.HandleFunc("GET /api/v1/ai/chats/{id}", func(w http.ResponseWriter, r *http.Request) {
-		c, err := g.ChatByID(qInt(r.PathValue("id")))
+		last, _ := strconv.Atoi(r.URL.Query().Get("last")) // ?last=N: only the newest N messages
+		c, err := g.ChatTail(qInt(r.PathValue("id")), max(last, 0))
 		if err != nil {
 			writeErr(w, 404, "chat not found")
 			return
@@ -98,6 +106,8 @@ func (g *Gate) Register(mux *http.ServeMux) {
 		writeJSON(w, 200, map[string]string{"text": text})
 	})
 	mux.HandleFunc("GET /api/v1/ai/status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, g.Status()) })
+	// the app's model menu: models, thinking levels, web search default
+	mux.HandleFunc("GET /api/v1/ai/options", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, g.ChatOptions()) })
 	mux.HandleFunc("PUT /api/v1/ai/credential", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{ Kind, Value string }
 		if !decode(w, r, &in) {

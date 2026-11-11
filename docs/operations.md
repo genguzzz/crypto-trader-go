@@ -4,7 +4,7 @@
 
 | Item | Value |
 |---|---|
-| URL | https://ctg.gugenzzz.top (no login yet, publicly reachable; login is on the roadmap) |
+| URL | https://ctg.gugenzzz.top (no login yet; every `/api/v1/` route needs the owner key `CTG_ADMIN_KEY`, and the web UI is paused unless `CTG_WEB_UI=on`; login is on the roadmap) |
 | Host | ctg-prod (SSH alias `ctg-prod`; the address lives only in `~/.ssh/config` and GitHub Secrets; Debian 13, 2C/4G, x86_64, VPS Tokyo, direct access to OKX; moved from old-server on 2026-09-27) |
 | Process | Docker container `ctg` (compose project `/opt/ctg`), `network_mode: host`, listening on `127.0.0.1:8686` |
 | Ingress | nginx stream routes `*.gugenzzz.top` by SNI (default) to `127.0.0.1:8444` → `/etc/nginx/conf.d/gateway-ctg.conf` proxies to 8686 (buffering off for SSE); 80 redirects to 443; existing `*.gugenzzz.top` wildcard certificate |
@@ -76,7 +76,22 @@ Parallel development in several worktrees (separate ports and database copies) i
 | `-web` | true | false serves the API only |
 | `CTG_PROXY` / `-doh` | — / off | networks without direct OKX access: outbound HTTP proxy (credentials allowed), DNS-over-HTTPS |
 | `CTG_RUN_DIR` | `data/run` (`/data/run` in compose) | Unix sockets `strategy.sock` / `ai.sock` shared with the sidecars |
-| `CTG_ADMIN_KEY` | — | owner key required (header `X-CTG-Admin`) for writes under `/api/v1/trade|interact|ai`; unset = only direct loopback requests may write. Lives in `ctg.env` |
+| `CTG_ADMIN_KEY` | — | owner key required for every request under `/api/v1/` (all methods, SSE included): header `X-CTG-Admin`, or `?key=` only on `GET /api/v1/stream` and `/api/v1/icons/*` (EventSource, `<img>`; nginx access logs record query strings, so the native app always uses the header). Public: `GET /api/v1/health`, `/api/v1/status` (deploy checks), `/api/v1/ai/busy` (`{running}`, check before a deploy), `/api/v1/expo/manifest` and `/api/v1/expo/assets/*` (expo-updates). `/api/open/v1` and `/mcp` keep their own bearer keys. More than 10 distinct wrong keys from one client IP within a minute → 429 for 5 minutes (logged without the key). Unset = only direct loopback requests may pass. The AI worker reads chats with a per-process key instead (`X-CTG-Agent`, `GET /api/v1/ai/chats[/id]` only). Lives in `ctg.env` |
+| `CTG_WEB_UI` | off | `on` serves the full web app; otherwise only `/embed/*` (the native app's chart WebViews), static files (`/assets`, icons, `/research/*.html`) and a "网页版已暂停，请使用 App" page (503) for every other page |
+| `OKX_API_KEY` / `OKX_API_SECRET` / `OKX_API_PASSPHRASE` / `OKX_PRIVATE_PROXY` | — | the owner's OKX API key and the HTTP or SOCKS5 proxy its IP is bound to: open swap positions with TP/SL on the K-line, in the app and for the chat agent (`get_positions`), `GET /api/v1/account/positions` (owner key required even for reads). `internal/okxacct` sends signed GETs only; the same key signs approved trade proposals in live mode (needs trade permission on the key). Always through the proxy; any variable missing = disabled, never a direct connection. Lives in `ctg.env` |
+| `CTG_TRADE_MODE` | dryrun | `live` (exactly) sends approved trade proposals to OKX; anything else builds, validates and records them only ([trading design §7](trading-design.md#7-real-trades-via-approved-proposals-2026-11-01)). Live without the OKX variables above fails at start. Lives in `ctg.env` |
+| `CTG_TRADE_TG_TOKEN` / `CTG_TRADE_TG_CHAT` | — | the dedicated Telegram trade bot and the owner's user id (only he can approve); either missing = no trade bot (web / app approval only). Lives in `ctg.env` |
+| `CTG_TRADE_MAX_LEVERAGE` / `CTG_TRADE_MAX_MARGIN` / `CTG_TRADE_MIN_RR` | 5 / 50 / 1 | caps per open / add, isolated and cross alike: leverage, margin in USDT, reward:risk |
+| `CTG_TRADE_MAX_OPEN` / `CTG_TRADE_DAILY_LOSS` / `CTG_TRADE_MAX_DRIFT_PCT` / `CTG_TRADE_EXPIRY_MIN` | 2 / 50 / 1 / 15 | AI positions open at once, daily (UTC+8) realised loss in USDT that stops new trades, price move % allowed between proposal and approval, minutes to approve |
+| `CTG_TRADE_MAX_ADDS` / `CTG_TRADE_LIMIT_MAX_MIN` / `CTG_TRADE_MAX_LIMIT_PCT` | 2 / 1440 / 5 | adds (补仓) per position; the longest a limit order rests before the server cancels the unfilled rest, minutes (≤ 1440); how far from the price a limit may be, % |
+| `CTG_TRADE_MAX_RUNS_DAY` | 12 | signal / schedule agent runs per 24 h (triggers are off until enabled on the proposals panel) |
+| `CTG_SIGNAL_MAX_ACTIVE` | 30 | active signal subscriptions at once (5 per chat, fixed; expiry ≤ 7 days) ([trading design §8](trading-design.md#8-signal-subscriptions-the-agent-waits-instead-of-being-asked-again-2026-11-01)) |
+| `CTG_SIGNAL_MAX_WAKES_DAY` | 30 | agent wake-ups by fired subscriptions per 24 h; `0` = none (fires are recorded and pushed only). Separate from `CTG_TRADE_MAX_RUNS_DAY` |
+| (setting `autopilot.config`) | off | the trading desk ([trading design §9](trading-design.md)): schedule, signal pacing (minimum gap, runs per 24 h), strategies and their parameters — edited in the app, not in the environment. Its scans and runs do not count towards `CTG_SIGNAL_MAX_ACTIVE` / `CTG_SIGNAL_MAX_WAKES_DAY` / `CTG_TRADE_MAX_RUNS_DAY`; its own `maxRunsDay` and the schedule bound its cost |
+| `CTG_SIGNAL_SCRIPT_MS` | 200 | CPU budget of one script-signal check (ms); its replay is rejected when a check averages over a quarter of it. Fixed caps: ≤ 8000 bytes, ≤ 10 instruments, lookback ≤ 500, 1m–4H, 10 active script subscriptions, one script per subscription ([trading design §8](trading-design.md#script-signals-2026-11-01)) |
+| `CTG_SIGNAL_SCRIPT_FIRES_DAY` | 6 | a script whose 7-day replay fires (false→true) more often per day is rejected |
+| `CTG_SIGNAL_SCRIPT_ERRORS` | 3 | consecutive live script errors (exceptions, CPU budget, a crash or hang of the script worker) that end the subscription (`cancelled` by `system`, pushed). A runner that is down is not counted; 30 min of it is pushed once |
+| `CTG_PUBLIC_URL` | `https://ctg.gugenzzz.top` | origin of the trade bot's 🔍 查看 links |
 | `CTG_SECRET_KEY` | — | at-rest key for the AI credential (else stored plain, noted on the AI page). Lives in `ctg.env` |
 | `GOMEMLIMIT` | 1536MiB in compose | resident heap is ~180 MB (with the full perpetual catalog and caches); container `mem_limit: 2g`. The limit must stay above the resident heap or the GC spins: 180MiB once caused ~20 GCs per second and 1.4 cores of constant CPU |
 
@@ -91,7 +106,7 @@ Paper trading adds two containers next to `ctg` (see [trading design](trading-de
 | `ctg-strategy` | `strategies/Dockerfile` (python + numpy) | none | supervisor + one process per strategy instance; `strategies/` is bind-mounted read-only, so a new strategy file only needs `POST /api/v1/trade/strategies/reload` |
 | `ctg-ai` | `ai/Dockerfile` (python + Claude Agent SDK) | host | AI review worker; `CTG_AI_PROXY=http://127.0.0.1:10809` (the host's residential-exit llm-proxy) is mandatory and the worker never connects directly. The proxy is a local HTTP inbound on the server routed to the owner's Claude exit (set up outside this repo) |
 
-`deploy/deploy.sh` uploads `strategies/` and `ai/` with the compose file and rebuilds an image only when its Dockerfile or requirements change. Telegram (dedicated bot, owner allowlist) and the AI credential are configured in Settings, not in env.
+`deploy/deploy.sh` uploads `strategies/` and `ai/` with the compose file and rebuilds an image only when its Dockerfile or requirements change. The paper-trading Telegram bot (owner allowlist) and the AI credential are configured in Settings, not in env; the real-trade bot is env only (`CTG_TRADE_TG_*`).
 
 ## Troubleshooting
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -64,8 +65,55 @@ def cmd_events(a):
 
 
 def cmd_news(a):
+    if a.read:
+        return emit.emit("article", events.read_article(a.read, a.chars), a.format, render.article)
     d = events.news(a.hours, okx.normalize_symbol(a.keyword) if a.keyword else None, a.name, a.limit)
     emit.emit("news", d, a.format, lambda x: render.events({"symbol_news" if a.keyword else "market_alerts": x["items"]}))
+
+
+# one call for a full coin analysis: every section runs in parallel as its own `ca` process (and the
+# ctg sandbox's `rev` scorer when present); output is the text views in a fixed order, each capped
+BRIEF = [  # (title, argv with {s} for the symbol, char cap); analyze already covers funding/OI/flow/book/technicals
+    ("大盘", ["market"], 900),
+    ("反转评分 1H", ["@rev", "{s}", "-b", "1H"], 700),
+    ("风险、衍生品、技术面与计划", ["analyze", "{s}", "--quick"], 3200),
+    ("清算（已发生 + 估算密集区）", ["liq", "{s}"], 800),
+    ("新闻与事件", ["events", "{s}"], 1800),
+]
+
+
+def cmd_brief(a):
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+    sym = okx.normalize_symbol(a.symbol)
+    # ctg's sandbox scorer (util-linux also ships a `rev`, so look for ours by path)
+    rev = next((p for p in ("/opt/ca/bin/rev", os.path.expanduser("~/.local/bin/ctg-rev")) if os.path.exists(p)), None)
+
+    def run(item):
+        title, argv, cap = item
+        argv = [x.format(s=sym) for x in argv]
+        if argv[0] == "@rev":
+            if not rev:
+                return title, ""
+            cmd = [rev] + argv[1:]
+        else:
+            cmd = [sys.executable, os.path.abspath(__file__)] + argv
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=90).stdout.strip()
+        except subprocess.TimeoutExpired:
+            out = "（超时）"
+        if argv[0] == "market":  # its headline list repeats the news section
+            out = re.sub(r"\n 重大新闻\n(?:   .*\n?)*", "\n", out)
+        if len(out) > cap:
+            out = out[:cap].rsplit("\n", 1)[0] + "\n…"
+        return title, out
+
+    with ThreadPoolExecutor(len(BRIEF)) as ex:
+        parts = list(ex.map(run, BRIEF))
+    print(f"# {sym} 数据包（并行抓取；需要更细再单独调对应命令）")
+    for title, out in parts:
+        if out:
+            print(f"\n## {title}\n{out}")
 
 
 def cmd_quote(a):
@@ -295,11 +343,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp("scan", cmd_scan, "全池扫描：逼空风险/多头拥挤/OI市值比/异动/规则信号",
        (["--top"], {"type": int, "default": 10}), (["--min-vol"], {"type": float, "default": 3e6}),
        (["--scope"], {"default": "all", "choices": ["all", "active", "watch"]}))
+    sp("brief", cmd_brief, "一次拿齐分析一个币需要的数据：大盘/反转/风险/费率/OI/清算/主动买卖/指标/新闻", SYM)
     sp("market", cmd_market, "大盘：BTC/ETH、广度、费率、恐惧贪婪、宏观、重大新闻")
     sp("events", cmd_events, "事件风险：新闻/上下架公告/宏观日历", (["symbol"], {"nargs": "?"}),
        (["--name"], {"default": None}), (["--hours"], {"type": int, "default": 48}))
-    sp("news", cmd_news, "新闻（可按币过滤）", (["keyword"], {"nargs": "?"}), (["--name"], {"default": None}),
-       (["--hours"], {"type": int, "default": 24}), (["--limit"], {"type": int, "default": 30}))
+    sp("news", cmd_news, "新闻摘要（同一事件合并、带 id）；--read <id|url> 读正文", (["keyword"], {"nargs": "?"}), (["--name"], {"default": None}),
+       (["--hours"], {"type": int, "default": 24}), (["--limit"], {"type": int, "default": 20}),
+       (["--read"], {"default": None, "help": "上次列表里的 id（如 n3）或文章 URL：抓取并提取正文"}),
+       (["--chars"], {"type": int, "default": 1800, "help": "--read 正文最多字数"}))
     sp("quote", cmd_quote, "行情快照", SYM, MKT)
     sp("kline", cmd_kline, "K线", SYM, MKT, (["--bar", "-b"], {"default": "1H"}), (["--limit", "-l"], {"type": int, "default": 100}),
        (["--show"], {"type": int, "default": 15}))

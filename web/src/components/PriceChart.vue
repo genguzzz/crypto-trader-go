@@ -13,20 +13,34 @@ import FilterChip from './ui/FilterChip.vue'
 import ChipGroup from './ui/ChipGroup.vue'
 import Loading from './ui/Loading.vue'
 import { useFullscreen } from '../composables/fullscreen'
+import { getAdminKey } from '../composables/adminKey'
+import { useAiPlans, planStatusText, spanLevels, type AiPlan } from './charts/aiPlans'
+import { usePositions, posSize } from './charts/positions'
+import { useProposalLevels, entry as proposalEntry } from './charts/proposal'
+import { useSignalLevels } from './charts/signal'
+import { statusLabel } from '../realtradeApi'
 
 /** fill: take the parent's full height (workbench); otherwise fixed chart heights (stacked page).
  *  embed: inside the native app's web view (views/EmbedChart.vue): the full-screen button asks the
- *  app (event `fullscreen`) instead of going full screen itself; 'full' = already the app's full-screen chart. */
-const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean; embed?: 'inline' | 'full' }>()
+ *  app (event `fullscreen`) instead of going full screen itself; 'full' = already the app's full-screen chart.
+ *  proposal: id of an AI trade proposal whose entry / stop / target to draw (charts/proposal.ts).
+ *  signal: id of an agent signal subscription whose levels to draw (charts/signal.ts).
+ *  compact: candles and the proposal's / signal's levels only (the app's signal and proposal popups):
+ *  no layer, overlay or liquidation-map controls, no plan/position bars, the legend only while
+ *  hovering; a period switch stays. Of the AI plans only the one the signal links to is drawn. */
+const props = defineProps<{ id: string; hasSpot: boolean; hasOi: boolean; fill?: boolean; embed?: 'inline' | 'full'; proposal?: number; signal?: number; compact?: boolean }>()
 const emit = defineEmits<{ live: [price: number]; fullscreen: [] }>()
 const bar = ref(localStorage.getItem('bar') || '15m')
 type Layer = 'k' | 'delta' | 'foot'
-const layer = ref<Layer>((localStorage.getItem('ctg.chartLayer') as Layer) || 'k')
-const withSpot = ref(localStorage.getItem('ctg.chartSpot') === '1')
-const withOIL = ref(localStorage.getItem('ctg.chartOIL') === '1') // OI level area: off by default
-const withOID = ref(localStorage.getItem('ctg.chartOID') !== '0') // OI change bars: on by default
-const withLiq = ref(localStorage.getItem('ctg.chartLiq') !== '0') // liquidation bars: on by default
-const withMap = ref(localStorage.getItem('ctg.chartLiqMap') === '1') // estimated liquidation map overlay
+const cmp = !!props.compact // compact: every layer and overlay off, without touching the saved choices
+const layer = ref<Layer>(cmp ? 'k' : (localStorage.getItem('ctg.chartLayer') as Layer) || 'k')
+const withSpot = ref(!cmp && localStorage.getItem('ctg.chartSpot') === '1')
+const withOIL = ref(!cmp && localStorage.getItem('ctg.chartOIL') === '1') // OI level area: off by default
+const withOID = ref(!cmp && localStorage.getItem('ctg.chartOID') !== '0') // OI change bars: on by default
+const withLiq = ref(!cmp && localStorage.getItem('ctg.chartLiq') !== '0') // liquidation bars: on by default
+const withMap = ref(!cmp && localStorage.getItem('ctg.chartLiqMap') === '1') // estimated liquidation map overlay
+const withPlans = ref(cmp ? !!props.signal : localStorage.getItem('ctg.chartAiPlans') !== '0') // the AI's open trade plans: on by default
+const withPos = ref(!cmp && localStorage.getItem('ctg.chartPositions') !== '0') // the owner's open OKX position: on by default
 const mapDays = ref(localStorage.getItem('ctg.liqMapDays') || '7') // map look-back
 const mapTiers = ref<number[]>(readTiers()) // leverage tiers drawn on the map
 function readTiers(): number[] {
@@ -42,6 +56,13 @@ const loading = ref(false)
 const el = ref<HTMLElement>()
 let chart: IChartApi | undefined
 let candles: ISeriesApi<'Candlestick'> | undefined
+// compact: only the plan the signal links to (its planId, else the subscribing chat's open plan)
+const linkedPlan = (p: AiPlan) => { const s = sig.signal.value; return !!s && (s.planId ? p.id === s.planId : !!s.chatId && p.chatId === s.chatId) }
+const aiPlans = useAiPlans(() => candles, () => props.id, () => barMs[bar.value], withPlans, cmp ? linkedPlan : undefined)
+const positions = usePositions(() => candles, () => props.id, withPos)
+const prop = useProposalLevels(() => candles, () => props.id, () => props.proposal)
+const sig = useSignalLevels(() => candles, () => props.id, () => props.signal)
+const planLeft = (p: AiPlan) => { const h = (p.expires - Date.now()) / 3600e3; return h >= 24 ? `剩 ${Math.round(h / 24)} 天` : `剩 ${Math.max(1, Math.round(h))} 小时` }
 let vol: ISeriesApi<'Histogram'> | undefined
 let spot: ISeriesApi<'Line'> | undefined
 let delta: ISeriesApi<'Histogram'> | undefined
@@ -226,7 +247,7 @@ function layoutBands() {
   if (!chart || !candles) return
   const h = chart.panes()[0]?.getHeight() || el.value?.clientHeight || 300
   legendH ||= legendEl.value?.offsetHeight ?? 0
-  const top = clamp((legendH + 10) / h, 0.06, 0.22)
+  const top = cmp ? 0.08 : clamp((legendH + 10) / h, 0.06, 0.22) // compact: the legend shows only while hovering, over the candles
   const bands = ([['oid', oiD], ['oil', oiL], ['liq', liqS]] as const).filter(([, x]) => x).map(([id]) => id)
   let vol = clamp(h * 0.16, 30, 64), band = clamp(h * 0.1, 22, 48)
   const room = (0.5 - top) * h, need = vol + bands.length * band
@@ -477,12 +498,18 @@ onMounted(() => {
   layoutBands()
   chart.subscribeCrosshairMove(onCrosshair)
   chart.timeScale().subscribeVisibleLogicalRangeChange(() => { spacing.value = chart?.timeScale().options().barSpacing ?? 6 })
+  spanLevels(candles, () => [...aiPlans.levels(), ...positions.levels(), ...prop.levels(), ...sig.levels()])
   load('fit')
-  timer = window.setInterval(() => load(), 10_000)
+  aiPlans.refresh()
+  positions.refresh()
+  prop.refresh()
+  sig.refresh().then(() => aiPlans.draw())
+  // the proposal follows SSE `realtrade`; the poll covers embeds, which have no event stream
+  timer = window.setInterval(() => { load(); aiPlans.refresh(); positions.refresh(); if (props.embed && props.proposal) prop.refresh(); if (props.signal) sig.refresh().then(() => aiPlans.draw()) }, 10_000)
   hotTimer = window.setInterval(hot, 1000)
 })
 onUnmounted(() => { clearInterval(timer); clearInterval(hotTimer); chart?.remove() })
-watch(bar, v => { localStorage.setItem('bar', v); load('anchor') })
+watch(bar, v => { localStorage.setItem('bar', v); load('anchor'); aiPlans.draw(); positions.draw(); prop.draw(); sig.draw() })
 watch(layer, v => { localStorage.setItem('ctg.chartLayer', v); legendH = 0; load('anchor') })
 watch(withSpot, v => { localStorage.setItem('ctg.chartSpot', v ? '1' : '0'); load('anchor') })
 watch(withOIL, v => { localStorage.setItem('ctg.chartOIL', v ? '1' : '0'); load('anchor') })
@@ -502,7 +529,10 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
 
 <template>
   <div ref="root" class="panel pc" :class="{ fill: fill || full, full, pseudo, 'fs-pseudo': pseudo }">
-    <h3>
+    <div v-if="compact" class="cbar">
+      <Segmented v-model="bar" size="sm" aria-label="K 线周期" :options="[{ value: '1m', label: '1m' }, { value: '5m', label: '5m' }, { value: '15m', label: '15m' }, { value: '1H', label: '1H' }, { value: '4H', label: '4H' }]" />
+    </div>
+    <h3 v-else>
       <span>合约 K 线 <InfoTip>
         <b>数据来源</b>：OKX 永续 1m K 线由本机录制（实时 WS + 启动回填）；进过监控池的币额外回补 7 天 1m；1H/4H 来自 1H K 线，保留 30 天。5m/15m/4H 由服务端按 UTC 对齐聚合。<br />
         <b>十字光标</b>：左上角显示所指 K 线的开高低收、涨跌幅（对上一根收盘）、振幅与成交额；右侧价格标签显示光标价位<b>距现价</b>的百分比。手机上长按后拖动。<br />
@@ -515,6 +545,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <b>现货 / OI</b>：现货为 OKX 同名 USDT 现货收盘价（黄线），和合约 K 线共用右侧价格轴，缩放、拖动都跟随 K 线，两者的间距就是基差；<b>OI Δ</b>（默认开）为持仓量变化柱：每根 K 线相对上一根的增减，蓝增橙减，和成交额柱一样画在 K 线下方的独立区域；<b>OI</b> 为持仓量走势（面积图），在变化柱上方再占一条。左上角显示持仓量与变化（近期逐分钟采样；更早只有 1 小时采样，小周期在那段没有变化柱）。没有对应数据时按钮置灰。<br />
         <b>强平</b>（默认开）：OKX 公共接口的逐笔强平单（不需要账户），按 K 线汇总的 USDT 金额。绿柱向上 = 空单被强平（强制买入），红柱向下 = 多单被强平（强制卖出）。活跃池、自选、最近查看的合约每分钟同步一次；OKX 只提供最近约 24 小时，更早的只有本机开始同步之后的记录（保留 30 天），没有记录的时段不画柱。<br />
         <b>清算图</b>（估算，非交易所数据，和 CoinGlass 清算地图同类模型）：用持仓量增加推算“新开仓位”（近期按 5 分钟 K 线 + 逐分钟持仓量，数据不连续的更早部分按小时），在该段 K 线的典型价开仓，按 5/10/25/50/100 倍杠杆分配（假设占比 10/25/30/20/15%，超过该合约最大杠杆的档去掉），放在各自的大致强平价（维持保证金率按 0.5%）；持仓减少时按比例缩小，之后被 K 线价格穿过的价位视为已清算并移除。右侧横条为每个价位剩余的估算强平金额，按杠杆分段着色（红 = 多单，在现价下方；绿 = 空单，在现价上方；颜色越亮杠杆越高），细线为从现价向外的累计金额。上方可切换回看 1 / 7 天、只看部分杠杆档（CoinGlass 的模型 1 只算 10/25/50/100x）；杠杆按钮上的色块就是图中该档的颜色（左多右空）。横条长度相对于现价附近（覆盖当前可见价格范围的 ±1/2/5/10/20/50% 档）最大的一行，拖动图表时不会跟着跳动。默认视图在最新 K 线右侧留出清算图的宽度。十字光标移到某价位时显示价格走到那里预计触发的累计强平额和本档各杠杆的金额。<b>和 CoinGlass 数值不同是正常的</b>：它默认汇总多家交易所、杠杆占比和输入（含成交量）是自己的假设，柱高是相对强度而不是 USDT；本图只用 OKX 这一个合约的持仓量，金额是 USDT 估算。两者应当看“扎堆的位置”是否一致，不要比绝对数。只能看作“仓位可能扎堆的位置”，不代表真实仓位。<br />
+        <b>仓位</b>（默认开，仅所有者）：你在 OKX 上这个币的持仓，只读（服务端用只读 API Key 经固定代理读取，不能下单/改单/撤单）。实线 = 开仓均价（方向、数量、浮盈 USDT），橙色点线 = 强平价，绿/红虚线 = 挂着的止盈/止损（只平部分仓位的标出张数）；每 10 秒刷新，平仓后撤下。<br />
+        <b>交易提案</b>（仅所有者）：从 AI 交易提案的“K 线”或 Telegram 的“查看”打开时，画出该提案的入场（参考价，成交后为成交价）、止损和止盈，上方一行显示其状态。<br />
         <b>刷新</b>：打开详情页时最新几根 K 线每秒刷新（服务端 OKX WebSocket 推送的未收盘 K 线），整段数据、订单流、强平柱（每次都向 OKX 拉取新强平单）和清算图（含最新持仓量与未收盘 K 线）每 10 秒刷新；页面切到后台时暂停。<br />
         <b>时间</b>：按设置页选择的时区显示（默认 UTC+8）。右下角 ◎ 或双击图表回到最新并自动缩放。
       </InfoTip></span>
@@ -527,6 +559,8 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         <FilterChip v-model="withOID" label="OI Δ" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示每根 K 线的持仓量变化柱（蓝增橙减）' : '没有持仓量数据'" />
         <FilterChip v-model="withLiq" label="强平" title="在 K 线下方显示每根 K 线的强平金额（绿 = 空单被强平，向上；红 = 多单被强平，向下）" />
         <FilterChip v-model="withMap" label="清算图" :disabled="!hasOi" :title="hasOi ? '在价格区右侧叠加估算的清算地图（按近 7 天持仓变化与杠杆分布推算，非交易所数据）' : '没有持仓量数据，无法估算'" />
+        <FilterChip v-model="withPlans" label="AI 点位" title="在 K 线上画出 AI 分析给出的入场区、止损和止盈；入场、止损/止盈触发、计划作废或到期后自动撤下" />
+        <FilterChip v-model="withPos" label="仓位" title="在 K 线上画出你在 OKX 上这个币的持仓：开仓均价、强平价和挂着的止盈/止损（只读，需所有者密钥）；平仓后自动撤下" />
         <FilterChip v-model="withOIL" label="OI" :disabled="!hasOi" :title="hasOi ? '在 K 线下方显示持仓量走势（面积图）' : '没有持仓量数据'" />
         <button v-if="embed" type="button" class="fs-btn" :title="embed === 'full' ? '退出全屏' : '全屏'" :aria-label="embed === 'full' ? '退出全屏' : '全屏'" @click="emit('fullscreen')">
           <Minimize2 v-if="embed === 'full'" :size="15" /><Maximize2 v-else :size="15" />
@@ -536,6 +570,44 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
         </button>
       </span>
     </h3>
+    <template v-if="!compact">
+    <div v-for="p in positions.positions.value" :key="p.instId + p.posSide" class="mapbar planbar posbar tnum">
+      <b :class="p.side === 'short' ? 'down' : 'up'">持{{ p.side === 'short' ? '空' : '多' }} {{ posSize(p) }}</b>
+      <span v-if="p.lever" class="muted">{{ p.lever }}x</span>
+      <span>均 <b>{{ fmtPrice(p.avgPx) }}</b></span>
+      <span>浮盈 <b :class="tone(p.upl)">{{ (p.upl >= 0 ? '+' : '') + p.upl.toFixed(2) }}U</b> <small :class="tone(p.uplRatio)">{{ pct(p.uplRatio, 1) }}</small></span>
+      <span v-if="p.liqPx">强平 <b class="warn">{{ fmtPrice(p.liqPx) }}</b></span>
+      <span v-if="p.tp.length">止盈 <b class="up">{{ p.tp.map(t => fmtPrice(t.px)).join(' / ') }}</b></span>
+      <span v-if="p.sl.length">止损 <b class="down">{{ p.sl.map(t => fmtPrice(t.px)).join(' / ') }}</b></span>
+      <span v-else class="muted">无止损</span>
+    </div>
+    <div v-if="prop.proposal.value" class="mapbar planbar posbar tnum">
+      <b :class="prop.proposal.value.side === 'short' ? 'down' : 'up'">提案 #{{ prop.proposal.value.id }} {{ prop.proposal.value.side === 'short' ? '空' : '多' }}</b>
+      <span class="muted">{{ prop.proposal.value.leverage }}x · {{ +prop.proposal.value.marginUsdt.toFixed(2) }}U</span>
+      <span class="st">{{ statusLabel(prop.proposal.value) }}</span>
+      <span>{{ prop.proposal.value.execPx ? '成交' : '参考' }} <b>{{ fmtPrice(proposalEntry(prop.proposal.value)) }}</b></span>
+      <span>止损 <b class="down">{{ fmtPrice(prop.proposal.value.sl) }}</b></span>
+      <span>止盈 <b class="up">{{ fmtPrice(prop.proposal.value.tp) }}</b></span>
+      <span v-if="prop.proposal.value.mode === 'dryrun'" class="muted">DRY RUN</span>
+    </div>
+    <div v-if="sig.signal.value" class="mapbar planbar posbar tnum">
+      <b>信号 #{{ sig.signal.value.id }}</b>
+      <span>{{ sig.signal.value.desc }}</span>
+      <span class="st">{{ { active: '等待触发', fired: '已触发', expired: '已过期', cancelled: '已取消' }[sig.signal.value.status] }}</span>
+    </div>
+    <div v-for="p in aiPlans.plans.value" :key="p.id" class="mapbar planbar tnum">
+      <b :class="p.side === 'short' ? 'down' : 'up'">AI {{ p.side === 'short' ? '空' : '多' }}</b>
+      <span v-if="p.confidence" class="muted">{{ p.confidence }}</span>
+      <span class="muted">{{ fmtTime(p.created) }}</span>
+      <span class="st" :class="p.status">{{ planStatusText[p.status] }}</span>
+      <span>入 <b>{{ fmtPrice(p.entryLo) }}{{ p.entryHi !== p.entryLo ? '–' + fmtPrice(p.entryHi) : '' }}</b></span>
+      <span>止 <b class="down">{{ fmtPrice(p.stop) }}</b></span>
+      <span>目 <b class="up">{{ fmtPrice(p.tp1) }}{{ p.tp2 ? ' / ' + fmtPrice(p.tp2) : '' }}</b></span>
+      <span v-if="p.leverage" class="muted">{{ p.leverage }}x</span>
+      <span class="muted">{{ planLeft(p) }}</span>
+      <button type="button" class="pb-x" title="不再显示这条计划" aria-label="不再显示这条计划" @click="aiPlans.dismiss(p, getAdminKey())">×</button>
+      <span v-if="p.invalidate" class="muted inv">作废：{{ p.invalidate }}</span>
+    </div>
     <div v-if="withMap && hasOi" class="mapbar">
       <span class="mb-k">清算图</span>
       <Segmented v-model="mapDays" size="sm" aria-label="清算图回看" :options="[{ value: '1', label: '1 天' }, { value: '7', label: '7 天' }]" />
@@ -550,12 +622,13 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
       <span class="key"><i class="k-va"></i>价值区 70%</span>
       <span class="key"><i class="k-naked"></i>未回补 POC</span>
     </div>
+    </template>
     <div class="wrap" :class="{ tall: layer !== 'k' }">
       <div ref="el" class="chart" @dblclick="resetView"></div>
       <Loading overlay :show="loading" />
       <div v-if="layer === 'foot' && spacing < 20 && bars.length" class="foot-hint">横向放大（滚轮 / 双指）到足够宽才显示足迹</div>
       <ResetViewButton :right="axisWidth + 6" title="回到最新、自动缩放（PC 也可双击图表）" @reset="resetView" />
-      <div ref="legendEl" class="legend tnum" v-if="shown">
+      <div ref="legendEl" class="legend tnum" v-if="shown && (!compact || !shown.live)">
         <span class="muted">{{ fmtTime(shown.c.t, true) }}</span>
         <span>开 <b>{{ fmtPrice(shown.c.o) }}</b></span><span>高 <b>{{ fmtPrice(shown.c.h) }}</b></span>
         <span>低 <b>{{ fmtPrice(shown.c.l) }}</b></span><span>收 <b :class="tone(shown.c.c - shown.c.o)">{{ fmtPrice(shown.c.c) }}</b></span>
@@ -610,6 +683,7 @@ const pxDigits = computed(() => precisionFor(bars.value[bars.value.length - 1]?.
 @media (hover: hover) { .fs-btn:hover { color: var(--text-1); border-color: var(--accent); } }
 .fs-btn:focus-visible { outline: 2px solid var(--accent); }
 .chart { height: 340px; }
+.cbar { display: flex; justify-content: flex-end; margin: 0 0 4px; }
 .wrap.tall .chart { height: 450px; }
 h3 { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
 .bars { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -634,6 +708,15 @@ h3 { display: flex; justify-content: space-between; align-items: center; flex-wr
 .map-tip .mt-tier { display: flex; align-items: center; gap: 4px; color: var(--text-3); }
 .map-tip .mt-tier i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .map-tip .mt-tier b { color: var(--text-1); font-weight: 500; }
+.planbar { position: relative; gap: 4px 8px; padding: 4px 26px 4px 8px; border-radius: 6px; background: rgba(188, 255, 47, .05); border: 1px solid rgba(188, 255, 47, .18); }
+.planbar .st { padding: 0 6px; border-radius: 4px; background: var(--bg-3); color: var(--text-1); }
+.planbar .st.pending { color: var(--accent); }
+.planbar .st.active, .planbar .st.tp1 { color: #000; background: var(--accent); }
+.planbar .pb-x { all: unset; cursor: pointer; position: absolute; top: 4px; right: 6px; padding: 2px 4px; color: var(--text-3); font-size: 15px; line-height: 1; }
+.planbar .inv { flex-basis: 100%; }
+.planbar b.up { color: var(--up); } .planbar b.down { color: var(--down); }
+.posbar { padding-right: 8px; background: var(--bg-2); border-color: var(--line-2); }
+.posbar b.warn { color: var(--warn); } .posbar small.up { color: var(--up); } .posbar small.down { color: var(--down); }
 .mapbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; font-size: var(--fs-xs); }
 .mapbar .mb-k { color: var(--text-3); }
 .mapbar :deep(.fchip) { height: 22px; padding: 0 8px; font-size: var(--fs-xs); }

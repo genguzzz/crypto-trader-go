@@ -24,6 +24,9 @@ const (
 func (s *Service) Mount(mux *http.ServeMux, e *market.Engine, al *alerts.Service) {
 	s.eps = s.buildEndpoints(e, al)
 	for _, ep := range s.eps {
+		if ep.owner {
+			continue // MCP only (owner keys); not part of the open REST API
+		}
 		mux.Handle("GET "+OpenPrefix+ep.Path, cors(s.rest(ep)))
 	}
 	mux.Handle("GET "+OpenPrefix+"openapi.json", cors(http.HandlerFunc(s.openapi)))
@@ -82,7 +85,13 @@ func (s *Service) Mount(mux *http.ServeMux, e *market.Engine, al *alerts.Service
 	})
 	mux.HandleFunc("GET /api/v1/dev/log", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.Log()) })
 	mux.HandleFunc("GET /api/v1/dev/endpoints", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"restBase": strings.TrimSuffix(OpenPrefix, "/"), "mcpPath": MCPPath, "endpoints": s.eps,
+		var eps []*Endpoint // the open API only (owner endpoints are for the owner's agent)
+		for _, ep := range s.eps {
+			if !ep.owner {
+				eps = append(eps, ep)
+			}
+		}
+		writeJSON(w, 200, map[string]any{"restBase": strings.TrimSuffix(OpenPrefix, "/"), "mcpPath": MCPPath, "endpoints": eps,
 			"limits": map[string]int{"defaultRatePerMin": DefaultRatePerMin, "maxRatePerMin": MaxRatePerMin, "maxBurst": MaxBurst}})
 	})
 }
@@ -201,6 +210,9 @@ func (s *Service) rest(ep *Endpoint) http.Handler {
 func (s *Service) openapi(w http.ResponseWriter, r *http.Request) {
 	paths := map[string]any{}
 	for _, ep := range s.eps {
+		if ep.owner {
+			continue
+		}
 		var params []any
 		for _, p := range ep.Params {
 			params = append(params, map[string]any{"name": p.Name, "in": p.In, "required": p.Required || p.In == "path", "description": p.Desc, "schema": schemaOf(p)})
@@ -285,7 +297,8 @@ type rpcResp struct {
 }
 
 const mcpInstructions = "Read-only OKX USDT-perpetual research data. Start with get_system_status (freshness) and get_universe (pool snapshot: fact panel, " +
-	"percentiles, rule scores); drill into an instrument with get_instrument, get_candles, get_orderflow, get_liquidations, get_series and get_orderbook. " +
+	"percentiles, rule scores); drill into an instrument with get_instrument, get_candles, get_orderflow, get_liquidations, get_series and get_orderbook; order flow and manipulation over the last 48 h " +
+	"(spot and swap trade tape, live book walls, wall history, DEX swaps) with assess_manipulation, analyze_trades, get_book_analysis, get_wall_history, get_dex_activity, get_trades. " +
 	"Times are Unix ms; amounts USDT unless stated; missing values mean unknown, never zero. Scores are unvalidated user rules, not advice; " +
 	"check get_rule_track_record before trusting one. Calls are rate-limited per key (see get_usage); prefer small limits."
 
@@ -319,6 +332,9 @@ func (s *Service) mcp(w http.ResponseWriter, r *http.Request) {
 	// authenticate once per HTTP request (protocol messages are free; tool calls pay per call)
 	c, quota, den := s.Authorize(r, 0)
 	setQuota(w, quota, 0)
+	if den == nil && c.Owner {
+		c.Chat, _ = strconv.ParseInt(r.Header.Get("X-Ctg-Chat"), 10, 64)
+	}
 	if den != nil {
 		if den.Status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="okx-helper"`)
@@ -376,6 +392,9 @@ func (s *Service) mcpOne(w http.ResponseWriter, r *http.Request, c *Caller, q rp
 	case "tools/list":
 		tools := make([]any, 0, len(s.eps))
 		for _, ep := range s.eps {
+			if ep.owner && !c.Owner {
+				continue
+			}
 			props, req := map[string]any{}, []string{}
 			for _, p := range ep.Params {
 				props[p.Name] = schemaOf(p)
@@ -390,7 +409,7 @@ func (s *Service) mcpOne(w http.ResponseWriter, r *http.Request, c *Caller, q rp
 			tools = append(tools, map[string]any{
 				"name": ep.Name, "title": ep.Summary, "description": ep.Summary + ". " + ep.Desc + " Rate-limit cost: " + cost + ".",
 				"inputSchema": map[string]any{"type": "object", "properties": props, "required": req, "additionalProperties": false},
-				"annotations": map[string]any{"title": ep.Summary, "readOnlyHint": true, "openWorldHint": false},
+				"annotations": map[string]any{"title": ep.Summary, "readOnlyHint": !ep.write, "openWorldHint": false},
 			})
 		}
 		resp.Result = map[string]any{"tools": tools}
@@ -422,7 +441,7 @@ func (s *Service) mcpCall(w http.ResponseWriter, r *http.Request, c *Caller, raw
 	}
 	var ep *Endpoint
 	for _, x := range s.eps {
-		if x.Name == p.Name {
+		if x.Name == p.Name && (!x.owner || c.Owner) {
 			ep = x
 		}
 	}
@@ -440,6 +459,9 @@ func (s *Service) mcpCall(w http.ResponseWriter, r *http.Request, c *Caller, raw
 			return strconv.FormatFloat(x, 'f', -1, 64), true
 		case string:
 			return x, true
+		case map[string]any, []any: // object parameters (subscribe_signal spec) travel as JSON
+			b, err := json.Marshal(x)
+			return string(b), err == nil
 		default:
 			return fmt.Sprint(x), true
 		}

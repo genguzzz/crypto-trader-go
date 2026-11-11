@@ -164,6 +164,12 @@ func (sp *fakeSup) loop() {
 			}
 		case "kill":
 			sp.kills <- m
+		case "cond":
+			req := m["req"].(map[string]any)
+			if req["op"] == "hang" {
+				continue
+			}
+			_ = sp.c.send(map[string]any{"type": "cond_result", "id": m["id"], "reply": map[string]any{"op": req["op"], "items": []any{}}})
 		case "describe":
 			_ = sp.c.send(map[string]any{"type": "describe_result", "id": m["id"], "strategies": []map[string]any{
 				{"file": "library/a.py", "class": "A", "name": "a", "timeframe": "4H", "code": "x = 1",
@@ -604,5 +610,32 @@ func TestSocketPermissions(t *testing.T) {
 	}
 	if fi.Mode()&os.ModeSocket == 0 || fi.Mode().Perm() != 0o666 {
 		t.Fatalf("mode %v", fi.Mode())
+	}
+}
+
+// Conditions relays a signal-script request to the supervisor and returns its reply as is.
+func TestConditionsRelay(t *testing.T) {
+	h, path := newHost(t, Options{})
+	ctx := context.Background()
+	if _, err := h.Conditions(ctx, map[string]any{"op": "check"}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("no supervisor: %v", err)
+	}
+	sp := startSup(t, path, ack)
+	waitFor(t, h.Available)
+	raw, err := h.Conditions(ctx, map[string]any{"op": "eval", "items": []any{}})
+	if err != nil || string(raw) != `{"items":[],"op":"eval"}` {
+		t.Fatalf("reply %s %v", raw, err)
+	}
+	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if _, err := h.Conditions(short, map[string]any{"op": "hang"}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := h.Conditions(ctx, map[string]any{"op": "hang"}); done <- err }()
+	time.Sleep(20 * time.Millisecond)
+	sp.c.w.close() // the supervisor goes away while a request waits
+	if err := <-done; !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("supervisor gone: %v", err)
 	}
 }

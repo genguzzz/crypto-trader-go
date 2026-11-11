@@ -197,6 +197,29 @@ def market(r: dict) -> None:
     print(f" 数据：phase={ds.get('phase')} live={ds.get('live')} asOf={ts(ds.get('asOfMinute'))}")
 
 
+def news_line(i: dict) -> str:
+    """One story: id, time, tags, title, outlets; the summary on a second line. No URLs (ids instead)."""
+    tg = ",".join(i.get("tags") or [])
+    srcs = i.get("sources") or [i.get("source", "")]
+    more = f" +{len(srcs) - 1}家" if len(srcs) > 1 else ""
+    head = f"{i['id'] + ' ' if i.get('id') else ''}{fmt_time(i['t'])} {'[' + tg + '] ' if tg else ''}{i['title'][:110]} ({srcs[0]}{more})"
+    summ = (i.get("summary") or "").strip()
+    return head + (f"\n      {summ}" if summ else "")
+
+
+def article(a: dict) -> None:
+    print(f"{a.get('id') or ''} {a['title']}".strip())
+    meta = " · ".join(x for x in (a.get("source"), fmt_time(a["t"]) if a.get("t") else "") if x)
+    if meta:
+        print(meta)
+    print()
+    for ptxt in a["paragraphs"] or ["（没有提取到正文：可能需要登录或是视频页）"]:
+        print(ptxt)
+        print()
+    if a.get("truncated"):
+        print("…（已截取前段）")
+
+
 def events(r: dict) -> None:
     if r.get("warnings"):
         print("⚠ 需要注意")
@@ -207,10 +230,9 @@ def events(r: dict) -> None:
         if items:
             print(f"\n■ {title}")
             for i in items[:12]:
-                tg = ",".join(i.get("tags") or [])
-                print(f"  {fmt_time(i['t'])} [{i['source']}{'|'+tg if tg else ''}] {i['title'][:100]}")
-                if i.get("url"):
-                    print(f"      {i['url'][:120]}")
+                print("  " + news_line(i))
+    if any(i.get("id") for k in ("symbol_news", "market_alerts") for i in r.get(k) or []):
+        print("  （ca news --read <id> 读正文）")
     if r.get("macro"):
         print("\n■ 宏观日历（高影响，本周）")
         for m in r["macro"]:

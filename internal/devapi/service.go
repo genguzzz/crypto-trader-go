@@ -87,6 +87,7 @@ type keyState struct {
 	store.APIKey
 	b     bucket
 	dirty bool
+	owner bool // in-memory key of the owner's own agent: may also call owner endpoints (get_positions)
 }
 
 // LogEntry is one external request (in-memory ring, newest first in Log()).
@@ -115,6 +116,59 @@ type Service struct {
 	logAt  int
 	now    func() time.Time
 	eps    []*Endpoint // set by Mount
+
+	positions  func(ctx context.Context, instID string) (any, error)                      // the owner's OKX positions (optional)
+	okxRead    func(ctx context.Context, path, query string) (any, error)                 // generic read of his OKX account (optional)
+	okxHistory func(ctx context.Context, args map[string]string) (any, error)             // paged + totalled history (optional)
+	propose    func(ctx context.Context, chat int64, args map[string]string) (any, error) // trade proposal for the owner's approval (optional)
+	proposals  func(ctx context.Context, args map[string]string) (any, error)             // the proposals and where they stand (optional)
+	signals    *SignalTools                                                               // the agent's signal subscriptions (optional)
+	desk       *DeskTools                                                                 // the trading desk's journal and memory (optional)
+}
+
+// SignalTools are the owner-only subscribe_signal / list_signals / unsubscribe_signal / test_signal_script
+// handlers (internal/signals); chat is the X-Ctg-Chat of the call (0 when absent). TestScript and TestSpec are optional.
+type SignalTools struct {
+	Subscribe, List, Unsubscribe, TestScript, TestSpec func(ctx context.Context, chat int64, args map[string]string) (any, error)
+}
+
+// DeskTools are the owner-only tools of the trading desk (internal/autopilot): its decision journal,
+// reviews, long-term memory and the read side of all three; chat is the X-Ctg-Chat of the call.
+type DeskTools struct {
+	Journal, Review, Remember, Recall func(ctx context.Context, chat int64, args map[string]string) (any, error)
+}
+
+// SetDesk enables the desk tools (call before Mount).
+func (s *Service) SetDesk(t DeskTools) {
+	s.desk = &t
+}
+
+// SetSignals enables the signal tools (call before Mount).
+func (s *Service) SetSignals(t SignalTools) {
+	s.signals = &t
+}
+
+// SetTradeProposals enables the owner-only propose_trade and get_trade_proposals tools (call before Mount).
+// propose creates a pending proposal that only the owner can approve; nothing here can execute one.
+func (s *Service) SetTradeProposals(propose func(ctx context.Context, chat int64, args map[string]string) (any, error),
+	list func(ctx context.Context, args map[string]string) (any, error)) {
+	s.propose, s.proposals = propose, list
+}
+
+// SetOKXRead enables the owner-only okx_api tool: one GET of an allowed private OKX endpoint.
+func (s *Service) SetOKXRead(f func(ctx context.Context, path, query string) (any, error)) {
+	s.okxRead = f
+}
+
+// SetOKXHistory enables the owner-only okx_history tool: a whole period of one history kind, paged and
+// totalled on the server (args: kind, begin, end, instId, ccy, group, sample).
+func (s *Service) SetOKXHistory(f func(ctx context.Context, args map[string]string) (any, error)) {
+	s.okxHistory = f
+}
+
+// SetPositions enables the owner-only get_positions tool (call before Mount).
+func (s *Service) SetPositions(f func(ctx context.Context, instID string) (any, error)) {
+	s.positions = f
 }
 
 func New(st Store) (*Service, error) {
@@ -392,6 +446,10 @@ type Caller struct {
 	RatePerMin int    `json:"ratePerMin"`
 	Burst      int    `json:"burst"`
 	ExpiresAt  int64  `json:"expiresAt"`
+	Owner      bool   `json:"-"`
+	// Chat is the owner agent's conversation (MCP header X-Ctg-Chat; owner keys only), so a proposal
+	// made by the agent is linked to the chat that made it.
+	Chat int64 `json:"-"`
 }
 
 // Quota describes the bucket after a request, for X-RateLimit-* headers and 429 bodies.
@@ -417,11 +475,21 @@ func (d *Denial) Error() string { return d.Msg }
 // InternalKey mints an in-memory key for an in-process client (the AI agent): never stored, gone on
 // restart, and only reachable by whoever receives the secret. It still passes the global limit.
 func (s *Service) InternalKey(name string, ratePerMin, burst int) string {
+	return s.internalKey(name, ratePerMin, burst, false)
+}
+
+// OwnerKey is an InternalKey that may also call the owner endpoints (the owner's own OKX account):
+// only for the owner's chat agent, never for the sandbox or external clients.
+func (s *Service) OwnerKey(name string, ratePerMin, burst int) string {
+	return s.internalKey(name, ratePerMin, burst, true)
+}
+
+func (s *Service) internalKey(name string, ratePerMin, burst int, owner bool) string {
 	raw := make([]byte, 24)
 	rand.Read(raw)
 	secret := "ctg_in_" + base64.RawURLEncoding.EncodeToString(raw)
 	k := &keyState{APIKey: store.APIKey{ID: -1, Kind: KindKey, Name: name, Prefix: secret[:12], Hash: hashSecret(secret),
-		RatePerMin: ratePerMin, Burst: burst, CreatedAt: s.now().UnixMilli()}}
+		RatePerMin: ratePerMin, Burst: burst, CreatedAt: s.now().UnixMilli()}, owner: owner}
 	s.mu.Lock()
 	s.byHash[k.Hash] = k // not in s.keys: not listed, not persisted
 	s.mu.Unlock()
@@ -447,7 +515,7 @@ func (s *Service) Authorize(r *http.Request, cost int) (*Caller, *Quota, *Denial
 		return nil, nil, &Denial{Status: http.StatusUnauthorized, Msg: "API key " + st}
 	}
 	k.LastUsedAt, k.dirty = now.UnixMilli(), true
-	caller := &Caller{ID: k.ID, Kind: k.Kind, Name: k.Name, Prefix: k.Prefix, RatePerMin: k.RatePerMin, Burst: k.Burst, ExpiresAt: k.ExpiresAt}
+	caller := &Caller{ID: k.ID, Kind: k.Kind, Name: k.Name, Prefix: k.Prefix, RatePerMin: k.RatePerMin, Burst: k.Burst, ExpiresAt: k.ExpiresAt, Owner: k.owner}
 	if cost <= 0 { // free: MCP protocol messages, usage lookups
 		q := quotaOf(k, now)
 		return caller, &q, nil
