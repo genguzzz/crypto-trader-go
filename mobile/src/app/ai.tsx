@@ -32,7 +32,7 @@ import { usePendingProposals, useRealtrade } from "@/lib/realtrade";
 import { useActiveSignalCount } from "@/lib/signals";
 import { VoiceWave } from "@/components/ai/VoiceWave";
 import { ModelChip, ModelMenu } from "@/components/ai/ModelMenu";
-import { segments } from "@/components/ai/blocks";
+import { quickReplies, segments, type Quick } from "@/components/ai/blocks";
 import { req } from "@/lib/api";
 import { useQuery } from "@/lib/query";
 
@@ -310,7 +310,7 @@ export default function AiScreen() {
             return m.role === "user" ? <View key={k} onLayout={at}><UserBubble text={textOf(m)} ts={m.ts} onSelect={selectText} /></View>
               : m.role === "signal" ? <View key={k} onLayout={at}><Stamp ts={m.ts} align="flex-start" />{isDeskBrief(textOf(m)) ? <DeskBubble text={textOf(m)} onSelect={selectText} /> : <SignalBubble text={textOf(m)} onSelect={selectText} />}</View>
               : m.role === "trade" ? <View key={k} onLayout={at}><Stamp ts={m.ts} align="flex-start" /><TradeBubble text={textOf(m)} onSelect={selectText} /></View>
-              : <Answer key={k} m={m} now={now} onSelect={selectText} />;
+              : <Answer key={k} m={m} now={now} onSelect={selectText} onAsk={submit} asking={mi === s.msgs.length - 1 && !m.live && !s.running} quick={mi === s.msgs.length - 1 && !m.live && !s.running && !m.error ? quickReplies(textOf(m), owner) : undefined} />;
           })}
 
           {s.running && lastMsg && lastMsg.role !== "assistant" ? <Thinking label="思考中" /> : null}
@@ -458,7 +458,7 @@ const UserBubble = memo(function UserBubble({ text, ts, onSelect }: { text: stri
   );
 });
 
-function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: string) => void }) {
+function Answer({ m, now, onSelect, quick, onAsk, asking }: { m: Msg; asking?: boolean; now: number; onSelect: (t: string) => void; quick?: Quick[]; onAsk: (t: string) => void }) {
   const gs = groups(m);
   const phase = phaseOf(m, now);
   const live = !!m.live;
@@ -482,7 +482,7 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
                 sg.k === "md" ? (
                   <Markdown key={sg.key} text={sg.text} caret={gi === gs.length - 1 && si === segs.length - 1 && phase === "typing"} />
                 ) : (
-                  <AiBlock key={sg.key} seg={sg} />
+                  <AiBlock key={sg.key} seg={sg} ask={asking ? onAsk : undefined} />
                 ),
               );
             })()}
@@ -490,6 +490,16 @@ function Answer({ m, now, onSelect }: { m: Msg; now: number; onSelect: (t: strin
         ),
       )}
       {phase === "thinking" ? <Thinking label={m.parts.length ? "整理思路" : "思考中"} /> : null}
+      {quick?.length ? (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4, marginBottom: 6 }}>
+          {quick.map((q) => (
+            <Pressable key={q.label} onPress={() => onAsk(q.prompt)} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 18, borderWidth: 1, borderColor: "rgba(188,255,47,0.35)", backgroundColor: pressed ? "rgba(188,255,47,0.22)" : "rgba(188,255,47,0.1)" })}>
+              <Ionicons name={q.icon as any} size={14} color={colors.primary} />
+              <Text style={{ fontSize: fs.md, fontWeight: "600", color: colors.text }}>{q.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       {m.error ? (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginVertical: 6 }}>
           <Ionicons name="alert-circle-outline" size={14} color={colors.warn} />

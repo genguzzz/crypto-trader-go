@@ -7,6 +7,7 @@ import { colors, fs, tnum } from "@/lib/theme";
 import { tap } from "@/components/ui";
 import { instOk, num, symOf, type Segment } from "./blocks";
 import { goFromAi } from "./Markdown";
+import { AskBlock } from "./AskBlock";
 
 type Tone = { t: string; c: string; cb: string; line: string };
 const TONE = {
@@ -71,7 +72,7 @@ function Kpi({ items }: { items: any[] }) {
   );
 }
 
-export function AiBlock({ seg }: { seg: Extract<Segment, { k: "block" }> }) {
+export function AiBlock({ seg, ask }: { seg: Extract<Segment, { k: "block" }>; ask?: (t: string) => void }) {
   const d = seg.data ?? {};
   const go = (id: unknown) => {
     if (!instOk(id)) return;
@@ -120,6 +121,8 @@ export function AiBlock({ seg }: { seg: Extract<Segment, { k: "block" }> }) {
       </View>
     );
   }
+
+  if (seg.type === "ask") return <AskBlock d={d} ask={ask} />;
 
   if (seg.type === "kpi") return <Kpi items={(Array.isArray(d) ? d : d.items) ?? []} />;
 

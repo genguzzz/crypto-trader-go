@@ -2,7 +2,7 @@
 // block whose info string is a block type and whose body is JSON (```plan {...}```) renders as a
 // component; everything else stays Markdown. While streaming, an unclosed block is `open`
 // (skeleton); a closed block with bad JSON falls back to its raw text. Schemas: ai/prompts/chat_v1.md.
-export const BLOCK_TYPES = ["verdict", "kpi", "plan", "coins", "bullbear"] as const;
+export const BLOCK_TYPES = ["verdict", "kpi", "plan", "coins", "bullbear", "ask"] as const;
 export type BlockType = (typeof BLOCK_TYPES)[number];
 
 export type Segment =
@@ -69,4 +69,22 @@ function parseBlock(raw: string): any {
     }
     return null;
   }
+}
+
+export type Quick = { label: string; prompt: string; icon: string };
+
+const fmtN = (v: number) => (Math.abs(v) >= 1000 ? String(+v.toFixed(1)) : Math.abs(v) >= 1 ? String(+v.toFixed(4)) : String(+v.toPrecision(4)));
+
+/** The one follow-up that needs no guessing: a directional plan → 帮我开单 (owner only). Every
+ *  other choice is the model's own `ask` block. */
+export function quickReplies(src: string, owner: boolean): Quick[] {
+  if (!owner) return [];
+  const blocks = segments(src, false).flatMap((s) => (s.k === "block" && !s.error ? [s] : []));
+  if (blocks.some((b) => b.type === "ask")) return [];
+  const plan = blocks.find((b) => b.type === "plan")?.data;
+  if (!plan || !["long", "short"].includes(String(plan.side)) || !instOk(plan.instId)) return [];
+  const nums = (v: unknown) => (Array.isArray(v) ? v : [v]).map(num).filter((x): x is number => x != null).map(fmtN);
+  const lev = num(plan.leverage);
+  const text = `${symOf(plan.instId)} ${plan.side === "long" ? "做多" : "做空"}，入场 ${nums(plan.entry).join("–")}，止损 ${nums(plan.stop).join("")}，止盈 ${nums(plan.tp).join(" / ")}${lev ? `，${lev}x` : ""}`;
+  return [{ icon: "receipt-outline", label: "帮我开单", prompt: `帮我开单：${text}；保证金和杠杆按我的偏好和风控上限定。` }];
 }
