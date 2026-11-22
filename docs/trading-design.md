@@ -266,7 +266,7 @@ Owner request: built-in signals over the whole pool ("any coin in the pool movin
 | key | meaning |
 |---|---|
 | `scope` | `pool` (default: the active pool; `top` N = ranks ≤ N), `watch` (watchlist), `list` (`instIds`, 1–50); `exclude` removes coins |
-| `metric: move` | last price (or the confirmed close) vs the close `windowMin` minutes earlier (1–1440; 1 = minute to minute), `dir` up / down / both, `pct` |
+| `metric: move` | last price (or the confirmed close) vs the close `windowMin` minutes earlier (1–1440; 1 = minute to minute), `dir` up / down / both, `pct`; optional `xMove` (2–20, windowMin ≤ 120): a coin's threshold becomes min(pct, max(0.5 %, xMove × its typical move)), the typical move being the median absolute change over the non-overlapping windows of the last 24 h (fewer than 12 of them: pct alone) |
 | `metric: range` | (highest high / lowest low − 1) over the window's 1m bars ≥ `pct` (needs ≥ 80% of the bars) |
 | `metric: field` | a fact-panel field with `op` / `value` across the scope |
 
@@ -325,7 +325,7 @@ owner: "run now", or simply writing in the chat ──────────�
 
 | key | fires when a coin of the pool's top N … | default |
 |---|---|---|
-| `surge` 急涨急跌 | moves ≥ pct % either way within windowMin | top 60, 15 min, 3 %, cooldown 30 min (10–1440) |
+| `surge` 急涨急跌 | moves ≥ pct % either way within windowMin, or ≥ xMove × the coin's own typical move (pool `move` with `xMove`: the median absolute change over the day's windows of that length, at least 0.5 %) — so BTC and ETH, which never move 3 % in 15 minutes, fire on a move that is large for them | top 60, 15 min, 3 %, 8 ×, cooldown 30 min (10–1440) |
 | `momo_up` 放量上攻 | rises ≥ pct % in 1 h **and** volume ≥ volX × the 7-day median **and** OI +oiPct % in 1 h | 4 %, 2×, 2 % |
 | `flush_down` 放量下杀去杠杆 | falls ≥ pct % in 1 h **and** volume ≥ volX × **and** OI −oiPct % in 1 h | 4 %, 2×, 2 % |
 | `oi_build` 持仓激增 | OI +oiPct % in 1 h **and** a 1 h range ≥ rangePct % | 6 %, 2 % |

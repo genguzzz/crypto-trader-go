@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -631,6 +632,25 @@ func TestOneRegimeMemory(t *testing.T) {
 	}
 	if got := s2.Config(); !got.Enabled || got.SessionKTokens != 60 {
 		t.Fatalf("stored config with the old session size: enabled %v, size %d", got.Enabled, got.SessionKTokens)
+	}
+}
+
+// The surge scan is relative to each coin unless the multiple is switched off.
+func TestSurgeIsRelativeToTheCoin(t *testing.T) {
+	d, _ := strategyDef("surge")
+	c := DefaultConfig()
+	i := slices.IndexFunc(c.Strategies, func(x StrategyConfig) bool { return x.Key == "surge" })
+	if sd := d.build(c.Strategies[i].Params); len(sd) != 1 || sd[0].spec.XMove != 8 || sd[0].spec.Pct != 3 || sd[0].cooldown != 30 {
+		t.Fatalf("default surge scan %+v", sd)
+	}
+	c.Strategies[i].Params["xMove"] = 0
+	if sd := d.build(c.Strategies[i].Params); sd[0].spec.XMove != 0 {
+		t.Fatalf("multiple 0 must leave the fixed percentage alone: %+v", sd[0].spec)
+	}
+	// a configuration stored before the parameter existed gets the default
+	delete(c.Strategies[i].Params, "xMove")
+	if n, err := c.normalize(); err != nil || n.Strategies[i].Params["xMove"] != 8 {
+		t.Fatalf("stored config without xMove: %v %v", n.Strategies[i].Params, err)
 	}
 }
 

@@ -17,13 +17,18 @@ import (
 //
 //	{"type":"pool", "scope":"pool"|"watch"|"list", "top":50, "instIds":[…], "exclude":[…],
 //	 "metric":"move",  "windowMin":15, "dir":"up"|"down"|"both", "pct":3}   change over the window ≥ pct %
+//	                   "xMove":5                                            … or ≥ 5 × the coin's own typical move (below)
 //	 "metric":"range", "windowMin":5, "pct":2}                              high–low swing in the window ≥ pct %
 //	 "metric":"field", "field":"funding_hourly", "op":">", "value":0.0005}  a fact-panel field crosses a value
 //	 "metric":"combo", "legs":[{"metric":"move",…},{"metric":"field",…}]}   2–4 of the above, all true for the same coin
 //
 // move: last price (or the newest confirmed close) against the close windowMin minutes earlier, so
 // windowMin 1 is the minute-to-minute move. range: (highest high / lowest low − 1) over the window's 1m
-// bars. Members are re-read on every check (the active pool changes); a member checked for the first
+// bars. xMove makes move relative to each coin: a fixed 3 % is an ordinary quarter of an hour for a small
+// coin and almost never happens to BTC, so with xMove the threshold of a coin is
+// min(pct, max(0.5 %, xMove × its typical move)), the typical move being the median absolute change
+// over the non-overlapping windows of the last 24 h (unknown with fewer than 12 of them: pct alone).
+// Members are re-read on every check (the active pool changes); a member checked for the first
 // time — at subscribe, after joining the scope, or after a restart — only records its state, so coins
 // already beyond the threshold never fire until they first fall back. A member fires on its own
 // false→true edge, at most once per cooldownMin; members that fire on the same check are delivered
@@ -45,6 +50,11 @@ const (
 	poolDefaultFire = 10
 	poolMaxHits     = 10 // hits written into one delivery (the rest are counted)
 	poolStaleMs     = 3 * 60_000
+	// xMove: the longest window it works with (12 windows fit into the 24 h it looks back on), the
+	// windows it needs, and the smallest move it fires on (a dead coin's typical move is next to nothing)
+	xMoveMaxWindow = 120
+	xMoveMinN      = 12
+	xMoveFloorPct  = 0.5
 )
 
 var poolMetrics = map[string]bool{"move": true, "range": true, "field": true, "combo": true}
@@ -161,15 +171,18 @@ func (s *Spec) normalizeMetric() error {
 		default:
 			return errors.New("pool: dir must be up, down or both")
 		}
+		if s.XMove != 0 && (s.XMove < 2 || s.XMove > 20 || s.WindowMin > xMoveMaxWindow) {
+			return fmt.Errorf("pool: xMove is a multiple of the coin's typical move, 2–20, with windowMin ≤ %d", xMoveMaxWindow)
+		}
 	case "range":
 		if err := window(); err != nil {
 			return err
 		}
-		if s.Dir != "" {
-			return errors.New("pool: range has no dir (a swing either way); use metric move for a direction")
+		if s.Dir != "" || s.XMove != 0 {
+			return errors.New("pool: range has no dir or xMove (a swing either way); use metric move for those")
 		}
 	case "field":
-		if s.WindowMin != 0 || s.Pct != 0 || s.Dir != "" {
+		if s.WindowMin != 0 || s.Pct != 0 || s.Dir != "" || s.XMove != 0 {
 			return errors.New("pool: metric field takes field, op and value (no windowMin / pct / dir)")
 		}
 		f, ok := features.Lookup(s.Field)
@@ -260,7 +273,11 @@ func (s Spec) describePool() string {
 func (s Spec) metricText() string {
 	switch s.Metric {
 	case "move":
-		return fmt.Sprintf("%s内%s ≥ %g%%", windowText(s.WindowMin), dirText[s.Dir], s.Pct)
+		t := fmt.Sprintf("%s内%s ≥ %g%%", windowText(s.WindowMin), dirText[s.Dir], s.Pct)
+		if s.XMove > 0 {
+			t += fmt.Sprintf(" 或 ≥ 自身常态波动的 %g 倍", s.XMove)
+		}
+		return t
 	case "range":
 		return fmt.Sprintf("%s内振幅 ≥ %g%%", windowText(s.WindowMin), s.Pct)
 	case "field":
@@ -371,15 +388,26 @@ func (s Spec) read(src Sources, inst string, ev event, now time.Time) reading {
 		}
 		r.val = (px/bars[i].C - 1) * 100
 		r.known = true
+		// the coin's own threshold: pct, or less when the move is large for this coin. The typical move
+		// is only looked up for a move that could fire on it (it reads a day of bars).
+		need, typical := s.Pct, 0.0
+		if s.XMove > 0 && math.Abs(r.val) >= xMoveFloorPct && math.Abs(r.val) < s.Pct {
+			if t, ok := typicalMove(ps.Recent1m(inst, 1440+s.WindowMin+3), refT, s.WindowMin); ok {
+				typical, need = t, min(s.Pct, max(xMoveFloorPct, s.XMove*t))
+			}
+		}
 		switch s.Dir {
 		case "up":
-			r.hit = r.val >= s.Pct
+			r.hit = r.val >= need
 		case "down":
-			r.hit = r.val <= -s.Pct
+			r.hit = r.val <= -need
 		default:
-			r.hit = math.Abs(r.val) >= s.Pct
+			r.hit = math.Abs(r.val) >= need
 		}
 		r.text = fmt.Sprintf("%s %s内 %+.2f%%（%s → %s）", coin(inst), windowText(s.WindowMin), r.val, fmtPx(bars[i].C), fmtPx(px))
+		if r.hit && typical > 0 && math.Abs(r.val) < s.Pct {
+			r.text += fmt.Sprintf("，是它常态 %.2f%% 的 %.1f 倍", typical, math.Abs(r.val)/typical)
+		}
 	case "range":
 		hi, lo := 0.0, math.Inf(1)
 		var hiT, loT int64
@@ -493,6 +521,28 @@ func (p *poolState) scan(s Spec, src Sources, ev event, now time.Time, cooldown 
 }
 
 // closeness orders readings of one measurement by how far they are towards its threshold.
+// typicalMove is a coin's ordinary change over a window: the median absolute close-to-close change,
+// in percent, over the non-overlapping windows that end at or before end (ms, a bar's open time) in
+// bars — a day of 1m bars. False with fewer than xMoveMinN complete windows (a new listing, gaps).
+func typicalMove(bars []Bar, end int64, windowMin int) (float64, bool) {
+	closes := make(map[int64]float64, len(bars))
+	for _, b := range bars {
+		closes[b.T] = b.C
+	}
+	w := int64(windowMin) * 60_000
+	var moves []float64
+	for t := end; t-w >= end-24*3600_000; t -= w {
+		if a, b := closes[t], closes[t-w]; a > 0 && b > 0 {
+			moves = append(moves, math.Abs(a/b-1)*100)
+		}
+	}
+	if len(moves) < xMoveMinN {
+		return 0, false
+	}
+	sort.Float64s(moves)
+	return moves[len(moves)/2], true
+}
+
 func (s Spec) closeness(v float64) float64 {
 	switch {
 	case s.Metric == "move" && s.Dir == "up":

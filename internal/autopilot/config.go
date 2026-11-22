@@ -132,13 +132,18 @@ var (
 // vol_surprise_4h is the log of the multiple of the 7-day median, funding_hourly is the rate per hour.
 var Strategies = []StrategyDef{
 	{Key: "surge", Label: "急涨急跌", On: true,
-		Desc: "池内任一币在短窗口内涨或跌超过阈值",
+		Desc: "池内任一币在短窗口内涨跌超过固定幅度，或超过它自己常态波动（近 24 小时同窗口涨跌的中位数）的若干倍——BTC、ETH 这类平时波动小的币也能触发；倍数填 0 = 只按固定幅度",
 		Hint: "先分清是延续还是一次性插针：看成交量、OI 是否跟随，大盘是否同向",
 		Params: []ParamDef{pTop, {Key: "windowMin", Label: "窗口", Unit: "分钟", Def: 15, Min: 3, Max: 120, Step: 1},
-			{Key: "pct", Label: "涨跌幅", Unit: "%", Def: 3, Min: 1, Max: 20, Step: 0.5}, pCooldown},
+			{Key: "pct", Label: "涨跌幅", Unit: "%", Def: 3, Min: 1, Max: 20, Step: 0.5},
+			// majors never move pct in a quarter of an hour: a move that is large for the coin itself counts too
+			{Key: "xMove", Label: "自身波动倍数", Unit: "倍", Def: 8, Min: 0, Max: 20, Step: 1}, pCooldown},
 		build: func(p map[string]float64) []scanDef {
-			return []scanDef{{spec: signals.Spec{Type: "pool", Scope: "pool", Top: int(p["top"]), Metric: "move", WindowMin: int(p["windowMin"]),
-				Dir: "both", Pct: p["pct"]}, cooldown: int(p["cooldownMin"])}}
+			spec := signals.Spec{Type: "pool", Scope: "pool", Top: int(p["top"]), Metric: "move", WindowMin: int(p["windowMin"]), Dir: "both", Pct: p["pct"]}
+			if p["xMove"] >= 2 { // below 2 (0 in the app) = off: the fixed percentage alone
+				spec.XMove = p["xMove"]
+			}
+			return []scanDef{{spec: spec, cooldown: int(p["cooldownMin"])}}
 		}},
 	{Key: "momo_up", Label: "放量上攻", On: true,
 		Desc: "1 小时上涨 + 成交量放大 + 持仓增加：新资金推动的上涨",

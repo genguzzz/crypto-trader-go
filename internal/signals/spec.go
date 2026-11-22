@@ -60,6 +60,7 @@ type Spec struct {
 	WindowMin int      `json:"windowMin,omitempty"` // move / range: window in minutes
 	Dir       string   `json:"dir,omitempty"`       // move: up | down | both
 	Pct       float64  `json:"pct,omitempty"`       // move / range: threshold in percent
+	XMove     float64  `json:"xMove,omitempty"`     // move: also fires at xMove × the coin's own typical move over the window (0 = off)
 	Legs      []Spec   `json:"legs,omitempty"`      // metric combo: 2–4 move / range / field conditions one coin must meet together
 	// Every (root only) is how often it is checked: tick (each ~2 s price broadcast), 1m, 5m, 15m or 1H
 	// (on that confirmed minute). "" = tick when a leaf reads the last price (and there is no script),
