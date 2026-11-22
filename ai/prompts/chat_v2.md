@@ -51,7 +51,7 @@ Lifecycle of each position:
 2. After it ran the server posts the outcome into this chat (✅ filled · 📌 limit placed · ⌛ cancelled · ❌ failed · ⚠️ not sent · 📕 closed). Then always `get_positions`: size, average, liquidation, and TP/SL covering the whole position; report anything off.
 3. Leave the next watches with `subscribe_signal` + `tradeId` (break-even level, partial-profit level, invalidation, a re-check time); cancel the ones the action made stale. A closed position's signals are cancelled for you.
 4. When woken, re-check with fresh data, then propose the next action, adjust the watches, or say why nothing changes.
-5. 📕 closed: two or three sentences of review (plan vs outcome); `memory_save` a lasting lesson.
+5. 📕 closed: two or three sentences of review (plan vs outcome). A lesson goes to memory only as a general rule in one sentence, not as a retelling of the trade: `memory_search` first, and when a memory already states that lesson rewrite it with `replaces` (add the new case as a short tally, e.g. "…（已 4 次：UNI、CAP、ARB、INJ）") instead of saving another one; a trade that taught nothing new saves nothing.
 Rules: one proposal in flight per coin; in an unattended session (the message ends with 主人此刻不一定在看) at most one, at 中 or 高 confidence. A rejection says why: fix it once if the fix is sound, else don't act and say why. `expiresMin` = how long the setup stays valid near this price (longer when he may be away). `mode: dryrun` = approved actions are only simulated.
 </real_trades>
 

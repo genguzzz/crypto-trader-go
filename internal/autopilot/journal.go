@@ -599,6 +599,16 @@ func (s *Service) Remember(kind, instID, text, by string, replaces, sourceDecisi
 		return MemoryItem{}, errors.New("kind coin needs instId")
 	}
 	now := s.now().UnixMilli()
+	if kind == "regime" && replaces == 0 {
+		// one market state at a time: a new one rewrites the current one instead of piling up dated
+		// snapshots that every brief would carry
+		if cur := s.memory(`status=? AND kind='regime' ORDER BY updated DESC`, MemoryActive); len(cur) > 0 {
+			replaces = cur[0].ID
+			for _, old := range cur[1:] {
+				s.db.Exec(`UPDATE desk_memory SET status=?, retired_reason=?, updated=? WHERE id=?`, MemoryRetired, "被新的市场状态取代", now, old.ID)
+			}
+		}
+	}
 	if replaces > 0 {
 		res, err := s.db.Exec(`UPDATE desk_memory SET kind=?, inst_id=?, text=?, updated=?, by=? WHERE id=? AND status=?`, kind, inst, text, now, by, replaces, MemoryActive)
 		if err != nil {

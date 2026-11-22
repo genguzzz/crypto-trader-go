@@ -571,8 +571,9 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			Name: "desk_remember", Path: "desk-remember", Summary: "Trading desk: keep (or rewrite, or retire) a long-term memory",
 			Desc: "Only in the trading desk conversation. The desk's long-term memory travels in every brief, so keep it short and reusable: " +
 				"rule (how this desk trades: the owner's standing instructions, sizing, what never to do) · lesson (what a reviewed decision taught) · " +
-				"regime (the market state that matters for the next days; rewrite it when it changes) · coin (a lasting fact about one coin). " +
-				"Not for single observations — those belong in desk_journal. Rewrite with replaces rather than adding a near-duplicate; " +
+				"regime (the market state that matters for the next days, in two sentences; there is only one — writing a new one replaces it) · coin (a lasting fact about one coin). " +
+				"Not for single observations, the account's state of the moment (positions, margin ratio, equity) or a retelling of one trade — those belong in desk_journal; " +
+				"a lesson is the general rule the trade taught, in one sentence. Rewrite with replaces rather than adding a near-duplicate; " +
 				"retire=<memoryId> with reason takes one out.",
 			Params: []Param{
 				{Name: "kind", In: "query", Type: "string", Enum: []string{"rule", "lesson", "regime", "coin"}, Desc: "required unless retiring"},

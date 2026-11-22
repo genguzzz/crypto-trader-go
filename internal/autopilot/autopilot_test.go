@@ -2,6 +2,7 @@ package autopilot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -590,9 +591,52 @@ func TestBriefSaysWhoApproves(t *testing.T) {
 	}
 }
 
+// The market state is one memory: a new one rewrites it, and older duplicates are retired.
+func TestOneRegimeMemory(t *testing.T) {
+	e := newEnv(t, at(13, 50))
+	now := e.clock().UnixMilli()
+	for _, text := range []string{"旧的市场状态一", "旧的市场状态二"} { // two from before the rule
+		e.s.db.Exec(`INSERT INTO desk_memory(ts, updated, kind, inst_id, text, by, source_decision, status) VALUES(?,?,?,?,?,?,?,?)`,
+			now, now, "regime", "", text, "ai", 0, MemoryActive)
+		now++
+	}
+	if _, err := e.s.Remember("lesson", "", "薄盘小币的远端止盈常只吃到一半", "ai", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	m, err := e.s.Remember("regime", "", "极度恐慌后的逼空反弹，杠杆空单要小", "ai", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := e.s.memory(`status=? AND kind='regime'`, MemoryActive)
+	if len(active) != 1 || active[0].ID != m.ID || active[0].Text != "极度恐慌后的逼空反弹，杠杆空单要小" {
+		t.Fatalf("active regime memories %+v", active)
+	}
+	if all := e.s.memory(`status=?`, MemoryActive); len(all) != 2 {
+		t.Fatalf("the lesson must stay: %+v", all)
+	}
+	if c := DefaultConfig(); c.SessionKTokens != 60 {
+		t.Fatalf("default session size %d", c.SessionKTokens)
+	}
+	c := e.enable(nil)
+	c.SessionKTokens = 150
+	if _, err := e.s.SetConfig(c); err == nil {
+		t.Fatal("a session size above 100k was accepted")
+	}
+	// a configuration stored under the earlier range keeps everything else (the desk stays on)
+	raw, _ := json.Marshal(c)
+	e.s.st.PutSetting(configKey, string(raw))
+	s2, err := New(e.s.st, e.chats, e.scans, e.trades, e.mkt, Options{Now: e.clock, Logf: func(string, ...any) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s2.Config(); !got.Enabled || got.SessionKTokens != 60 {
+		t.Fatalf("stored config with the old session size: enabled %v, size %d", got.Enabled, got.SessionKTokens)
+	}
+}
+
 func TestSessionRotation(t *testing.T) {
 	e := newEnv(t, at(13, 50))
-	e.enable(func(c *Config) { c.SessionKTokens = 100 })
+	e.enable(func(c *Config) { c.SessionKTokens = 100 }) // the largest allowed
 	// the session after each run: small, past the threshold, small again (it was reset before run 3)
 	for i, ctx := range []int64{40_000, 120_000, 30_000} {
 		e.set(at(13, 50).Add(time.Duration(i) * 2 * time.Hour))

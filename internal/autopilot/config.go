@@ -31,7 +31,7 @@ type Config struct {
 	Model  string `json:"model"`
 	Effort string `json:"effort"`
 	// SessionKTokens: a run that finds the agent's session at or above this size (thousand tokens, as
-	// the last turn reported; 30–150) starts a fresh one — the journal and memory carry what matters.
+	// the last turn reported; 30–100, default 60) starts a fresh one — the journal and memory carry what matters.
 	// It bounds what a never-ending chat re-reads on every call and keeps it below the CLI's own
 	// compaction (a summarising call that loses detail). Runs differ a lot in size, so the size is
 	// measured, not guessed from a number of runs.
@@ -245,6 +245,15 @@ func (c Config) strategy(key string) (struct{ Label, Hint string }, bool) {
 
 var everyHours = []int{1, 2, 4, 8}
 
+// capSession brings a session size stored under the earlier, wider range (up to 150) to the default,
+// so the rest of the stored configuration stays valid.
+func (c Config) capSession() Config {
+	if c.SessionKTokens > 100 {
+		c.SessionKTokens = 60
+	}
+	return c
+}
+
 // normalize validates a configuration and fills in every built-in strategy (missing ones at their
 // defaults, parameters clamped to their ranges).
 func (c Config) normalize() (Config, error) {
@@ -268,7 +277,7 @@ func (c Config) normalize() (Config, error) {
 	}
 	if err := errors.Join(def(&c.Signals.MinGapMin, 20, 5, 240, "signals.minGapMin"), def(&c.Signals.BatchSec, 90, 10, 600, "signals.batchSec"),
 		def(&c.Signals.StaleMin, 120, 15, 720, "signals.staleMin"), def(&c.MaxProposals, 2, 1, 5, "maxProposals"),
-		def(&c.SessionKTokens, 100, 30, 150, "sessionKTokens")); err != nil {
+		def(&c.SessionKTokens, 60, 30, 100, "sessionKTokens")); err != nil {
 		return c, err
 	}
 	if c.Signals.MaxRunsDay < 0 || c.Signals.MaxRunsDay > 48 {

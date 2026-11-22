@@ -197,7 +197,7 @@ func (s *Service) steerText(ctx context.Context, p Proposal, kind string) string
 	case StatusInvalidated:
 		b.WriteString("请用最新数据判断计划是否还成立：成立就按新价格重新提议，否则说明原因。")
 	case "closed":
-		b.WriteString("这个仓位已结束，关联信号已自动取消。用两三句复盘：计划与结果、哪里做对或做错；有值得长期记住的经验就 memory_save。")
+		b.WriteString("这个仓位已结束，关联信号已自动取消。用两三句复盘：计划与结果、哪里做对或做错；只有学到新的通用经验才 memory_save（一句话的规则，不是这笔交易的复述）；已有同类经验就用 replaces 更新那一条，不要再加一条。")
 	}
 	b.WriteString("\n（这是交易执行后的自动消息，主人此刻不一定在看。）")
 	return b.String()

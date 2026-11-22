@@ -190,7 +190,7 @@ func New(st *store.Store, chats Chats, scans Scans, trades Trades, mkt Market, o
 		var c Config
 		if err := json.Unmarshal([]byte(raw), &c); err != nil {
 			s.logf("autopilot: ignoring unreadable config: %v", err)
-		} else if c, err = c.normalize(); err != nil {
+		} else if c, err = c.capSession().normalize(); err != nil {
 			s.logf("autopilot: ignoring invalid stored config: %v", err)
 		} else {
 			s.cfg = c

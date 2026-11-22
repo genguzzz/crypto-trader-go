@@ -234,6 +234,7 @@ export default function AiScreen() {
             <ModelChip onPress={() => { Keyboard.dismiss(); setMenu(true); }} />
           </View>
         </View>
+        {owner ? <HeadButton icon="pulse-outline" label="交易台" color={DESK} onPress={() => showPane("desk")} /> : null}
         {owner ? <HeadButton icon="receipt-outline" label="交易提议" badge={pendingN} onPress={() => showPane("trades")} /> : null}
         <HeadButton icon="bulb-outline" label="偏好与记忆" onPress={() => showPane("notes")} />
         <HeadButton icon="time-outline" label="历史对话" onPress={() => showPane("history")} />
@@ -400,10 +401,10 @@ export default function AiScreen() {
   );
 }
 
-function HeadButton({ icon, label, onPress, badge }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void; badge?: number }) {
+function HeadButton({ icon, label, onPress, badge, color }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void; badge?: number; color?: string }) {
   return (
     <Pressable hitSlop={4} accessibilityLabel={badge ? `${label}，${badge} 条待审核` : label} onPress={() => { tap(); onPress(); }} style={({ pressed }) => ({ width: 32, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.cardMuted : undefined })}>
-      <Ionicons name={icon} size={19} color={badge ? colors.warn : colors.textSoft} />
+      <Ionicons name={icon} size={19} color={badge ? colors.warn : color ?? colors.textSoft} />
       {badge ? (
         <View pointerEvents="none" style={{ position: "absolute", top: 1, right: -1, minWidth: 15, height: 15, paddingHorizontal: 3, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.warn }}>
           <Text style={{ fontSize: 10, fontWeight: "700", color: "#000" }}>{badge}</Text>

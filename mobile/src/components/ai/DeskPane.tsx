@@ -171,7 +171,7 @@ export function DeskPane({ onClose, header }: { onClose: () => void; header: (ti
       ) : (
         <>
           <Segmented value={tab} onChange={setTab} style={{ marginHorizontal: 12, marginTop: 10 }}
-            options={[{ value: "overview", label: "概览" }, { value: "journal", label: "决策" }, { value: "memory", label: "记忆" }, { value: "setup", label: "策略" }]} />
+            options={[{ value: "overview", label: "概览" }, { value: "journal", label: "决策" }, { value: "memory", label: "记忆" }, { value: "setup", label: "设置" }]} />
           {tab === "overview" ? <Overview d={data} onOpenChat={openDeskChat} /> : tab === "journal" ? <Journal d={data} /> : tab === "memory" ? <Memory /> : <Setup d={data} />}
         </>
       )}
@@ -314,7 +314,6 @@ function RunRow({ r }: { r: DeskRun }) {
 
 // ---------- journal ----------
 
-const actionTone: Record<string, "good" | "bad" | "warn" | "info" | undefined> = { open: "info", add: "info", reduce: "warn", close: "warn", adjust: "warn" };
 
 function Journal({ d }: { d: DeskOverview }) {
   const { rev } = useDesk();
@@ -330,7 +329,7 @@ function Journal({ d }: { d: DeskOverview }) {
         <Chip label="交易" active={filter === "trades"} onPress={() => setFilter("trades")} />
         <Chip label="观望 / 不做" active={filter === "passes"} onPress={() => setFilter("passes")} />
       </View>
-      <Text style={styles.note}>每一笔决策都带着当时的价格入库，之后自动记录 1 小时 / 4 小时 / 24 小时的涨跌（按决策方向计正负）和提议的结果，用来回溯。</Text>
+      <Text style={styles.note}>「之后」是决策后 1 / 4 / 24 小时的涨跌，按决策方向计：正 = 方向对。没做的（观望 / 不做）正 = 错过，负 = 躲过。点开看价位、触发和复盘。</Text>
       {!list ? (q.error ? <ErrorBox text={q.error} onRetry={() => void q.refresh()} /> : <Loading />) : !list.length ? <EmptyState icon="reader-outline" text="还没有决策记录" /> : list.map((x) => <DecisionRow key={x.id} x={x} strategies={d.strategies} />)}
     </ScrollView>
   );
@@ -347,32 +346,52 @@ function Ret({ label, v }: { label: string; v?: number }) {
 
 const proposalText: Record<string, string> = { pending: "待审核", approved: "已批准", executing: "执行中", executed: "已执行", rejected: "已拒绝", expired: "已过期", failed: "失败", invalidated: "已作废" };
 
+/** What a pass (watch / skip) turned out to be: the return is signed by the side that was considered. */
+function passOutcome(x: DeskDecision): { text: string; tone: "good" | "bad" } | null {
+  if (x.action !== "watch" && x.action !== "skip") return null;
+  const v = x.ret24h ?? x.ret4h;
+  if (!x.side || v == null || Math.abs(v) < 3) return null;
+  return v > 0 ? { text: "错过了行情", tone: "bad" } : { text: "躲过了亏损", tone: "good" };
+}
+
+const TRADE = new Set(["open", "add", "reduce", "close", "adjust"]);
+
 function DecisionRow({ x, strategies }: { x: DeskDecision; strategies: DeskStrategy[] }) {
   const [open, setOpen] = useState(false);
   const px = (v?: number) => (v ? String(v) : "—");
+  const trade = TRADE.has(x.action);
+  const pass = passOutcome(x);
+  const pnl = x.pnlUsdt ?? 0;
+  // the left edge says what kind of decision it is at a glance: a trade (its side), or a pass (grey)
+  const edge = !trade ? colors.borderStrong : x.side === "short" ? colors.down : x.side === "long" ? colors.up : colors.warn;
   return (
-    <Pressable onPress={() => { tap(); setOpen(!open); }} style={{ borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: 10, gap: 6 }}>
+    <Pressable onPress={() => { tap(); setOpen(!open); }} style={{ borderRadius: 12, borderWidth: 1, borderColor: colors.border, borderLeftWidth: 3, borderLeftColor: edge, backgroundColor: colors.card, padding: 10, gap: 6 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <Text style={{ fontSize: fs.lg, fontWeight: "700", color: colors.text }}>{sym(x.instId)}</Text>
-        <Tag text={actionText[x.action] ?? x.action} tone={actionTone[x.action]} />
-        {x.side ? <Tag text={x.side === "long" ? "多" : "空"} tone={x.side === "long" ? "good" : "bad"} /> : null}
-        {x.conviction ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>把握 {convictionText[x.conviction]}</Text> : null}
+        <Text style={{ fontSize: fs.lg, fontWeight: "700", color: trade ? colors.text : colors.textSoft }}>{sym(x.instId)}</Text>
+        <Tag text={`${actionText[x.action] ?? x.action}${x.side ? (x.side === "long" ? " · 多" : " · 空") : ""}`} tone={trade ? (x.side === "long" ? "good" : x.side === "short" ? "bad" : "warn") : undefined} />
+        {x.conviction ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>把握{convictionText[x.conviction]}</Text> : null}
         <View style={{ flex: 1 }} />
+        {x.closedAt ? <Text style={{ fontSize: fs.md, fontWeight: "700", fontVariant: ["tabular-nums"], color: pnl >= 0 ? colors.up : colors.down }}>{pnl >= 0 ? "+" : ""}{pnl.toFixed(2)} U</Text> : null}
         <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>{time(x.ts, true)}</Text>
       </View>
       <Text numberOfLines={open ? undefined : 2} style={{ fontSize: fs.md, lineHeight: 19, color: colors.textSoft }}>{x.thesis}</Text>
+      {trade && (x.entry || x.sl || x.tp) ? (
+        <Text style={{ fontSize: fs.xs, fontVariant: ["tabular-nums"], color: colors.textFaint }}>
+          入场 <Text style={{ color: colors.textSoft }}>{px(x.entry)}</Text>　止损 <Text style={{ color: colors.down }}>{px(x.sl)}</Text>　止盈 <Text style={{ color: colors.up }}>{px(x.tp)}</Text>
+        </Text>
+      ) : null}
       <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 12, rowGap: 4 }}>
-        <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>@{px(x.px)}</Text>
+        <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>之后</Text>
         <Ret label="1h" v={x.ret1h} />
         <Ret label="4h" v={x.ret4h} />
         <Ret label="24h" v={x.ret24h} />
-        {x.proposalId ? <Text style={{ fontSize: fs.xs, color: x.proposalStatus === "executed" ? colors.primary : colors.textFaint }}>提议 #{x.proposalId} {proposalText[x.proposalStatus ?? "pending"] ?? x.proposalStatus}</Text> : null}
-        {x.closedAt ? <Text style={{ fontSize: fs.xs, fontWeight: "600", color: (x.pnlUsdt ?? 0) >= 0 ? colors.up : colors.down }}>{(x.pnlUsdt ?? 0) >= 0 ? "+" : ""}{(x.pnlUsdt ?? 0).toFixed(2)} U</Text> : null}
-        {x.verdict ? <Tag text={verdictText[x.verdict]} tone={x.verdict === "right" ? "good" : x.verdict === "wrong" ? "bad" : "warn"} /> : null}
+        {pass ? <Tag text={pass.text} tone={pass.tone} /> : null}
+        {x.proposalId ? <Text style={{ fontSize: fs.xs, color: x.proposalStatus === "executed" ? colors.primary : x.proposalStatus === "expired" || x.proposalStatus === "rejected" ? colors.warn : colors.textFaint }}>提议 #{x.proposalId} {proposalText[x.proposalStatus ?? "pending"] ?? x.proposalStatus}</Text> : null}
+        {x.verdict ? <Tag text={`复盘：${verdictText[x.verdict]}`} tone={x.verdict === "right" ? "good" : x.verdict === "wrong" ? "bad" : "warn"} /> : x.outcomeAt ? <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>待复盘</Text> : null}
       </View>
       {open ? (
         <View style={{ gap: 4, paddingTop: 4, borderTopWidth: 1, borderColor: colors.border }}>
-          {x.entry || x.sl || x.tp ? <Text style={styles.note}>入场 {px(x.entry)} · 止损 {px(x.sl)} · 止盈 {px(x.tp)}</Text> : null}
+          <Text style={styles.note}>记录时价格 {px(x.px)}{!trade && (x.entry || x.sl || x.tp) ? ` · 设想入场 ${px(x.entry)} / 止损 ${px(x.sl)} / 止盈 ${px(x.tp)}` : ""}</Text>
           {x.invalidation ? <Text style={styles.note}>失效条件：{x.invalidation}</Text> : null}
           {x.mfe24h != null && x.mae24h != null ? <Text style={styles.note}>24 小时内最有利 {pctText(x.mfe24h)} · 最不利 {pctText(x.mae24h)}</Text> : null}
           <Text style={styles.note}>
@@ -381,7 +400,7 @@ function DecisionRow({ x, strategies }: { x: DeskDecision; strategies: DeskStrat
             {x.runId ? ` · 运行 #${x.runId}` : ""}
             {x.tags ? ` · ${x.tags}` : ""}
           </Text>
-          {x.review ? <Text selectable style={{ fontSize: fs.sm, lineHeight: 18, color: colors.text }}>复盘：{x.review}</Text> : x.outcomeAt ? <Text style={styles.note}>结果已出，等待 AI 复盘。</Text> : <Text style={styles.note}>结果跟踪中。</Text>}
+          {x.review ? <Text selectable style={{ fontSize: fs.sm, lineHeight: 18, color: colors.text }}>复盘：{x.review}</Text> : !x.outcomeAt ? <Text style={styles.note}>结果跟踪中。</Text> : null}
         </View>
       ) : null}
     </Pressable>
@@ -496,6 +515,21 @@ function Setup({ d }: { d: DeskOverview }) {
           <SetRow label="信号过期" desc="等待超过这个时间的信号直接丢弃"><NumInput width={96} decimal={false} unit="分钟" value={c.signals.staleMin} onChange={(v) => up((x) => { x.signals.staleMin = v; })} /></SetRow>
         </Box>
 
+        <H>运行方式</H>
+        <Box>
+          <SetRow label="模型">
+            <Segmented small fit value={c.model} onChange={(v) => up((x) => { x.model = v; })} options={[{ value: "", label: "默认" }, ...d.options.models.map((m) => ({ value: m, label: m.includes("opus") ? "Opus" : "Sonnet" }))]} />
+          </SetRow>
+          <SetRow label="思考强度">
+            <Segmented small fit value={c.effort} onChange={(v) => up((x) => { x.effort = v; })} options={[{ value: "", label: "默认" }, { value: "low", label: "低" }, { value: "medium", label: "中" }, { value: "high", label: "高" }]} />
+          </SetRow>
+          <SetRow label="每轮最多提议"><NumInput width={96} decimal={false} unit="笔" value={c.maxProposals} onChange={(v) => up((x) => { x.maxProposals = v; })} /></SetRow>
+          <SetRow label="上下文重启" desc={`会话超过这个大小（千 token，30–100），下一轮换一段新上下文，决策日志和记忆会带过去。越小每轮越省 · 现在 ${Math.round((d.status.contextTokens ?? 0) / 1000)}k`}><NumInput width={96} decimal={false} unit="k" value={c.sessionKTokens} onChange={(v) => up((x) => { x.sessionKTokens = v; })} /></SetRow>
+          <Text style={{ fontSize: fs.md, color: colors.text, marginTop: 4 }}>长期指示</Text>
+          <TextInput value={c.focus} onChangeText={(v) => up((x) => { x.focus = v; })} multiline maxLength={600} placeholder="每一轮都带给 AI 的话，例如：偏好顺势回踩，不做上线不满 7 天的币" placeholderTextColor={colors.textDim}
+            style={{ minHeight: 70, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised, color: colors.text, paddingHorizontal: 10, paddingVertical: 8, fontSize: 15, lineHeight: 20, textAlignVertical: "top" }} />
+        </Box>
+
         <H>策略扫描（全池）</H>
         {d.strategies.map((sv) => {
           const i = c.strategies.findIndex((x) => x.key === sv.key);
@@ -528,21 +562,6 @@ function Setup({ d }: { d: DeskOverview }) {
             </Box>
           );
         })}
-
-        <H>运行方式</H>
-        <Box>
-          <SetRow label="模型">
-            <Segmented small fit value={c.model} onChange={(v) => up((x) => { x.model = v; })} options={[{ value: "", label: "默认" }, ...d.options.models.map((m) => ({ value: m, label: m.includes("opus") ? "Opus" : "Sonnet" }))]} />
-          </SetRow>
-          <SetRow label="思考强度">
-            <Segmented small fit value={c.effort} onChange={(v) => up((x) => { x.effort = v; })} options={[{ value: "", label: "默认" }, { value: "low", label: "低" }, { value: "medium", label: "中" }, { value: "high", label: "高" }]} />
-          </SetRow>
-          <SetRow label="每轮最多提议"><NumInput width={96} decimal={false} unit="笔" value={c.maxProposals} onChange={(v) => up((x) => { x.maxProposals = v; })} /></SetRow>
-          <SetRow label="上下文重启" desc={`会话超过这个大小，下一轮就换一段新上下文（决策日志和记忆会带过去），30–150 · 现在 ${Math.round((d.status.contextTokens ?? 0) / 1000)}k`}><NumInput width={96} decimal={false} unit="千 token" value={c.sessionKTokens} onChange={(v) => up((x) => { x.sessionKTokens = v; })} /></SetRow>
-          <Text style={{ fontSize: fs.md, color: colors.text, marginTop: 4 }}>长期指示</Text>
-          <TextInput value={c.focus} onChangeText={(v) => up((x) => { x.focus = v; })} multiline maxLength={600} placeholder="每一轮都带给 AI 的话，例如：偏好顺势回踩，不做上线不满 7 天的币" placeholderTextColor={colors.textDim}
-            style={{ minHeight: 70, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised, color: colors.text, paddingHorizontal: 10, paddingVertical: 8, fontSize: 15, lineHeight: 20, textAlignVertical: "top" }} />
-        </Box>
       </ScrollView>
       {dirty ? (
         <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", gap: 10, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 26, borderTopWidth: 1, borderColor: colors.border, backgroundColor: "rgba(10,10,10,0.96)" }}>
