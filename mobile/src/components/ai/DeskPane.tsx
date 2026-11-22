@@ -6,13 +6,13 @@
 //   DeskPane   — 概览 / 决策 / 记忆 / 策略: status and record, the decision journal with what happened
 //                afterwards, the long-term memory, and the schedule, pacing and scans
 // Data: lib/desk.ts (server internal/autopilot).
-import { useEffect, useState, type ReactNode } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import { Animated, Easing, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, fs, radius } from "@/lib/theme";
 import { sym, time } from "@/lib/fmt";
 import { openChat } from "@/lib/ai";
-import { useQuery } from "@/lib/query";
+import { useAutoMore, useQuery } from "@/lib/query";
 import {
   actionText, clockAt, convictionText, deskApi, inText, memoryKindText, refreshDesk, runDeskNow, saveDesk, strategyText, triggerText,
   useDesk, verdictText, type DeskBucket, type DeskConfig, type DeskDecision, type DeskMemory, type DeskOverview, type DeskRun, type DeskStrategy,
@@ -315,22 +315,48 @@ function RunRow({ r }: { r: DeskRun }) {
 // ---------- journal ----------
 
 
+const JOURNAL_PAGE = 20;
+
 function Journal({ d }: { d: DeskOverview }) {
-  const { rev } = useDesk();
   const [filter, setFilter] = useState<"" | "trades" | "passes">("");
-  const q = useQuery(`desk:journal:${filter}`, () => deskApi.journal({ action: filter, limit: 100 }), { staleMs: 20_000 });
-  const refresh = q.refresh;
-  useEffect(() => { void refresh(); }, [rev, refresh]);
-  const list = q.data?.decisions;
   return (
-    <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 40, gap: 8 }} refreshControl={<Pull onRefresh={q.refresh} />}>
-      <View style={{ flexDirection: "row", gap: 8 }}>
+    <View style={{ flex: 1 }}>
+      <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingTop: 12 }}>
         <Chip label="全部" active={filter === ""} onPress={() => setFilter("")} />
         <Chip label="交易" active={filter === "trades"} onPress={() => setFilter("trades")} />
         <Chip label="观望 / 不做" active={filter === "passes"} onPress={() => setFilter("passes")} />
       </View>
+      {/* keyed: each filter has its own loaded pages */}
+      <JournalList key={filter} filter={filter} strategies={d.strategies} />
+    </View>
+  );
+}
+
+/** The newest page stays live (new decisions arrive on top); older pages load as the list is scrolled. */
+function JournalList({ filter, strategies }: { filter: string; strategies: DeskStrategy[] }) {
+  const { rev } = useDesk();
+  const q = useQuery(`desk:journal:${filter}`, () => deskApi.journal({ action: filter, limit: JOURNAL_PAGE }), { staleMs: 20_000 });
+  const refresh = q.refresh;
+  useEffect(() => { void refresh(); }, [rev, refresh]);
+  const [older, setOlder] = useState<DeskDecision[]>([]);
+  const [more, setMore] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const first = q.data?.decisions;
+  const seen = new Set(first?.map((x) => x.id));
+  const list = first ? [...first, ...older.filter((x) => !seen.has(x.id))] : undefined;
+  const last = list?.[list.length - 1]?.id;
+  const loadMore = () => {
+    if (more === "loading" || more === "done" || !last || (first?.length ?? 0) < JOURNAL_PAGE) return;
+    setMore("loading");
+    deskApi.journal({ action: filter, limit: JOURNAL_PAGE, before: last })
+      .then((r) => { setOlder((o) => [...o, ...r.decisions]); setMore(r.decisions.length < JOURNAL_PAGE ? "done" : "idle"); })
+      .catch(() => setMore("error"));
+  };
+  const auto = useAutoMore(() => { if (more === "idle") loadMore(); });
+  return (
+    <ScrollView {...auto} contentContainerStyle={{ padding: 12, paddingBottom: 40, gap: 8 }} refreshControl={<Pull onRefresh={q.refresh} />}>
       <Text style={styles.note}>「之后」是决策后 1 / 4 / 24 小时的涨跌，按决策方向计：正 = 方向对。没做的（观望 / 不做）正 = 错过，负 = 躲过。点开看价位、触发和复盘。</Text>
-      {!list ? (q.error ? <ErrorBox text={q.error} onRetry={() => void q.refresh()} /> : <Loading />) : !list.length ? <EmptyState icon="reader-outline" text="还没有决策记录" /> : list.map((x) => <DecisionRow key={x.id} x={x} strategies={d.strategies} />)}
+      {!list ? (q.error ? <ErrorBox text={q.error} onRetry={() => void q.refresh()} /> : <Loading />) : !list.length ? <EmptyState icon="reader-outline" text="还没有决策记录" /> : list.map((x) => <DecisionRow key={x.id} x={x} strategies={strategies} />)}
+      {more === "loading" ? <Loading /> : more === "error" ? <PillButton variant="soft" small label="加载失败，重试" onPress={loadMore} /> : null}
     </ScrollView>
   );
 }
@@ -356,7 +382,7 @@ function passOutcome(x: DeskDecision): { text: string; tone: "good" | "bad" } | 
 
 const TRADE = new Set(["open", "add", "reduce", "close", "adjust"]);
 
-function DecisionRow({ x, strategies }: { x: DeskDecision; strategies: DeskStrategy[] }) {
+const DecisionRow = memo(function DecisionRow({ x, strategies }: { x: DeskDecision; strategies: DeskStrategy[] }) {
   const [open, setOpen] = useState(false);
   const px = (v?: number) => (v ? String(v) : "—");
   const trade = TRADE.has(x.action);
@@ -405,7 +431,7 @@ function DecisionRow({ x, strategies }: { x: DeskDecision; strategies: DeskStrat
       ) : null}
     </Pressable>
   );
-}
+});
 
 // ---------- memory ----------
 

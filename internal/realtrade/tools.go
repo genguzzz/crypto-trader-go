@@ -104,11 +104,12 @@ func (s *Service) ProposeTool(ctx context.Context, chat int64, a map[string]stri
 	return out, nil
 }
 
-// ListTool is get_trade_proposals: recent proposals (or one AI position's), the mode and the caps.
+// ListTool is get_trade_proposals: recent proposals (or one coin's, or one AI position's) — the record
+// of every trade made through ctg — with the mode and the caps.
 func (s *Service) ListTool(_ context.Context, a map[string]string) (any, error) {
 	limit, _ := strconv.Atoi(a["limit"])
 	pos, _ := strconv.ParseInt(a["posId"], 10, 64)
-	ps, err := s.List(ListQuery{Status: a["status"], PosID: pos, Limit: limit})
+	ps, err := s.List(ListQuery{Status: a["status"], InstID: a["instId"], PosID: pos, Limit: limit})
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +146,7 @@ func (s *Service) ListTool(_ context.Context, a map[string]string) (any, error) 
 			r["position"] = map[string]any{"contracts": p.CurContracts, "avgPx": round(p.CurAvgPx, 8), "sl": p.CurSL, "tp": p.CurTP}
 		}
 		if p.ClosedAt > 0 {
-			r["closeKind"], r["pnlUsdt"] = p.CloseKind, round(p.PnlUSDT, 2)
+			r["closeKind"], r["pnlUsdt"], r["closed"] = p.CloseKind, round(p.PnlUSDT, 2), time.UnixMilli(p.ClosedAt).In(tz8).Format("01-02 15:04")
 		}
 		rows = append(rows, r)
 	}

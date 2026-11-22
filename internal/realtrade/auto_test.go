@@ -173,6 +173,11 @@ func TestLockedPosition(t *testing.T) {
 	if p, err := e.s.Propose(ctx, closeOf("SOL", "long")); err != nil || p.Status != StatusExecuted {
 		t.Fatalf("close of an unlocked position: %+v %v", p, err)
 	}
+	// one coin's trade record
+	one, _ := e.s.ListTool(ctx, map[string]string{"instId": "sol"})
+	if rows := one.(map[string]any)["proposals"].([]map[string]any); len(rows) != 1 || rows[0]["instId"] != "SOL-USDT-SWAP" {
+		t.Fatalf("proposals of one coin: %+v", rows)
+	}
 	// what the agent reads marks the lock, so it does not plan around that position
 	pos, err := e.s.PositionsTool(ctx, "")
 	raw, _ := json.Marshal(pos)

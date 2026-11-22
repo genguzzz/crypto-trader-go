@@ -298,6 +298,7 @@ func (s *Service) Get(id int64) (Proposal, error) {
 type ListQuery struct {
 	Status string
 	ChatID int64
+	InstID string
 	PosID  int64 // the AI position and every action on it
 	Limit  int
 }
@@ -316,6 +317,10 @@ func (s *Service) List(q ListQuery) ([]Proposal, error) {
 	if q.ChatID > 0 {
 		where = append(where, "chat_id=?")
 		args = append(args, q.ChatID)
+	}
+	if q.InstID != "" {
+		where = append(where, "inst_id=?")
+		args = append(args, NormalizeInst(q.InstID))
 	}
 	if q.PosID > 0 {
 		where = append(where, "(id=? OR pos_id=?)")

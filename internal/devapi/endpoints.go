@@ -513,9 +513,11 @@ func (s *Service) buildEndpoints(e *market.Engine, al *alerts.Service) []*Endpoi
 			Desc: "Proposals newest first: kind, status pending → executed (dryrun = recorded only) / failed / invalidated / rejected / expired; " +
 				"limit orders' ordState live / partially_filled / filled / canceled with filled and fillPx; posId = the AI position (its open's id) " +
 				"an action belongs to; an open AI position's current size, average and TP/SL (position); closeKind and pnlUsdt once it closed. " +
-				"Also mode and limits.",
+				"Also mode and limits. This is the record of every trade made through ctg: look past trades up here (instId for one coin) " +
+				"instead of keeping them in memory; okx_history has the account's closed positions, desk_recall the desk's decisions with reviews.",
 			Params: []Param{
 				{Name: "status", In: "query", Type: "string", Enum: []string{"all", "open", "pending", "executed"}, Default: "all"},
+				{Name: "instId", In: "query", Type: "string", Desc: "only this coin, e.g. BTC or BTC-USDT-SWAP"},
 				{Name: "posId", In: "query", Type: "integer", Desc: "only this AI position and the actions on it"},
 				limitParam(10, 50, "number of proposals"),
 			},

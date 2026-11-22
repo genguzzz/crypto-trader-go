@@ -343,8 +343,8 @@ def memory_server(emit: Emit, base: str = "", token: str = ""):
     @tool("memory_save", "Save one memory: a single self-contained sentence naming the specific thing (\"不做 meme 币和新上线的币\", "
           "not \"不做这类\"). kind: profile = a standing preference or rule, sent with every conversation (leverage, sizing, "
           "coins he avoids, timeframes; max 12 — merge rather than add); fact = something about him; position = a holding or "
-          "plan for one he keeps outside ctg; event = something that happened (a trade he made, a call that worked or failed, "
-          "his feedback on your analysis); plan = something to follow up (\"等 SOL 回踩 140 再看\", \"FOMC 后复盘\"). Only what he "
+          "plan for one he keeps outside ctg; event = something he tells you happened outside ctg, or his feedback on your "
+          "analysis — never a trade made here, its outcome or a post-mortem of it (the trade records hold those); plan = something to follow up (\"等 SOL 回踩 140 再看\", \"FOMC 后复盘\"). Only what he "
           "states or clearly confirms; never your own assumptions, defaults or placeholders. tags: 1-4 search words (coins, "
           "topics). A near-duplicate of the same kind is updated automatically; pass replaces=<id> to rewrite one.",
           {"type": "object", "properties": {"text": {"type": "string"}, "kind": {"type": "string", "enum": MEMORY_KINDS},
