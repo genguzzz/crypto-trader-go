@@ -17,17 +17,21 @@ import (
 //
 //	{"type":"pool", "scope":"pool"|"watch"|"list", "top":50, "instIds":[…], "exclude":[…],
 //	 "metric":"move",  "windowMin":15, "dir":"up"|"down"|"both", "pct":3}   change over the window ≥ pct %
-//	                   "xMove":5                                            … or ≥ 5 × the coin's own typical move (below)
+//	                   "atrX":2.5                                           … measured in the coin's own ATR instead (below)
 //	 "metric":"range", "windowMin":5, "pct":2}                              high–low swing in the window ≥ pct %
 //	 "metric":"field", "field":"funding_hourly", "op":">", "value":0.0005}  a fact-panel field crosses a value
 //	 "metric":"combo", "legs":[{"metric":"move",…},{"metric":"field",…}]}   2–4 of the above, all true for the same coin
 //
 // move: last price (or the newest confirmed close) against the close windowMin minutes earlier, so
 // windowMin 1 is the minute-to-minute move. range: (highest high / lowest low − 1) over the window's 1m
-// bars. xMove makes move relative to each coin: a fixed 3 % is an ordinary quarter of an hour for a small
-// coin and almost never happens to BTC, so with xMove the threshold of a coin is
-// min(pct, max(0.5 %, xMove × its typical move)), the typical move being the median absolute change
-// over the non-overlapping windows of the last 24 h (unknown with fewer than 12 of them: pct alone).
+// bars. atrX makes move relative to each coin: a fixed 3 % is an ordinary quarter of an hour for a wild
+// small coin and almost never happens to BTC, so one percentage is silent on some coins and noise on
+// others. With atrX a coin's threshold is max(0.5 %, atrX × ATR), the ATR being the average true range
+// (high − low including the gap from the previous close, in percent) of its last 28 bars of windowMin
+// minutes that end where the window starts — the move itself is not in its own yardstick. With fewer
+// than 21 of those bars (a new listing, gaps) pct applies. On five days of the 60 most traded pool
+// coins (2026-11), 15 min × 2.5 gave every coin 2–4 fires a day (fixed 3 %: none for BTC, 18 for the
+// wildest, 7 coins silent) and caught 87 % of each coin's largest hours.
 // Members are re-read on every check (the active pool changes); a member checked for the first
 // time — at subscribe, after joining the scope, or after a restart — only records its state, so coins
 // already beyond the threshold never fire until they first fall back. A member fires on its own
@@ -50,11 +54,12 @@ const (
 	poolDefaultFire = 10
 	poolMaxHits     = 10 // hits written into one delivery (the rest are counted)
 	poolStaleMs     = 3 * 60_000
-	// xMove: the longest window it works with (12 windows fit into the 24 h it looks back on), the
-	// windows it needs, and the smallest move it fires on (a dead coin's typical move is next to nothing)
-	xMoveMaxWindow = 120
-	xMoveMinN      = 12
-	xMoveFloorPct  = 0.5
+	// atrX: the bars the ATR averages and needs at least, the longest window whose bars fit into the
+	// 1m history kept in memory, and the smallest move it fires on (a dead coin's ATR is next to nothing)
+	atrBars      = 28
+	atrMinBars   = 21
+	atrMaxWindow = 45
+	atrFloorPct  = 0.5
 )
 
 var poolMetrics = map[string]bool{"move": true, "range": true, "field": true, "combo": true}
@@ -171,18 +176,18 @@ func (s *Spec) normalizeMetric() error {
 		default:
 			return errors.New("pool: dir must be up, down or both")
 		}
-		if s.XMove != 0 && (s.XMove < 2 || s.XMove > 20 || s.WindowMin > xMoveMaxWindow) {
-			return fmt.Errorf("pool: xMove is a multiple of the coin's typical move, 2–20, with windowMin ≤ %d", xMoveMaxWindow)
+		if s.ATRX != 0 && (s.ATRX < 1 || s.ATRX > 10 || s.WindowMin > atrMaxWindow) {
+			return fmt.Errorf("pool: atrX is a multiple of the coin's ATR, 1–10, with windowMin ≤ %d", atrMaxWindow)
 		}
 	case "range":
 		if err := window(); err != nil {
 			return err
 		}
-		if s.Dir != "" || s.XMove != 0 {
-			return errors.New("pool: range has no dir or xMove (a swing either way); use metric move for those")
+		if s.Dir != "" || s.ATRX != 0 {
+			return errors.New("pool: range has no dir or atrX (a swing either way); use metric move for those")
 		}
 	case "field":
-		if s.WindowMin != 0 || s.Pct != 0 || s.Dir != "" || s.XMove != 0 {
+		if s.WindowMin != 0 || s.Pct != 0 || s.Dir != "" || s.ATRX != 0 {
 			return errors.New("pool: metric field takes field, op and value (no windowMin / pct / dir)")
 		}
 		f, ok := features.Lookup(s.Field)
@@ -273,11 +278,10 @@ func (s Spec) describePool() string {
 func (s Spec) metricText() string {
 	switch s.Metric {
 	case "move":
-		t := fmt.Sprintf("%s内%s ≥ %g%%", windowText(s.WindowMin), dirText[s.Dir], s.Pct)
-		if s.XMove > 0 {
-			t += fmt.Sprintf(" 或 ≥ 自身常态波动的 %g 倍", s.XMove)
+		if s.ATRX > 0 {
+			return fmt.Sprintf("%s内%s ≥ 自身 ATR 的 %g 倍", windowText(s.WindowMin), dirText[s.Dir], s.ATRX)
 		}
-		return t
+		return fmt.Sprintf("%s内%s ≥ %g%%", windowText(s.WindowMin), dirText[s.Dir], s.Pct)
 	case "range":
 		return fmt.Sprintf("%s内振幅 ≥ %g%%", windowText(s.WindowMin), s.Pct)
 	case "field":
@@ -388,12 +392,11 @@ func (s Spec) read(src Sources, inst string, ev event, now time.Time) reading {
 		}
 		r.val = (px/bars[i].C - 1) * 100
 		r.known = true
-		// the coin's own threshold: pct, or less when the move is large for this coin. The typical move
-		// is only looked up for a move that could fire on it (it reads a day of bars).
-		need, typical := s.Pct, 0.0
-		if s.XMove > 0 && math.Abs(r.val) >= xMoveFloorPct && math.Abs(r.val) < s.Pct {
-			if t, ok := typicalMove(ps.Recent1m(inst, 1440+s.WindowMin+3), refT, s.WindowMin); ok {
-				typical, need = t, min(s.Pct, max(xMoveFloorPct, s.XMove*t))
+		// the coin's own threshold. The ATR is only looked up for a move that could fire on it.
+		need, atr := s.Pct, 0.0
+		if s.ATRX > 0 && math.Abs(r.val) >= atrFloorPct {
+			if v, ok := atrPct(ps.Recent1m(inst, (atrBars+1)*s.WindowMin+3), refT, s.WindowMin); ok {
+				atr, need = v, max(atrFloorPct, s.ATRX*v)
 			}
 		}
 		switch s.Dir {
@@ -405,8 +408,8 @@ func (s Spec) read(src Sources, inst string, ev event, now time.Time) reading {
 			r.hit = math.Abs(r.val) >= need
 		}
 		r.text = fmt.Sprintf("%s %s内 %+.2f%%（%s → %s）", coin(inst), windowText(s.WindowMin), r.val, fmtPx(bars[i].C), fmtPx(px))
-		if r.hit && typical > 0 && math.Abs(r.val) < s.Pct {
-			r.text += fmt.Sprintf("，是它常态 %.2f%% 的 %.1f 倍", typical, math.Abs(r.val)/typical)
+		if r.hit && atr > 0 {
+			r.text += fmt.Sprintf("，是它 ATR %.2f%% 的 %.1f 倍", atr, math.Abs(r.val)/atr)
 		}
 	case "range":
 		hi, lo := 0.0, math.Inf(1)
@@ -521,26 +524,42 @@ func (p *poolState) scan(s Spec, src Sources, ev event, now time.Time, cooldown 
 }
 
 // closeness orders readings of one measurement by how far they are towards its threshold.
-// typicalMove is a coin's ordinary change over a window: the median absolute close-to-close change,
-// in percent, over the non-overlapping windows that end at or before end (ms, a bar's open time) in
-// bars — a day of 1m bars. False with fewer than xMoveMinN complete windows (a new listing, gaps).
-func typicalMove(bars []Bar, end int64, windowMin int) (float64, bool) {
-	closes := make(map[int64]float64, len(bars))
+// atrPct is a coin's average true range over bars of windowMin minutes, in percent of each bar's
+// previous close: the mean over the last atrBars such bars that end at end, end − window, … (ms, the
+// open time of a bar's last minute), built from 1m bars. A bar's true range is its highest high and
+// lowest low widened to the close before it. Bars with a missing minute are left out; false with
+// fewer than atrMinBars.
+func atrPct(bars []Bar, end int64, windowMin int) (float64, bool) {
+	at := make(map[int64]Bar, len(bars))
 	for _, b := range bars {
-		closes[b.T] = b.C
+		at[b.T] = b
 	}
 	w := int64(windowMin) * 60_000
-	var moves []float64
-	for t := end; t-w >= end-24*3600_000; t -= w {
-		if a, b := closes[t], closes[t-w]; a > 0 && b > 0 {
-			moves = append(moves, math.Abs(a/b-1)*100)
+	sum, n := 0.0, 0
+	for k := int64(0); k < atrBars; k++ {
+		last := end - k*w // the bar's last minute; the close before it is at last − w
+		prev, ok := at[last-w]
+		if !ok || !(prev.C > 0) {
+			continue
+		}
+		hi, lo, whole := prev.C, prev.C, true
+		for t := last - w + 60_000; t <= last; t += 60_000 {
+			b, ok := at[t]
+			if !ok {
+				whole = false
+				break
+			}
+			hi, lo = max(hi, b.H), min(lo, b.L)
+		}
+		if whole {
+			sum += (hi - lo) / prev.C * 100
+			n++
 		}
 	}
-	if len(moves) < xMoveMinN {
+	if n < atrMinBars {
 		return 0, false
 	}
-	sort.Float64s(moves)
-	return moves[len(moves)/2], true
+	return sum / float64(n), true
 }
 
 func (s Spec) closeness(v float64) float64 {

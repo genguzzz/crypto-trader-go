@@ -83,7 +83,7 @@ func Catalog() []TypeInfo {
 				{Name: "windowMin", Type: "integer", Desc: "move / range: 1–1440 minutes"},
 				{Name: "dir", Type: "string", Enum: []string{"up", "down", "both"}, Desc: "move only, default both"},
 				{Name: "pct", Type: "number", Desc: "move / range threshold in percent"},
-				{Name: "xMove", Type: "number", Desc: "move, windowMin ≤ 120: also fire at this multiple (2–20) of the coin's own typical move over the window (median of the last 24 h), at least 0.5 % — a calm coin (BTC, ETH) fires on a move that is large for it, long before pct"},
+				{Name: "atrX", Type: "number", Desc: "move, windowMin ≤ 45: fire at this multiple (1–10, typically 2–3) of the coin's own ATR — the average true range of its last 28 bars of windowMin minutes — instead of pct, at least 0.5 %; the same setting then suits BTC and a wild small coin. pct is still required: it is used while a coin has too little history"},
 				{Name: "field", Type: "string", Enum: fields, Desc: "metric field"}, {Name: "op", Type: "string", Enum: []string{">", ">=", "<", "<="}},
 				{Name: "value", Type: "number", Desc: "metric field"}},
 			Example: `{"type":"pool","scope":"pool","top":50,"metric":"move","windowMin":15,"dir":"up","pct":3}`},

@@ -132,16 +132,16 @@ var (
 // vol_surprise_4h is the log of the multiple of the 7-day median, funding_hourly is the rate per hour.
 var Strategies = []StrategyDef{
 	{Key: "surge", Label: "急涨急跌", On: true,
-		Desc: "池内任一币在短窗口内涨跌超过固定幅度，或超过它自己常态波动（近 24 小时同窗口涨跌的中位数）的若干倍——BTC、ETH 这类平时波动小的币也能触发；倍数填 0 = 只按固定幅度",
+		Desc: "池内任一币在短窗口内的涨跌达到它自己 ATR（最近 28 根同窗口 K 线的平均真实波幅）的若干倍：BTC、ETH 和波动大的山寨币用同一把尺子。倍数越小越灵敏；填 0 改用固定涨跌幅",
 		Hint: "先分清是延续还是一次性插针：看成交量、OI 是否跟随，大盘是否同向",
-		Params: []ParamDef{pTop, {Key: "windowMin", Label: "窗口", Unit: "分钟", Def: 15, Min: 3, Max: 120, Step: 1},
-			{Key: "pct", Label: "涨跌幅", Unit: "%", Def: 3, Min: 1, Max: 20, Step: 0.5},
-			// majors never move pct in a quarter of an hour: a move that is large for the coin itself counts too
-			{Key: "xMove", Label: "自身波动倍数", Unit: "倍", Def: 8, Min: 0, Max: 20, Step: 1}, pCooldown},
+		Params: []ParamDef{pTop, {Key: "windowMin", Label: "窗口", Unit: "分钟", Def: 15, Min: 3, Max: 45, Step: 1},
+			// 2.5 × ATR on 15 minutes: every coin 2–4 fires a day, 87 % of its largest hours (signals/pool.go)
+			{Key: "atrX", Label: "ATR 倍数", Unit: "倍", Def: 2.5, Min: 0, Max: 10, Step: 0.5},
+			{Key: "pct", Label: "固定涨跌幅（ATR 倍数为 0 或新币时用）", Unit: "%", Def: 3, Min: 1, Max: 20, Step: 0.5}, pCooldown},
 		build: func(p map[string]float64) []scanDef {
 			spec := signals.Spec{Type: "pool", Scope: "pool", Top: int(p["top"]), Metric: "move", WindowMin: int(p["windowMin"]), Dir: "both", Pct: p["pct"]}
-			if p["xMove"] >= 2 { // below 2 (0 in the app) = off: the fixed percentage alone
-				spec.XMove = p["xMove"]
+			if p["atrX"] >= 1 { // below 1 (0 in the app) = off: the fixed percentage
+				spec.ATRX = p["atrX"]
 			}
 			return []scanDef{{spec: spec, cooldown: int(p["cooldownMin"])}}
 		}},
