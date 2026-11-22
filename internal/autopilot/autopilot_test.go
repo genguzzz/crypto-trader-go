@@ -322,7 +322,7 @@ func TestDefaultsAndValidation(t *testing.T) {
 			t.Fatalf("strategy %s: %+v", sc.Key, sc)
 		}
 		for _, sd := range d.build(sc.Params) { // every built-in scan is a valid pool spec shape
-			if sd.spec.Type != "pool" || sd.cooldown < 30 {
+			if sd.spec.Type != "pool" || sd.cooldown < 10 {
 				t.Fatalf("%s builds %+v", sc.Key, sd)
 			}
 		}

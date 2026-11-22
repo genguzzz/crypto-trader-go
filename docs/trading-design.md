@@ -325,11 +325,11 @@ owner: "run now", or simply writing in the chat ──────────�
 
 | key | fires when a coin of the pool's top N … | default |
 |---|---|---|
-| `surge` 急涨急跌 | moves ≥ pct % either way within windowMin | top 60, 15 min, 3 %, cooldown 120 min |
+| `surge` 急涨急跌 | moves ≥ pct % either way within windowMin | top 60, 15 min, 3 %, cooldown 30 min (10–1440) |
 | `momo_up` 放量上攻 | rises ≥ pct % in 1 h **and** volume ≥ volX × the 7-day median **and** OI +oiPct % in 1 h | 4 %, 2×, 2 % |
 | `flush_down` 放量下杀去杠杆 | falls ≥ pct % in 1 h **and** volume ≥ volX × **and** OI −oiPct % in 1 h | 4 %, 2×, 2 % |
 | `oi_build` 持仓激增 | OI +oiPct % in 1 h **and** a 1 h range ≥ rangePct % | 6 %, 2 % |
-| `funding_extreme` 资金费极端 | funding per hour ≥ ratePct % or ≤ −ratePct % (two scans) | top 100, 0.03 %/h, cooldown 480 min |
+| `funding_extreme` 资金费极端 | funding per hour ≥ ratePct % or ≤ −ratePct % (two scans) | top 100, 0.03 %/h, cooldown 120 min |
 
 `Custom` (≤ 8) are pool specs the owner writes himself. The new pool metric `combo` is what makes "several of my indicators at once" one signal: `{"type":"pool","metric":"combo","legs":[{"metric":"move",…},{"metric":"field",…}]}` — 2–4 legs of move / range / field that must all be true for the same coin; unknown if any leg is unknown; the first leg's value ranks the hits; replayable when no leg reads a field. `reconcile` keeps the subscriptions equal to the configuration (a hash of spec + cooldown per key in `desk_strategy_subs`): a changed parameter replaces that scan only; a scan that cannot start (no pool data yet, an invalid custom spec) is reported on its strategy and retried each minute.
 

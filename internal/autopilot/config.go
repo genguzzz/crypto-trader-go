@@ -125,7 +125,7 @@ func fp(v float64) *float64 { return &v }
 
 var (
 	pTop      = ParamDef{Key: "top", Label: "监控池前 N", Unit: "名", Def: 60, Min: 10, Max: 200, Step: 10}
-	pCooldown = ParamDef{Key: "cooldownMin", Label: "同一币冷却", Unit: "分钟", Def: 120, Min: 30, Max: 1440, Step: 30}
+	pCooldown = ParamDef{Key: "cooldownMin", Label: "同一币冷却", Unit: "分钟", Def: 30, Min: 10, Max: 1440, Step: 5}
 )
 
 // Strategies are the built-in scans. Field units: returns and OI change are log changes (×100 ≈ %),
@@ -182,7 +182,7 @@ var Strategies = []StrategyDef{
 		Hint: "拥挤一侧付费：结算前后容易出现挤压或回吐；结合价格位置判断是顺势持有成本还是反向机会",
 		Params: []ParamDef{{Key: "top", Label: "监控池前 N", Unit: "名", Def: 100, Min: 10, Max: 200, Step: 10},
 			{Key: "ratePct", Label: "每小时费率", Unit: "%", Def: 0.03, Min: 0.005, Max: 0.5, Step: 0.005},
-			{Key: "cooldownMin", Label: "同一币冷却", Unit: "分钟", Def: 480, Min: 60, Max: 1440, Step: 60}},
+			{Key: "cooldownMin", Label: "同一币冷却", Unit: "分钟", Def: 120, Min: 10, Max: 1440, Step: 10}},
 		build: func(p map[string]float64) []scanDef {
 			r := round6(p["ratePct"] / 100)
 			return []scanDef{
@@ -369,10 +369,10 @@ func (c Config) normalize() (Config, error) {
 			return c, fmt.Errorf("%s: a desk strategy is a pool scan ({\"type\":\"pool\", …})", x.Label)
 		}
 		if x.CooldownMin == 0 {
-			x.CooldownMin = 120
+			x.CooldownMin = 30
 		}
-		if x.CooldownMin < 30 || x.CooldownMin > 1440 {
-			return c, fmt.Errorf("%s: cooldownMin must be between 30 and 1440", x.Label)
+		if x.CooldownMin < 10 || x.CooldownMin > 1440 {
+			return c, fmt.Errorf("%s: cooldownMin must be between 10 and 1440", x.Label)
 		}
 	}
 	if c.Custom == nil {
