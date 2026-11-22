@@ -152,6 +152,13 @@ func New(st *store.Store, opts Options) (*Gate, error) {
 			return nil, fmt.Errorf("aigate schema: %w", err)
 		}
 	}
+	var hasCtx int // the size of the chat's agent session, for the desk's session reset
+	st.DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_chats') WHERE name='ctx_tokens'`).Scan(&hasCtx)
+	if hasCtx == 0 {
+		if _, err := st.DB.Exec(`ALTER TABLE ai_chats ADD COLUMN ctx_tokens INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return nil, fmt.Errorf("aigate schema: %w", err)
+		}
+	}
 	// columns added after the table existed
 	var hasUsage int
 	st.DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ai_chat_msgs') WHERE name='usage'`).Scan(&hasUsage)

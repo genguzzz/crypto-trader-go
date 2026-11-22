@@ -81,8 +81,8 @@ func (alertKind) Match(d TriggerDef, sig Signal) bool {
 	return slices.Contains(d.RuleIDs, id)
 }
 
-// promptFooter is appended to every signal prompt: the run is unattended and can only propose.
-const promptFooter = "\n\n（这是自动触发的信号会话，主人此刻不一定在看。你只能用 propose_trade 提交待主人审核的提议，不能下单；" +
+// promptFooter is appended to every signal prompt: the run is unattended and acts only through proposals.
+const promptFooter = "\n\n（这是自动触发的信号会话，主人此刻不一定在看。你只能通过 propose_trade 行动：默认每笔都要主人审核后才执行，主人开启了免确认时会直接执行——以工具返回的 status 为准；" +
 	"把握不够就不要提议，直接说明理由（按主人的风险风格判断：位置好、有中等把握即可）。最多提议一笔。）"
 
 var defaultTriggers = []TriggerDef{

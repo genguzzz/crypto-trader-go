@@ -2,12 +2,45 @@ package realtrade
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
+
+	"crypto-trader-go/internal/okxacct"
 )
 
-// ProposeTool is the agent's propose_trade (devapi, owner key only): it creates a pending proposal
-// linked to the agent's chat and returns what the owner will be asked to approve.
+// PositionsTool is the agent's get_positions: the owner's open OKX positions (inst "" = all), each
+// marked when he locked it, so the agent leaves it out of its plans instead of being refused later.
+func (s *Service) PositionsTool(ctx context.Context, inst string) (any, error) {
+	a := s.account()
+	if a == nil {
+		return nil, errors.New("OKX account not configured")
+	}
+	snap, err := a.Snapshot(ctx, inst)
+	if err != nil {
+		return nil, err
+	}
+	type position struct {
+		okxacct.Position
+		Locked bool `json:"locked,omitempty"`
+	}
+	out := struct {
+		okxacct.Snapshot
+		Positions []position `json:"positions"`
+		Note      string     `json:"note,omitempty"`
+	}{Snapshot: snap, Positions: make([]position, len(snap.Positions))}
+	for i, p := range snap.Positions {
+		out.Positions[i] = position{Position: p, Locked: s.Locked(p.InstID, p.Side)}
+		if out.Positions[i].Locked {
+			out.Note = "locked: true = the owner locked that position. Do not propose anything on it (it would be refused); you may still report on it."
+		}
+	}
+	return out, nil
+}
+
+// ProposeTool is the agent's propose_trade (devapi, owner key only): it creates a proposal linked to
+// the agent's chat and returns what the owner will be asked to approve — or, with hands-free
+// execution on, what was done with it.
 func (s *Service) ProposeTool(ctx context.Context, chat int64, a map[string]string) (any, error) {
 	f := func(k string) float64 { v, _ := strconv.ParseFloat(a[k], 64); return v }
 	lev, _ := strconv.Atoi(a["leverage"])
@@ -21,8 +54,13 @@ func (s *Service) ProposeTool(ctx context.Context, chat int64, a map[string]stri
 	}
 	note := "Waiting for the owner's approval; nothing has been sent. Tell him it is pending (#id, valid until) — never that it was placed. " +
 		"When he approves (and it runs), rejects it, or it expires unanswered, this conversation gets a message with the outcome (fill and position, or the refusal) — you do not need to poll or wait."
+	if p.Via == ByAuto {
+		note = "The owner switched on hands-free execution: this proposal was not shown to him for approval, it was re-validated and run at once. " +
+			"`status` is the outcome: executed (sent; a limit order now rests), failed (OKX refused — see `error`, do not retry blindly) or invalidated (a check failed, nothing sent — see `error`). " +
+			"This conversation also gets a message with the fill and the position; report what happened, never that it waits for approval."
+	}
 	if s.Mode() != "live" {
-		note += " Dry run: even if approved, it is only recorded and simulated, not sent."
+		note += " Dry run: it is only recorded and simulated, not sent."
 	}
 	out := map[string]any{"proposalId": p.ID, "status": p.Status, "mode": p.Mode, "kind": p.Kind, "instId": p.InstID, "side": p.Side,
 		"orderType": p.OrdType, "marginMode": p.MarginMode, "contracts": p.Contracts, "refPx": p.RefPx,
@@ -59,6 +97,9 @@ func (s *Service) ProposeTool(ctx context.Context, chat int64, a map[string]stri
 	}
 	if p.Note != "" {
 		out["warning"] = p.Note
+	}
+	if p.Via == ByAuto && p.Error != "" {
+		out["error"] = p.Error
 	}
 	return out, nil
 }
@@ -108,7 +149,7 @@ func (s *Service) ListTool(_ context.Context, a map[string]string) (any, error) 
 		}
 		rows = append(rows, r)
 	}
-	return map[string]any{"mode": s.Mode(), "limits": s.opts.Limits, "proposals": rows}, nil
+	return map[string]any{"mode": s.Mode(), "limits": s.opts.Limits, "handsFree": s.Auto().Enabled, "locked": s.Locks(), "proposals": rows}, nil
 }
 
 func round(v float64, d int) float64 {

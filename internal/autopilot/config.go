@@ -30,9 +30,12 @@ type Config struct {
 	// Model / Effort of the desk's runs ("" = the configured ones).
 	Model  string `json:"model"`
 	Effort string `json:"effort"`
-	// SessionRuns: after this many runs the agent's session starts fresh (the journal and memory carry
-	// what matters); 0 = never. Bounds the context a never-ending chat pays for on every run.
-	SessionRuns int `json:"sessionRuns"`
+	// SessionKTokens: a run that finds the agent's session at or above this size (thousand tokens, as
+	// the last turn reported; 30–150) starts a fresh one — the journal and memory carry what matters.
+	// It bounds what a never-ending chat re-reads on every call and keeps it below the CLI's own
+	// compaction (a summarising call that loses detail). Runs differ a lot in size, so the size is
+	// measured, not guessed from a number of runs.
+	SessionKTokens int `json:"sessionKTokens"`
 	// MaxProposals a single run may make.
 	MaxProposals int `json:"maxProposals"`
 	// Focus is the owner's standing instruction, carried in every brief (≤ 600 characters).
@@ -204,8 +207,8 @@ func strategyDef(key string) (StrategyDef, bool) {
 // scans at their defaults.
 func DefaultConfig() Config {
 	c := Config{Schedule: ScheduleConfig{Enabled: true, EveryHours: 2, LeadMin: 10},
-		Signals:     SignalConfig{Enabled: true, MinGapMin: 20, MaxRunsDay: 10, BatchSec: 90, StaleMin: 120},
-		SessionRuns: 12, MaxProposals: 2}
+		Signals:      SignalConfig{Enabled: true, MinGapMin: 20, MaxRunsDay: 10, BatchSec: 90, StaleMin: 120},
+		MaxProposals: 2}
 	c, _ = c.normalize()
 	return c
 }
@@ -264,14 +267,12 @@ func (c Config) normalize() (Config, error) {
 		return nil
 	}
 	if err := errors.Join(def(&c.Signals.MinGapMin, 20, 5, 240, "signals.minGapMin"), def(&c.Signals.BatchSec, 90, 10, 600, "signals.batchSec"),
-		def(&c.Signals.StaleMin, 120, 15, 720, "signals.staleMin"), def(&c.MaxProposals, 2, 1, 5, "maxProposals")); err != nil {
+		def(&c.Signals.StaleMin, 120, 15, 720, "signals.staleMin"), def(&c.MaxProposals, 2, 1, 5, "maxProposals"),
+		def(&c.SessionKTokens, 100, 30, 150, "sessionKTokens")); err != nil {
 		return c, err
 	}
 	if c.Signals.MaxRunsDay < 0 || c.Signals.MaxRunsDay > 48 {
 		return c, errors.New("signals.maxRunsDay must be between 0 and 48")
-	}
-	if c.SessionRuns < 0 || c.SessionRuns > 200 {
-		return c, errors.New("sessionRuns must be between 0 and 200")
 	}
 	if c.Model != "" && !slices.Contains(aigate.ChatModels, c.Model) {
 		return c, errors.New("unknown model")

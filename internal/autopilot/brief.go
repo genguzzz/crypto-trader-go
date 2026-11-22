@@ -125,6 +125,10 @@ func (s *Service) brief(cfg Config, in briefInput) string {
 			b.WriteString(" · 交易模式：实盘")
 		}
 	}
+	handsFree := s.opts.HandsFree != nil && s.opts.HandsFree()
+	if handsFree {
+		b.WriteString(" · 免确认：开（提议会直接执行）")
+	}
 	b.WriteString("\n")
 	if in.NewSession {
 		b.WriteString("（这是一段新的上下文：之前的对话不在你的记忆里，以下面的决策日志和长期记忆为准；需要细节用 desk_recall 或 read_chat。）\n")
@@ -240,6 +244,11 @@ func (s *Service) brief(cfg Config, in briefInput) string {
 	b.Reset()
 	fmt.Fprintf(&b, "\n【预算】过去 24 小时信号运行 %d/%d 次（含本轮）；本轮最多 %d 笔提议。\n", s.signalRuns(now), cfg.Signals.MaxRunsDay, cfg.MaxProposals)
 
+	approval, footer := "主人批准后才执行", "你不能下单，只能提交待审核的提议。"
+	if handsFree {
+		approval = "主人开启了免确认：通过校验就立刻执行，没有人替你把关"
+		footer = "免确认已开启：你的提议会直接成交，把握不够、盈亏比不够就不要提。"
+	}
 	b.WriteString("\n【这一轮要做的】\n")
 	switch {
 	case len(in.Items) > 0 && in.Trigger != TriggerSchedule:
@@ -251,11 +260,11 @@ func (s *Service) brief(cfg Config, in briefInput) string {
 	}
 	b.WriteString("2. 每个认真看过的币都用 desk_journal 记一笔决策（open / add / reduce / close / adjust / hold / watch / skip），写清方向、把握、" +
 		"一句话理由、关键价位和失效条件——包括决定不做的，这是以后复盘的依据。\n" +
-		"3. 要交易只能 propose_trade（主人批准后才执行），并把 proposalId 写进那笔 desk_journal。" + proposeRule(cfg.Risk) + "\n" +
-		"   已有仓位和挂单同样要管：改止盈止损用 adjust，减仓 / 平仓用 reduce / close，撤掉或修改自己的限价挂单用 cancel / amend——都通过 propose_trade 交给主人批准（他在手表上确认）；该动就提，不要只在文字里建议。\n" +
+		"3. 要交易只能 propose_trade（" + approval + "），并把 proposalId 写进那笔 desk_journal。" + proposeRule(cfg.Risk) + "\n" +
+		"   已有仓位和挂单同样要管：改止盈止损用 adjust，减仓 / 平仓用 reduce / close，撤掉或修改自己的限价挂单用 cancel / amend——都通过 propose_trade；该动就提，不要只在文字里建议。带 🔒 的是主人锁定的仓位，不要对它提议任何操作。\n" +
 		"4. 还差一步的用 subscribe_signal 盯具体条件；【待复盘】里的用 desk_review 写结论；能复用的经验用 desk_remember 存成长期记忆（每轮都会带给你，宁少勿滥）。\n" +
 		"5. 回答从简：先一句结论，再每个币一两行。\n" +
-		"（这是自动触发的交易台运行，主人此刻不一定在看。你不能下单，只能提交待审核的提议。）")
+		"（这是自动触发的交易台运行，主人此刻不一定在看。" + footer + "）")
 	tail := b.String()
 	return clip(body.String(), briefMax-len([]rune(tail))) + tail
 }

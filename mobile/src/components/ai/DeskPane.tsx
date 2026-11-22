@@ -538,7 +538,7 @@ function Setup({ d }: { d: DeskOverview }) {
             <Segmented small fit value={c.effort} onChange={(v) => up((x) => { x.effort = v; })} options={[{ value: "", label: "默认" }, { value: "low", label: "低" }, { value: "medium", label: "中" }, { value: "high", label: "高" }]} />
           </SetRow>
           <SetRow label="每轮最多提议"><NumInput width={96} decimal={false} unit="笔" value={c.maxProposals} onChange={(v) => up((x) => { x.maxProposals = v; })} /></SetRow>
-          <SetRow label="上下文重启" desc="每运行这么多轮换一段新上下文（决策日志和记忆会带过去），0 = 不重启"><NumInput width={96} decimal={false} unit="轮" value={c.sessionRuns} onChange={(v) => up((x) => { x.sessionRuns = v; })} /></SetRow>
+          <SetRow label="上下文重启" desc={`会话超过这个大小，下一轮就换一段新上下文（决策日志和记忆会带过去），30–150 · 现在 ${Math.round((d.status.contextTokens ?? 0) / 1000)}k`}><NumInput width={96} decimal={false} unit="千 token" value={c.sessionKTokens} onChange={(v) => up((x) => { x.sessionKTokens = v; })} /></SetRow>
           <Text style={{ fontSize: fs.md, color: colors.text, marginTop: 4 }}>长期指示</Text>
           <TextInput value={c.focus} onChangeText={(v) => up((x) => { x.focus = v; })} multiline maxLength={600} placeholder="每一轮都带给 AI 的话，例如：偏好顺势回踩，不做上线不满 7 天的币" placeholderTextColor={colors.textDim}
             style={{ minHeight: 70, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.raised, color: colors.text, paddingHorizontal: 10, paddingVertical: 8, fontSize: 15, lineHeight: 20, textAlignVertical: "top" }} />

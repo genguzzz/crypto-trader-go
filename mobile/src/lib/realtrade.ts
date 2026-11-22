@@ -60,7 +60,12 @@ export interface RtConfig {
   limits: { minLeverage?: number; maxLeverage: number; minMarginUsdt?: number; maxMarginUsdt: number; maxOpen: number; dailyLossUsdt: number; maxDriftPct: number; minRR: number; expiryMin: number; maxAdds?: number; limitMaxMin?: number };
   telegram: { enabled: boolean; state: string; bot?: string; lastError?: string };
   triggers: RtTrigger[] | null;
+  /** hands-free execution: proposals run without the owner's approval (bound to the mode it was switched on in) */
+  auto: { enabled: boolean; mode?: RtMode; since?: number };
+  /** positions the agent may not act on */
+  locks: RtLock[] | null;
 }
+export interface RtLock { instId: string; side: "long" | "short"; ts: number }
 interface ProposalList { proposals: Proposal[] | null; now: number; mode: RtMode }
 
 const STATUS: Record<ProposalStatus, string> = {
@@ -93,6 +98,9 @@ export const rtApi = {
   approve: (id: number) => req<Proposal>(`${base}/proposals/${id}/approve`, { method: "POST", body: { confirm: true, via: "app" } }),
   reject: (id: number) => req<Proposal>(`${base}/proposals/${id}/reject`, { method: "POST", body: { via: "app" } }),
   config: () => req<RtConfig>(`${base}/config`, quiet),
+  /** Both answer with the new config. */
+  setAuto: (enabled: boolean) => req<RtConfig>(`${base}/auto`, { method: "PUT", body: { enabled, confirm: enabled } }),
+  setLock: (instId: string, side: "long" | "short", locked: boolean) => req<RtConfig>(`${base}/locks`, { method: "PUT", body: { instId, side, locked } }),
 };
 
 // ---------- store ----------

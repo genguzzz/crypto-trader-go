@@ -33,7 +33,7 @@ export interface TradeProposal {
   expiresAt: number
   status: RtStatus
   mode: RtMode; statusAt: number; error?: string
-  by?: string; via?: string // who resolved it and through which channel (telegram | web | app | timeout)
+  by?: string; via?: string // who resolved it and through which channel (telegram | web | app | timeout | auto = hands-free execution)
   execPx?: number; ordId?: string
   request?: unknown; response?: unknown // the exact OKX request(s) [{method, path, body}] and response
   closedAt?: number; closeKind?: 'tp' | 'sl' | 'manual' | 'unfilled' | 'other'; closePx?: number; pnlUsdt?: number
@@ -75,7 +75,7 @@ export const statusLabel = (p: TradeProposal) => (p.status === 'executed' && p.m
 /** .tag tone of a status: open = info, done well = good, failed = bad, the rest neutral. */
 export const statusTone = (s: RtStatus) =>
   s === 'pending' ? 'warn' : s === 'approved' || s === 'executing' ? 'info' : s === 'executed' ? 'good' : s === 'failed' ? 'bad' : ''
-export const viaText: Record<string, string> = { telegram: 'Telegram', web: '网页', app: 'App', timeout: '超时' }
+export const viaText: Record<string, string> = { telegram: 'Telegram', web: '网页', app: 'App', timeout: '超时', auto: '免确认自动执行' }
 export const isOpen = (p: TradeProposal) => p.status === 'pending' || p.status === 'approved' || p.status === 'executing'
 
 const P = '/api/v1/realtrade'

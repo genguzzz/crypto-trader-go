@@ -70,6 +70,9 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
+	if _, err := db.Exec(lockSchema); err != nil {
+		return err
+	}
 	added := false
 	for _, c := range addedCols {
 		var has int
@@ -179,8 +182,8 @@ type Proposal struct {
 	Mode         string  `json:"mode"` // dryrun | live (at creation; at execution once executed)
 	StatusAt     int64   `json:"statusAt"`
 	Error        string  `json:"error,omitempty"`
-	By           string  `json:"by,omitempty"`  // who resolved it: telegram:<id>, owner, timeout
-	Via          string  `json:"via,omitempty"` // telegram | web | app | timeout
+	By           string  `json:"by,omitempty"`  // who resolved it: telegram:<id>, owner, timeout, auto
+	Via          string  `json:"via,omitempty"` // telegram | web | app | timeout | auto (hands-free execution)
 	ExecPx       float64 `json:"execPx,omitempty"`
 	OrdID        string  `json:"ordId,omitempty"`
 	// Request / Response: the exact OKX requests ([{method, path, body}]) and answers.

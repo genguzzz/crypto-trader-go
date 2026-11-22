@@ -534,7 +534,9 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
     started = time.monotonic()
     result = None
     cost, turns = 0.0, 0
-    usage = {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0, "searches": 0}
+    # context: the tokens the model read in its newest call (what the session now carries);
+    # compactions: how often the CLI summarised the session in this turn because it was full
+    usage = {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0, "searches": 0, "context": 0, "compactions": 0}
 
     def text_part() -> dict:
         if not parts or parts[-1]["t"] != "text":
@@ -555,7 +557,10 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
                     continue  # subagent tokens: only their tool calls are shown
                 ev = m.event or {}
                 cb = ev.get("content_block") or {}
-                if ev.get("type") == "content_block_start" and cb.get("type") == "thinking":
+                if ev.get("type") == "message_start":
+                    u = (ev.get("message") or {}).get("usage") or {}
+                    usage["context"] = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+                elif ev.get("type") == "content_block_start" and cb.get("type") == "thinking":
                     p = {"t": "think", "v": "", "ms": 0}
                     parts.append(p)
                     thinking[ev.get("index", -1)] = (p, time.monotonic())
@@ -606,6 +611,8 @@ async def chat(msg: dict, config: dict, proxy: str, emit: Emit, inbox: Inbox | N
                         p["ok"] = not b.is_error
                         p["output"] = result_text(b.content)
                         await emit({"type": "tool_done", "id": b.tool_use_id, "ok": p["ok"], "output": p["output"]})
+            elif getattr(m, "subtype", "") == "compact_boundary":
+                usage["compactions"] += 1
             elif isinstance(m, ResultMessage):
                 # the first result ends what can be steered: later steers are refused (Go starts a new
                 # turn); those already queued are still written and answered before the call ends

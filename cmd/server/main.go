@@ -122,7 +122,6 @@ func main() {
 	acct.CtVal = func(id string) float64 { i, _ := eng.InstrumentMeta(id); return i.CtVal }
 	if acct.Enabled() {
 		log.Printf("okx account: read-only positions via private proxy %s", acctCfg.Proxy.Host)
-		dev.SetPositions(func(ctx context.Context, inst string) (any, error) { return acct.Snapshot(ctx, inst) })
 		dev.SetOKXRead(func(ctx context.Context, path, query string) (any, error) {
 			q, err := url.ParseQuery(query)
 			if err != nil {
@@ -167,6 +166,9 @@ func main() {
 		log.Fatal(err)
 	}
 	rt.SetAccount(acct)
+	if acct.Enabled() {
+		dev.SetPositions(rt.PositionsTool)
+	}
 	rt.SetOnChange(func() { eng.Publish("realtrade", struct{}{}) })
 	dev.SetTradeProposals(rt.ProposeTool, rt.ListTool)
 	tradeBot, err := realtrade.BotFromEnv(rt, okx.HTTPClient())
@@ -259,7 +261,7 @@ func main() {
 	rt.SetSignals(sig.BriefFor, sig.CancelForTrade)
 	// The trading desk: one standing chat run on strategy scans and on a schedule, with a decision journal
 	// (internal/autopilot). It only proposes; approval stays with the owner.
-	desk, err := autopilot.New(st, gate, sig, rt, deskMarket{eng}, autopilot.Options{TradeMode: func() string { return string(rt.Mode()) },
+	desk, err := autopilot.New(st, gate, sig, rt, deskMarket{eng}, autopilot.Options{TradeMode: func() string { return string(rt.Mode()) }, HandsFree: func() bool { return rt.Auto().Enabled },
 		Notify: func(text string) { // a run that failed, or runs that cannot start (once per outage)
 			go func() {
 				nctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

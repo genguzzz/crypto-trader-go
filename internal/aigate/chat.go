@@ -370,7 +370,11 @@ func (g *Gate) StartChat(in ChatInput) (int64, error) {
 			out.SessionID = session
 		}
 		if out.SessionID != "" {
-			g.st.DB.Exec(`UPDATE ai_chats SET updated=?, session_id=?, cost_usd=cost_usd+? WHERE id=?`, ts, out.SessionID, out.Cost, in.ChatID)
+			// a turn that reported no context size (stopped or failed early) keeps the last known one
+			var u struct{ Context int64 }
+			json.Unmarshal(out.Usage, &u)
+			g.st.DB.Exec(`UPDATE ai_chats SET updated=?, session_id=?, cost_usd=cost_usd+?, ctx_tokens=CASE WHEN ?>0 THEN ? ELSE ctx_tokens END WHERE id=?`,
+				ts, out.SessionID, out.Cost, u.Context, u.Context, in.ChatID)
 		} else {
 			g.st.DB.Exec(`UPDATE ai_chats SET updated=? WHERE id=?`, ts, in.ChatID)
 		}

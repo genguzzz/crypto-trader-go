@@ -49,6 +49,12 @@ class StreamEvent:
     parent_tool_use_id: str | None = None
 
 
+@dataclass
+class SystemMessage:
+    subtype: str
+    data: dict = field(default_factory=dict)
+
+
 def text_delta(text: str) -> StreamEvent:
     return StreamEvent({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}})
 

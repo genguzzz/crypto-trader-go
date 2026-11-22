@@ -49,6 +49,7 @@ type Status struct {
 	Cost24hUSD     float64 `json:"cost24hUsd"`
 	Decisions24h   int     `json:"decisions24h"`
 	TradeMode      string  `json:"tradeMode,omitempty"`
+	ContextTokens  int64   `json:"contextTokens"`       // the size of the agent's session after its last turn
 	LastError      string  `json:"lastError,omitempty"` // why the last run could not start
 	Now            int64   `json:"now"`
 }
@@ -69,6 +70,9 @@ func (s *Service) Status() Status {
 	s.db.QueryRow(`SELECT COUNT(*) FROM desk_inbox WHERE status=?`, InboxPending).Scan(&st.Pending)
 	s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(cost_usd),0) FROM desk_runs WHERE ts>=? AND status<>?`, day, RunFailed).Scan(&st.Runs24h, &st.Cost24hUSD)
 	s.db.QueryRow(`SELECT COUNT(*) FROM desk_decisions WHERE ts>=?`, day).Scan(&st.Decisions24h)
+	if st.ChatID > 0 {
+		st.ContextTokens = s.chats.ContextTokens(st.ChatID)
+	}
 	if s.opts.TradeMode != nil {
 		st.TradeMode = s.opts.TradeMode()
 	}

@@ -56,9 +56,28 @@ func NormalizeInst(s string) string {
 var kinds5 = map[string]bool{KindOpen: true, KindAdd: true, KindReduce: true, KindClose: true, KindAdjust: true, KindCancel: true, KindAmend: true}
 
 // Propose validates the action against the current price, the position it acts on and every cap and
-// stores it as pending. The source is the chat's trigger (signal / schedule) when the chat was started
-// by one, else chat.
+// stores it as pending for the owner. With hands-free execution on (auto.go) it is approved at once
+// instead and the result is its final state (executed, failed or invalidated).
 func (s *Service) Propose(ctx context.Context, in ProposeInput) (Proposal, error) {
+	auto := s.Auto().Enabled
+	p, err := s.propose(ctx, in)
+	if err != nil {
+		return p, err
+	}
+	if auto {
+		q, err := s.Approve(ctx, p.ID, ByAuto, ByAuto)
+		if err == nil || errors.Is(err, ErrClosed) {
+			return q, nil
+		}
+		s.logf("realtrade: auto-approve #%d: %v (left for the owner)", p.ID, err)
+	}
+	s.emit("proposed", p.ID) // the owner is asked on every channel
+	return p, nil
+}
+
+// propose validates and stores a pending proposal. The source is the chat's trigger (signal /
+// schedule) when the chat was started by one, else chat.
+func (s *Service) propose(ctx context.Context, in ProposeInput) (Proposal, error) {
 	in.InstID = NormalizeInst(in.InstID)
 	in.Side = strings.ToLower(strings.TrimSpace(in.Side))
 	in.Kind = strings.ToLower(strings.TrimSpace(in.Kind))
@@ -85,6 +104,9 @@ func (s *Service) Propose(ctx context.Context, in ProposeInput) (Proposal, error
 		return Proposal{}, errors.New("invalidation is too long (≤ 500 characters)")
 	case in.OrdType != okxorder.Market && in.OrdType != okxorder.Limit:
 		return Proposal{}, errors.New("orderType must be market or limit")
+	}
+	if err := s.lockErr(in.InstID, in.Side); err != nil {
+		return Proposal{}, err
 	}
 	if in.Kind == KindCancel || in.Kind == KindAmend {
 		return s.proposeOrderOp(ctx, in)
@@ -126,8 +148,7 @@ func (s *Service) Propose(ctx context.Context, in ProposeInput) (Proposal, error
 	return s.store(in, px, b, b.order.Sizing(), 0)
 }
 
-// store inserts a validated proposal as pending. The source is the chat's trigger (signal / schedule)
-// when the chat was started by one, else chat.
+// store inserts a validated proposal as pending (Propose then asks the owner or approves it).
 func (s *Service) store(in ProposeInput, px float64, b built, z okxorder.Sizing, target int64) (Proposal, error) {
 	source, label := SourceChat, ""
 	if kind, l, ok := s.triggerRun(in.ChatID); ok {
@@ -156,7 +177,6 @@ func (s *Service) store(in ProposeInput, px float64, b built, z okxorder.Sizing,
 		return p, err
 	}
 	s.audit(id, "created", fmt.Sprintf("%s · %s", sourceText(p), summary(p)), sourceText(p))
-	s.emit("proposed", id)
 	return p, nil
 }
 
@@ -443,6 +463,9 @@ func (s *Service) execute(ctx context.Context, id int64) (Proposal, error) {
 			s.queueSteer(id, StatusInvalidated)
 		}
 		return s.get(id)
+	}
+	if err := s.lockErr(p.InstID, p.Side); err != nil { // locked after it was proposed
+		return invalid("主人已锁定 " + posText(p.InstID, p.Side) + "，AI 不能操作这个仓位；解锁后让 AI 重新提议")
 	}
 	if p.Kind == KindCancel || p.Kind == KindAmend {
 		return s.executeOrderOp(ctx, p, invalid)

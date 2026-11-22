@@ -59,10 +59,25 @@ class AgentSteer(unittest.TestCase):
         self.assertIn("先看看仓位", out["text"])
         self.assertIn("止盈止损已核对", out["text"])
         self.assertAlmostEqual(out["cost"], 0.03)
-        self.assertEqual(out["usage"], {"input": 150, "output": 30, "cacheWrite": 0, "cacheRead": 5000, "searches": 1})
+        self.assertEqual(out["usage"], {"input": 150, "output": 30, "cacheWrite": 0, "cacheRead": 5000, "searches": 1, "context": 0, "compactions": 0})
         self.assertEqual(out["turns"], 3)
         self.assertEqual(self.sdk.calls[0]["options"].kw["resume"], "s1")
         self.assertFalse(inbox.put("too late"), "a steer after the call must be refused")
+
+    def test_context_size_is_the_newest_model_call_and_compactions_are_counted(self):
+        def call(inp, read, write):
+            return fakesdk.StreamEvent({"type": "message_start", "message": {"usage": {
+                "input_tokens": inp, "cache_read_input_tokens": read, "cache_creation_input_tokens": write}}})
+        self.sdk.messages = [
+            call(10, 150000, 2000), fakesdk.text_delta("查一下。"),
+            fakesdk.SystemMessage("compact_boundary", {"compact_metadata": {"trigger": "auto", "pre_tokens": 167000}}),
+            call(30, 20000, 4000), fakesdk.text_delta("结论。"),
+            fakesdk.ResultMessage(usage={"input_tokens": 40, "output_tokens": 20, "cache_read_input_tokens": 170000}),
+        ]
+        out = asyncio.run(asyncio.wait_for(agent.chat({"chatId": 7, "message": "hi"}, CHAT_CONFIG, "http://p", no_emit), 5))
+        self.assertEqual(out["usage"]["context"], 24030)  # what the session carries now, not the turn's total
+        self.assertEqual(out["usage"]["compactions"], 1)
+        self.assertEqual(out["usage"]["cacheRead"], 170000)
 
     def test_steer_after_the_turn_ended_is_refused(self):
         inbox = agent.Inbox()

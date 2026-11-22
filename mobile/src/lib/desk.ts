@@ -23,6 +23,8 @@ export interface DeskRun {
 export interface DeskStatus {
   enabled: boolean; chatId: number; running?: DeskRun; lastRun?: DeskRun; nextScheduleAt?: number; pending: number; runs24h: number;
   signalRuns24h: number; cost24hUsd: number; decisions24h: number; tradeMode?: string; lastError?: string; now: number;
+  /** tokens the agent's session carried after its last turn */
+  contextTokens: number;
 }
 export interface DeskParamDef { key: string; label: string; unit: string; def: number; min: number; max: number; step: number }
 export interface DeskScan { signalId: number; desc: string; cooldownMin: number; fireCount: number; lastFiredAt?: number; progress?: string }
@@ -36,7 +38,7 @@ export interface DeskConfig {
   signals: { enabled: boolean; minGapMin: number; maxRunsDay: number; batchSec: number; staleMin: number };
   strategies: { key: string; enabled: boolean; params: Record<string, number> }[];
   custom: { key: string; label: string; enabled: boolean; spec: unknown; cooldownMin: number }[];
-  model: string; effort: string; sessionRuns: number; maxProposals: number; focus: string;
+  model: string; effort: string; sessionKTokens: number; maxProposals: number; focus: string;
 }
 export interface DeskOverview {
   status: DeskStatus; config: DeskConfig; strategies: DeskStrategy[];

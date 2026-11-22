@@ -102,6 +102,7 @@ type Chats interface {
 	ChatRunning(chat int64) bool
 	LastAnswer(chat, afterMsg int64) (aigate.Answer, bool)
 	LastMsgID(chat int64) int64
+	ContextTokens(chat int64) int64
 	ResetSession(chat int64) error
 }
 
@@ -137,6 +138,9 @@ type Options struct {
 	Logf func(format string, args ...any)
 	// TradeMode is shown in the status and the brief ("dryrun" | "live").
 	TradeMode func() string
+	// HandsFree reports whether the owner switched on hands-free execution (realtrade.Auto): the
+	// brief then says proposals run at once instead of waiting for him.
+	HandsFree func() bool
 	// Notify pushes a short note to the owner when the desk cannot work: a run that failed, or runs
 	// that cannot start (once per outage). Ordinary runs are not pushed. Must not block.
 	Notify func(text string)
@@ -518,7 +522,7 @@ func (s *Service) start(_ context.Context, cfg Config, trigger string, slot int6
 	}
 	items := s.pendingInbox()
 	newSession := false
-	if cfg.SessionRuns > 0 && !s.chats.ChatRunning(chat) && s.runsInSession() >= cfg.SessionRuns {
+	if !s.chats.ChatRunning(chat) && s.chats.ContextTokens(chat) >= int64(cfg.SessionKTokens)*1000 {
 		if err := s.chats.ResetSession(chat); err == nil {
 			newSession = true
 		}
@@ -575,15 +579,6 @@ func runErrText(err error) string {
 		return ErrAgentDown.Error()
 	}
 	return err.Error()
-}
-
-// runsInSession counts the runs since the agent's session last started fresh.
-func (s *Service) runsInSession() int {
-	var since int64
-	s.db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM desk_runs WHERE new_session=1`).Scan(&since)
-	var n int
-	s.db.QueryRow(`SELECT COUNT(*) FROM desk_runs WHERE id>=? AND status<>?`, since, RunFailed).Scan(&n)
-	return n
 }
 
 // settle closes the run in flight once its chat is idle again (or it overran).

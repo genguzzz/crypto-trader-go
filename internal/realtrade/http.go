@@ -17,6 +17,8 @@ import (
 //	POST /api/v1/realtrade/proposals/{id}/reject     {via}
 //	GET  /api/v1/realtrade/config                    mode, limits, Telegram bot status, triggers
 //	PUT  /api/v1/realtrade/triggers                  [{id, enabled, everyMin, ruleIds, cooldownMin, prompt}]
+//	PUT  /api/v1/realtrade/auto                      {enabled, confirm: true to switch it on} hands-free execution (auto.go)
+//	PUT  /api/v1/realtrade/locks                     {instId, side, locked} a position the agent may not act on
 //
 // There is no route that changes the mode or the limits: only CTG_TRADE_MODE / CTG_TRADE_* can.
 func (s *Service) Register(mux *http.ServeMux) {
@@ -100,6 +102,41 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/realtrade/config", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.Config())
 	})
+	mux.HandleFunc("PUT /api/v1/realtrade/auto", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Enabled bool `json:"enabled"`
+			Confirm bool `json:"confirm"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
+			httpErr(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if in.Enabled && !in.Confirm {
+			httpErr(w, http.StatusBadRequest, "switching hands-free execution on needs confirm: true")
+			return
+		}
+		if _, err := s.SetAuto(in.Enabled); err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, s.Config())
+	})
+	mux.HandleFunc("PUT /api/v1/realtrade/locks", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			InstID string `json:"instId"`
+			Side   string `json:"side"`
+			Locked bool   `json:"locked"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
+			httpErr(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if err := s.SetLock(in.InstID, in.Side, in.Locked); err != nil {
+			httpErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, s.Config())
+	})
 	mux.HandleFunc("PUT /api/v1/realtrade/triggers", func(w http.ResponseWriter, r *http.Request) {
 		var in []TriggerDef
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
@@ -121,6 +158,8 @@ type ConfigView struct {
 	Telegram BotStatus    `json:"telegram"`
 	Triggers []TriggerDef `json:"triggers"`
 	Account  bool         `json:"account"` // the OKX account is readable (position checks, live close detection)
+	Auto     AutoState    `json:"auto"`    // hands-free execution
+	Locks    []Lock       `json:"locks"`   // positions the agent may not act on
 }
 
 // Config is the read-only view of how real trading is set up.
@@ -128,7 +167,8 @@ func (s *Service) Config() ConfigView {
 	s.mu.Lock()
 	b := s.bot
 	s.mu.Unlock()
-	return ConfigView{Mode: string(s.Mode()), Limits: s.opts.Limits, Telegram: b.Status(), Triggers: s.Triggers(), Account: s.account() != nil}
+	return ConfigView{Mode: string(s.Mode()), Limits: s.opts.Limits, Telegram: b.Status(), Triggers: s.Triggers(), Account: s.account() != nil,
+		Auto: s.Auto(), Locks: s.Locks()}
 }
 
 func errStatus(err error) int {

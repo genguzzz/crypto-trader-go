@@ -184,7 +184,7 @@ func (s *Service) steerText(ctx context.Context, p Proposal, kind string) string
 		} else {
 			b.WriteString("请用 get_positions 核对 OKX 上的仓位和止盈止损（张数、价格、是否覆盖整个仓位）。然后为这个仓位留好下一步的信号" +
 				"（例如移到保本的价位、部分止盈位、失效位；subscribe_signal 带 tradeId），过时的信号取消。需要调整就提议" +
-				"（补仓 / 减仓 / 平仓 / 调整止盈止损，都要主人审核）。")
+				"（补仓 / 减仓 / 平仓 / 调整止盈止损，都走 propose_trade）。")
 		}
 	case OrdCanceled:
 		b.WriteString("请说明这个价位是否还值得等：值得就重新提议或订阅信号（带 tradeId），否则说明原因并取消相关信号。")
@@ -227,6 +227,9 @@ func (s *Service) PositionBrief(ctx context.Context, chat int64, inst, side stri
 	}
 	if found {
 		b.WriteString(positionLine(pos) + "\n")
+		if s.Locked(inst, side) {
+			b.WriteString("🔒 主人已锁定这个仓位：不要对它提议任何操作（会被拒绝），只观察和汇报。\n")
+		}
 	} else if !strings.Contains(b.String(), "失败") {
 		fmt.Fprintf(&b, "仓位：%s %s 当前没有持仓\n", coin(inst), sideText(side))
 	}

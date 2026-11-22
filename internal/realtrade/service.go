@@ -301,11 +301,18 @@ func (s *Service) emit(kind string, id int64) {
 	}
 	s.mu.Lock()
 	ns := append([]Notifier(nil), s.notifiers...)
-	f := s.onChange
 	s.mu.Unlock()
 	for _, n := range ns {
 		n.ProposalEvent(kind, p)
 	}
+	s.changed()
+}
+
+// changed calls the change hook (a proposal, the hands-free switch or a lock changed).
+func (s *Service) changed() {
+	s.mu.Lock()
+	f := s.onChange
+	s.mu.Unlock()
 	if f != nil {
 		f()
 	}
@@ -323,7 +330,8 @@ func (s *Service) Link(p Proposal) string {
 // ---------- approval ----------
 
 // Approve resolves a pending proposal as approved (first answer wins; an expired one cannot be
-// approved), then re-validates and executes it. It returns the final state; ErrClosed (with the
+// approved), then re-validates and executes it. by is the owner on one of his channels, or ByAuto
+// (hands-free execution, auto.go). It returns the final state; ErrClosed (with the
 // current state) when someone else answered first or it expired.
 func (s *Service) Approve(ctx context.Context, id int64, by, via string) (Proposal, error) {
 	now := s.now().UnixMilli()
@@ -349,7 +357,11 @@ func (s *Service) Approve(ctx context.Context, id int64, by, via string) (Propos
 		}
 		return p, ErrClosed
 	}
-	s.audit(id, StatusApproved, "同意", by)
+	text := "同意"
+	if by == ByAuto {
+		text = "免确认自动执行（主人已开启）"
+	}
+	s.audit(id, StatusApproved, text, by)
 	s.emit(StatusApproved, id)
 	return s.execute(context.WithoutCancel(ctx), id) // the owner closing the page must not abort an approved trade
 }

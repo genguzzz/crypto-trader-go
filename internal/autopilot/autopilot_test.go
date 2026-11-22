@@ -29,6 +29,7 @@ type fakeChats struct {
 	err     error // returned by the next SteerChatWith
 	answer  *aigate.Answer
 	resets  int
+	ctx     int64 // the session's size as the last turn reported it
 }
 
 func (f *fakeChats) EnsureChat(kind, title string) (int64, error) {
@@ -63,11 +64,13 @@ func (f *fakeChats) LastAnswer(_, after int64) (aigate.Answer, bool) {
 	}
 	return *f.answer, true
 }
-func (f *fakeChats) LastMsgID(int64) int64 { f.mu.Lock(); defer f.mu.Unlock(); return f.msgID }
+func (f *fakeChats) LastMsgID(int64) int64     { f.mu.Lock(); defer f.mu.Unlock(); return f.msgID }
+func (f *fakeChats) ContextTokens(int64) int64 { f.mu.Lock(); defer f.mu.Unlock(); return f.ctx }
 func (f *fakeChats) ResetSession(int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.resets++
+	f.ctx = 0
 	return nil
 }
 
@@ -238,6 +241,7 @@ type env struct {
 	now    time.Time
 	mu     sync.Mutex
 	notes  []string
+	auto   bool // hands-free execution is on
 }
 
 func (e *env) noted() []string {
@@ -268,7 +272,8 @@ func newEnv(t *testing.T, start time.Time) *env {
 	e := &env{t: t, chats: &fakeChats{}, scans: &fakeScans{}, trades: &fakeTrades{}, now: start}
 	e.mkt = &fakeMarket{now: e.clock, px: map[string]float64{ena: 0.5, btc: 100000}, bars: map[string][]signals.Bar{}}
 	e.s, err = New(st, e.chats, e.scans, e.trades, e.mkt, Options{Now: e.clock, Logf: func(string, ...any) {}, TradeMode: func() string { return "dryrun" },
-		Notify: func(text string) { e.mu.Lock(); e.notes = append(e.notes, text); e.mu.Unlock() }})
+		HandsFree: func() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.auto },
+		Notify:    func(text string) { e.mu.Lock(); e.notes = append(e.notes, text); e.mu.Unlock() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,13 +569,38 @@ func TestSignalRunsAreBatchedAndPaced(t *testing.T) {
 	}
 }
 
+// The brief tells the agent which of the two approval modes applies: it decides how careful a
+// proposal has to be.
+func TestBriefSaysWhoApproves(t *testing.T) {
+	e := newEnv(t, at(13, 50))
+	e.enable(nil)
+	e.step()
+	if m := e.chats.steers[0].msg; !strings.Contains(m, "主人批准后才执行") || !strings.Contains(m, "只能提交待审核的提议") || strings.Contains(m, "免确认") {
+		t.Fatalf("brief with the owner approving:\n%s", m)
+	}
+	e.chats.finish("ok", 0)
+	e.step()
+	e.mu.Lock()
+	e.auto = true
+	e.mu.Unlock()
+	e.set(at(15, 50))
+	e.step()
+	if m := e.chats.steers[1].msg; !strings.Contains(m, "免确认：开") || !strings.Contains(m, "通过校验就立刻执行") || strings.Contains(m, "只能提交待审核的提议") {
+		t.Fatalf("hands-free brief:\n%s", m)
+	}
+}
+
 func TestSessionRotation(t *testing.T) {
 	e := newEnv(t, at(13, 50))
-	e.enable(func(c *Config) { c.SessionRuns = 2 })
-	for i := range 3 {
+	e.enable(func(c *Config) { c.SessionKTokens = 100 })
+	// the session after each run: small, past the threshold, small again (it was reset before run 3)
+	for i, ctx := range []int64{40_000, 120_000, 30_000} {
 		e.set(at(13, 50).Add(time.Duration(i) * 2 * time.Hour))
 		e.step()
 		e.chats.finish("ok", 0)
+		e.chats.mu.Lock()
+		e.chats.ctx = ctx
+		e.chats.mu.Unlock()
 		e.step()
 	}
 	if e.chats.count() != 3 || e.chats.resets != 1 {

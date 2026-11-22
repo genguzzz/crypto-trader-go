@@ -198,7 +198,7 @@ export function ProposalCard({ p, inChart }: { p: Proposal; inChart?: boolean })
         <View style={{ marginHorizontal: 12, marginTop: 10, paddingTop: 9, borderTopWidth: 1, borderColor: colors.border, gap: 4 }}>
           {answered ? (
             <Text style={{ fontSize: fs.sm, color: colors.textFaint }}>
-              {p.status === "rejected" ? "拒绝" : "同意"}{p.by ? `：${p.by}` : ""} · 经 {VIA[p.via!] ?? p.via} · {time(p.statusAt, true)}
+              {p.via === "auto" ? "免确认自动执行" : `${p.status === "rejected" ? "拒绝" : "同意"}${p.by ? `：${p.by}` : ""} · 经 ${VIA[p.via!] ?? p.via}`} · {time(p.statusAt, true)}
             </Text>
           ) : null}
           {ordState ? (

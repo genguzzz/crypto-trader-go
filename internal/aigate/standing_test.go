@@ -42,7 +42,7 @@ func TestStandingChat(t *testing.T) {
 				t.Errorf("chat msg model %v session %v (want %q, %q)", m["model"], m["sessionId"], wantModel, wantSession)
 			}
 			w.send(map[string]any{"type": "result", "id": m["id"], "result": map[string]any{"text": reply, "sessionId": "s1", "cost": 0.03,
-				"usage": map[string]any{"input": 100, "output": 20, "cacheRead": 3000, "cacheWrite": 50}}})
+				"usage": map[string]any{"input": 100, "output": 20, "cacheRead": 3000, "cacheWrite": 50, "context": 41000}}})
 		}()
 		if err := start(); err != nil {
 			t.Fatal(err)
@@ -57,6 +57,9 @@ func TestStandingChat(t *testing.T) {
 	a, ok := e.g.LastAnswer(id, before)
 	if !ok || a.Text != "没有机会" || a.CostUSD != 0.03 || a.Tokens != 3170 {
 		t.Fatalf("answer %+v %v", a, ok)
+	}
+	if n := e.g.ContextTokens(id); n != 41000 {
+		t.Fatalf("context size %d, want the turn's 41000", n)
 	}
 	if _, ok := e.g.LastAnswer(id, a.MsgID); ok {
 		t.Fatal("LastAnswer returned a message at or before afterMsg")
@@ -101,6 +104,9 @@ func TestStandingChat(t *testing.T) {
 	turn(func() error { return e.g.SteerChat(id, RoleSignal, "🤖 交易台 #2") }, "", "s1", "还是没有")
 	if err := e.g.ResetSession(id); err != nil {
 		t.Fatal(err)
+	}
+	if n := e.g.ContextTokens(id); n != 0 {
+		t.Fatalf("context size %d after the reset", n)
 	}
 	turn(func() error { return e.g.SteerChat(id, RoleSignal, "🤖 交易台 #3") }, "", "", "新的上下文")
 	if c, _ := e.g.ChatByID(id); len(c.Messages) != 6 {

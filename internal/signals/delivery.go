@@ -129,16 +129,16 @@ func (d Delivery) wakeText(ctxBlock string, plan *Plan) string {
 	}
 	if d.Type == "pool" {
 		b.WriteString("\n这是全池扫描信号：只关心上面列出的币。先挑最值得看的一两个，用最新数据（K 线、成交、盘口，有仓位先 get_positions）确认这次异动的性质，然后三选一：\n" +
-			"1. 有可做的机会 → 用 propose_trade 提交（主人审核后才执行）；\n" +
+			"1. 有可做的机会 → 用 propose_trade 提交；\n" +
 			"2. 还差一步 → 对那个币用 subscribe_signal 订阅具体条件，并说明为什么；\n" +
 			"3. 不值得做 → 一句话说明原因即可；扫描订阅会继续运行，除非它已经没用了（那就 unsubscribe_signal）。\n")
 	} else {
 		b.WriteString("\n请先用最新数据（有仓位就先 get_positions）重新检查，不要沿用订阅时的数字，然后三选一：\n" +
-			"1. 计划仍然成立 → 用 propose_trade 提交对应的操作（开仓 / 补仓 / 减仓 / 平仓 / 调整止盈止损，主人审核后才执行）；\n" +
+			"1. 计划仍然成立 → 用 propose_trade 提交对应的操作（开仓 / 补仓 / 减仓 / 平仓 / 调整止盈止损）；\n" +
 			"2. 还差一步 → 用 subscribe_signal 订阅调整后的条件（管理仓位的带 tradeId），并说明为什么；\n" +
 			"3. 已经不成立 → 说明原因；若这个订阅仍有效且不再需要，用 unsubscribe_signal 取消。\n")
 	}
-	b.WriteString("（这是自动触发的信号会话，主人此刻不一定在看。你只能用 propose_trade 提交待主人审核的提议，不能下单；" +
+	b.WriteString("（这是自动触发的信号会话，主人此刻不一定在看。你只能通过 propose_trade 行动：默认每笔都要主人审核后才执行，主人开启了免确认时会直接执行——以工具返回的 status 为准；" +
 		"把握不够就不要提议，直接说明理由（按主人的风险风格判断：位置好、有中等把握即可）。最多提议一笔。）")
 	return b.String()
 }

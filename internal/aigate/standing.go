@@ -84,14 +84,23 @@ func (g *Gate) LastMsgID(chat int64) int64 {
 	return id
 }
 
+// ContextTokens is the size of the chat's agent session: the tokens the model read in the newest call
+// of its last turn (history, tool results, prompt). 0 = a fresh session, or never reported.
+func (g *Gate) ContextTokens(chat int64) int64 {
+	var n int64
+	g.st.DB.QueryRow(`SELECT ctx_tokens FROM ai_chats WHERE id=?`, chat).Scan(&n)
+	return n
+}
+
 // ResetSession makes the chat's next turn start a fresh agent session: the stored messages stay, the
-// model's context starts empty. The desk does this every so many runs so a chat that never ends does
-// not carry (and pay for) an ever longer context; what must survive is in its journal and memory.
-// Refused while a turn runs.
+// model's context starts empty. The desk does this once its session has grown past a size
+// (ContextTokens) so a chat that never ends does not carry (and pay for) an ever longer context and
+// never runs into the CLI's compaction; what must survive is in its journal and memory. Refused
+// while a turn runs.
 func (g *Gate) ResetSession(chat int64) error {
 	if g.run(chat) != nil {
 		return ErrChatBusy
 	}
-	_, err := g.st.DB.Exec(`UPDATE ai_chats SET session_id='' WHERE id=?`, chat)
+	_, err := g.st.DB.Exec(`UPDATE ai_chats SET session_id='', ctx_tokens=0 WHERE id=?`, chat)
 	return err
 }

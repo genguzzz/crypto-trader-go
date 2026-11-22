@@ -227,6 +227,8 @@ func byText(p Proposal) string {
 		return "经 App"
 	case "web":
 		return "经网页"
+	case ByAuto:
+		return "免确认自动执行"
 	}
 	return p.Via
 }

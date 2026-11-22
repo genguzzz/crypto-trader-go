@@ -10,7 +10,10 @@ import { copy } from "@/lib/device";
 import { EmptyState, ErrorBox, Loading, Pull, Tag, confirm, tap, toast, toastError, styles } from "@/components/ui";
 import { ProposalCard } from "@/components/ai/ProposalCard";
 import { DeskCard } from "@/components/ai/DeskPane";
-import { useQuery } from "@/lib/query";
+import { mutate, useQuery } from "@/lib/query";
+import { api, type AccountPositions } from "@/lib/api";
+import { onStreamEvent } from "@/lib/market";
+import { Toggle } from "@/components/Form";
 import { refreshProposals, rtApi, usePendingProposals, useRealtrade, useRecentProposals, type RtConfig } from "@/lib/realtrade";
 
 export function PaneHeader({ title, onClose, right }: { title: string; onClose: () => void; right?: ReactNode }) {
@@ -158,6 +161,77 @@ export function NotesPane({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** The owner's two switches over AI trading (server internal/realtrade/auto.go): hands-free execution
+ *  (proposals run without his approval) and position locks (the AI may not act on that coin and side). */
+function TradeControls({ cfg, mode }: { cfg: RtConfig; mode: string }) {
+  const acct = useQuery<AccountPositions>("acct:positions", () => api.positions(), { staleMs: 15_000 });
+  const [busy, setBusy] = useState(false);
+  const apply = async (what: string, call: () => Promise<RtConfig>) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const next = await call();
+      mutate<RtConfig>("rt:config", () => next);
+    } catch (e) {
+      toastError(what, e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const lim = cfg.limits;
+  const setAuto = (on: boolean) => {
+    if (!on) return void apply("未能关闭", () => rtApi.setAuto(false));
+    confirm(
+      "开启免确认下单",
+      `${mode === "live" ? "实盘：AI 的每一笔提议通过校验后会直接在 OKX 真实执行" : "模拟：AI 的每一笔提议通过校验后直接模拟执行"}（开仓、补仓、减仓、平仓、改止盈止损、撤改挂单），不再等你同意。\n\n上限照常生效：杠杆 ≤ ${lim.maxLeverage}×、单笔保证金 ≤ ${lim.maxMarginUsdt} U、最多 ${lim.maxOpen} 个 AI 仓位、日亏 ${lim.dailyLossUsdt} U 停止开仓。锁定的仓位 AI 不能动。`,
+      "开启",
+      () => void apply("未能开启", () => rtApi.setAuto(true)),
+      true,
+    );
+  };
+  const locks = cfg.locks ?? [];
+  const isLocked = (instId: string, side: string) => locks.some((l) => l.instId === instId && l.side === side);
+  const positions = acct.data?.positions ?? [];
+  // a lock outlives its position (it also keeps the AI from opening there): list those too, to unlock
+  const rows = [
+    ...positions.map((p) => ({ instId: p.instId, side: p.side, held: `${+p.contracts.toPrecision(6)} 张 · 未实现 ${p.upl >= 0 ? "+" : ""}${p.upl.toFixed(2)} U`, upl: p.upl })),
+    ...locks.filter((l) => !positions.some((p) => p.instId === l.instId && p.side === l.side)).map((l) => ({ instId: l.instId, side: l.side, held: "当前无持仓（AI 也不能在这里开仓）", upl: 0 })),
+  ];
+  return (
+    <View style={{ marginBottom: 10, borderRadius: radius.md, borderWidth: 1, borderColor: cfg.auto.enabled ? colors.warn : colors.border, backgroundColor: colors.card, paddingHorizontal: 12, paddingVertical: 4 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, minHeight: 52 }}>
+        <Ionicons name="flash" size={18} color={cfg.auto.enabled ? colors.warn : colors.textDim} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: fs.lg, color: colors.text, fontWeight: "600" }}>免确认下单</Text>
+          <Text style={{ fontSize: fs.xs, color: cfg.auto.enabled ? colors.warn : colors.textFaint, marginTop: 1 }}>
+            {cfg.auto.enabled ? `已开启：AI 的提议通过校验后直接${mode === "live" ? "真实执行" : "模拟执行"}` : "关闭：每笔提议都等你同意"}
+          </Text>
+        </View>
+        <Toggle value={cfg.auto.enabled} disabled={busy} onChange={setAuto} />
+      </View>
+      <View style={{ borderTopWidth: 1, borderColor: colors.border, paddingTop: 8, paddingBottom: 6 }}>
+        <Text style={{ fontSize: fs.xs, color: colors.textFaint }}>锁仓：锁定的仓位 AI 不能做任何操作（提议会被拒绝，已有的提议也无法执行）</Text>
+        {!rows.length ? <Text style={{ fontSize: fs.sm, color: colors.textDim, paddingVertical: 8 }}>{acct.data && !acct.data.enabled ? "未接入 OKX 账户，读不到持仓" : acct.data ? "当前没有持仓" : "读取持仓…"}</Text> : null}
+        {rows.map((r) => {
+          const locked = isLocked(r.instId, r.side);
+          return (
+            <View key={`${r.instId}:${r.side}`} style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 46 }}>
+              <Ionicons name={locked ? "lock-closed" : "lock-open-outline"} size={16} color={locked ? colors.warn : colors.textDim} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ fontSize: fs.md, color: colors.text }}>
+                  {r.instId.split("-")[0]} <Text style={{ color: r.side === "long" ? colors.up : colors.down }}>{r.side === "long" ? "多" : "空"}</Text>
+                </Text>
+                <Text numberOfLines={1} style={{ fontSize: fs.xs, color: r.upl > 0 ? colors.up : r.upl < 0 ? colors.down : colors.textFaint, marginTop: 1 }}>{r.held}</Text>
+              </View>
+              <Toggle value={locked} disabled={busy} onChange={(v) => void apply(v ? "未能锁定" : "未能解锁", () => rtApi.setLock(r.instId, r.side, v))} />
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 /** AI trade proposals: pending first, then recent ones, with the server's mode and limits. Owner only. */
 export function ProposalsPane({ onClose }: { onClose: () => void }) {
   const owner = useRealtrade((r) => r.owner);
@@ -165,6 +239,9 @@ export function ProposalsPane({ onClose }: { onClose: () => void }) {
   const pending = usePendingProposals();
   const recent = useRecentProposals();
   const cfg = useQuery<RtConfig>(owner ? "rt:config" : null, () => rtApi.config(), { staleMs: 60_000 });
+  // the switches can change elsewhere (another device): follow the server's change event
+  const refreshCfg = cfg.refresh;
+  useEffect(() => onStreamEvent((type) => { if (type === "realtrade") void refreshCfg(); }), [refreshCfg]);
   const list = [...pending, ...(recent ?? []).filter((p) => p.status !== "pending" && !pending.some((x) => x.id === p.id))];
   const lim = cfg.data?.limits;
   const tg = cfg.data?.telegram;
@@ -176,7 +253,7 @@ export function ProposalsPane({ onClose }: { onClose: () => void }) {
       ) : (
         <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 40 }} refreshControl={<Pull onRefresh={() => Promise.all([refreshProposals(), cfg.refresh()])} />}>
           <Text style={[styles.note, { marginHorizontal: 4, marginBottom: 4 }]}>
-            {mode === "live" ? "LIVE：同意后在 OKX 真实执行（开仓、补仓、减仓、平仓或调整止盈止损）。" : "DRY RUN：同意后只生成、记录并模拟，不会真实下单。"}
+            {mode === "live" ? "LIVE：提议执行时在 OKX 真实下单（开仓、补仓、减仓、平仓或调整止盈止损）。" : "DRY RUN：提议执行时只生成、记录并模拟，不会真实下单。"}
             {"AI 在对话或信号触发时提议，Telegram、网页、App 任一处先答复为准。"}
           </Text>
           {lim ? (
@@ -185,6 +262,7 @@ export function ProposalsPane({ onClose }: { onClose: () => void }) {
               {tg ? ` · Telegram ${tg.enabled ? tg.state || "已开启" : "未开启"}` : ""}
             </Text>
           ) : null}
+          {cfg.data ? <TradeControls cfg={cfg.data} mode={mode} /> : null}
           {recent === null && !pending.length ? <Loading text="加载提议" /> : null}
           {recent !== null && !list.length ? <EmptyState icon="receipt-outline" text="还没有交易提议" /> : null}
           {list.map((p) => <ProposalCard key={p.id} p={p} />)}
