@@ -176,6 +176,13 @@ func (s *Service) brief(cfg Config, in briefInput) string {
 	} else if in.Trigger == TriggerSchedule {
 		b.WriteString("\n【本次信号】自上次运行以来没有策略信号触发。\n")
 	}
+	patrol := in.Trigger != TriggerSignal // a scheduled or manual run looks for trades across the pool
+	board := ""
+	if patrol {
+		if board = s.board(); board != "" {
+			b.WriteString("\n【监控池热榜】\n" + board)
+		}
+	}
 
 	// positions and resting orders: the coins that fired plus everything the desk has open
 	insts := append([]string(nil), in.Insts...)
@@ -187,9 +194,9 @@ func (s *Service) brief(cfg Config, in briefInput) string {
 		}
 	}
 	if blk := s.trades.WakeContext(in.Chat, insts, 0); blk != "" {
-		b.WriteString("\n【AI 仓位与挂单】\n" + clip(blk, 1500) + "\n")
+		b.WriteString("\n【交易台开的仓位与挂单】\n" + clip(blk, 1500) + "\n")
 	} else {
-		b.WriteString("\n【AI 仓位与挂单】无。\n")
+		b.WriteString("\n【交易台开的仓位与挂单】无（主人账户里的其他持仓用 get_positions 看）。\n")
 	}
 	var pend []string
 	for _, p := range open {
@@ -250,13 +257,20 @@ func (s *Service) brief(cfg Config, in briefInput) string {
 		footer = "免确认已开启：你的提议会直接成交，把握不够、盈亏比不够就不要提。"
 	}
 	b.WriteString("\n【这一轮要做的】\n")
+	from := "用 get_universe 扫一遍监控池，" // no board (the pool has no data yet)
+	if board != "" {
+		from = "从【监控池热榜】里"
+	}
+	scan := from + "挑两三个最值得做的币（优先：新进池或排名快速上升、放量且持仓同向增加、独立于大盘走强或走弱的），" +
+		"逐个用最新数据做完整判断（K 线结构、成交、持仓、资金费、清算位），每个都给出结论：现在开仓 / 在更好的位置挂限价单 / 订阅信号等条件 / 不做及原因。" +
+		"这是巡检的主要工作：榜单每一轮都是新的，哪怕上一轮刚跑过、大盘和持仓都没变，也要重新看榜；只有榜上确实没有像样的结构才说没有机会。"
 	switch {
-	case len(in.Items) > 0 && in.Trigger != TriggerSchedule:
+	case !patrol:
 		b.WriteString("1. 只看上面触发信号的币（多的话挑最值得的两三个）和已有仓位；用最新数据核对，信号里的数字是触发那一刻的。\n")
 	case len(in.Items) > 0:
-		b.WriteString("1. 先看大盘（BTC、ETH）和已有仓位，再看上面触发信号的币，最后扫一眼监控池里最突出的机会。\n")
+		b.WriteString("1. 大盘（BTC、ETH 方向和广度）和已有仓位各用一句话带过，没有变化就不展开。先看上面触发信号的币，然后" + scan + "\n")
 	default:
-		b.WriteString("1. 先看大盘（BTC、ETH）和已有仓位，再扫监控池里此刻最突出的一两个机会；没有就明确说没有。\n")
+		b.WriteString("1. 大盘（BTC、ETH 方向和广度）和已有仓位各用一句话带过，没有变化就不展开。然后" + scan + "\n")
 	}
 	b.WriteString("2. 每个认真看过的币都用 desk_journal 记一笔决策（open / add / reduce / close / adjust / hold / watch / skip），写清方向、把握、" +
 		"一句话理由、关键价位和失效条件——包括决定不做的，这是以后复盘的依据。\n" +

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -156,8 +157,15 @@ func (f *fakeScans) keys() map[string]int64 {
 }
 
 type fakeTrades struct {
-	mu sync.Mutex
-	ps map[int64]realtrade.Proposal
+	mu     sync.Mutex
+	ps     map[int64]realtrade.Proposal
+	locked map[string]bool // instId
+}
+
+func (f *fakeTrades) Locked(inst, _ string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.locked[inst]
 }
 
 func (f *fakeTrades) Get(id int64) (realtrade.Proposal, error) {
@@ -209,6 +217,13 @@ type fakeMarket struct {
 	now  func() time.Time
 	px   map[string]float64
 	bars map[string][]signals.Bar
+	pool []PoolCoin
+}
+
+func (f *fakeMarket) Pool() []PoolCoin {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]PoolCoin(nil), f.pool...)
 }
 
 func (f *fakeMarket) Known(id string) bool { return id == ena || id == btc }
@@ -391,7 +406,7 @@ func TestScheduleRuns(t *testing.T) {
 	}
 	msg, st := e.chats.last(), e.chats.steers[0]
 	for _, want := range []string{"🤖 交易台 #1 · 定时巡检（11-11 13:50 UTC+8）", "下次 8 小时资金费结算 16:00（还有 2 小时 10 分）", "模拟（dry run）",
-		"【主人的长期指示】只做前 30 的币", "自上次运行以来没有策略信号触发", "【AI 仓位与挂单】无", "desk_journal", "先看大盘", "不能下单"} {
+		"【主人的长期指示】只做前 30 的币", "自上次运行以来没有策略信号触发", "【交易台开的仓位与挂单】无", "desk_journal", "大盘（BTC、ETH 方向和广度）和已有仓位各用一句话带过", "不能下单"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("brief lacks %q:\n%s", want, msg)
 		}
@@ -548,7 +563,7 @@ func TestSignalRunsAreBatchedAndPaced(t *testing.T) {
 	if e.chats.count() != 3 {
 		t.Fatal("no scheduled run")
 	}
-	if msg := e.chats.last(); !strings.Contains(msg, "定时巡检") || !strings.Contains(msg, "[持仓激增] OI +7%") || !strings.Contains(msg, "先看大盘（BTC、ETH）和已有仓位，再看上面触发信号的币") {
+	if msg := e.chats.last(); !strings.Contains(msg, "定时巡检") || !strings.Contains(msg, "[持仓激增] OI +7%") || !strings.Contains(msg, "先看上面触发信号的币") {
 		t.Fatalf("the scheduled run did not carry the waiting signal:\n%s", msg)
 	}
 	e.chats.finish("ok", 0.05)
@@ -632,6 +647,61 @@ func TestOneRegimeMemory(t *testing.T) {
 	}
 	if got := s2.Config(); !got.Enabled || got.SessionKTokens != 60 {
 		t.Fatalf("stored config with the old session size: enabled %v, size %d", got.Enabled, got.SessionKTokens)
+	}
+}
+
+// A patrol (scheduled or manual) is given the pool's board and told to work through it; a signal run
+// stays on the coins that fired. A coin the owner locked never reaches the inbox.
+func TestPatrolGetsThePoolBoard(t *testing.T) {
+	e := newEnv(t, at(13, 50))
+	lg := math.Log
+	coinOf := func(id string, rank int, r1h, vol, oi float64) PoolCoin {
+		return PoolCoin{InstID: id, Rank: rank, Category: "1", Values: map[string]float64{"ret_1h": lg(1 + r1h/100), "ret_4h": lg(1 + r1h/50),
+			"vol_surprise_4h": lg(vol), "oi_chg_1h": lg(1 + oi/100), "funding_hourly": 0.0001}}
+	}
+	set := func(cs ...PoolCoin) { e.mkt.mu.Lock(); e.mkt.pool = cs; e.mkt.mu.Unlock() }
+	stock := coinOf("SOXL-USDT-SWAP", 3, 9, 5, 9)
+	stock.Category = "3"
+	set(coinOf(btc, 1, 0.2, 1, 0.1), coinOf(ena, 20, 6.5, 4.2, 5), coinOf("WIF-USDT-SWAP", 30, -4, 1.1, 0.5), stock)
+	e.enable(nil)
+	e.step()
+	m := e.chats.steers[0].msg
+	for _, want := range []string{"【监控池热榜】", "监控池 3 个币", "· ENA（池内第 20）1h +6.5%", "量 4.2×", "OI 1h +5.0%", "1 小时跌幅前列：\n· WIF", "从【监控池热榜】里挑两三个"} {
+		if !strings.Contains(m, want) {
+			t.Fatalf("patrol brief lacks %q:\n%s", want, m)
+		}
+	}
+	if strings.Contains(m, "SOXL") || strings.Contains(m, "池子的变化") || strings.Contains(m, "先看大盘") {
+		t.Fatalf("a stock on the board, a change without an earlier patrol, or the old instruction:\n%s", m)
+	}
+	e.chats.finish("ok", 0)
+	e.step()
+	// the next patrol says what changed in the pool
+	set(coinOf(btc, 1, 0.2, 1, 0.1), coinOf(ena, 4, 2, 2.5, 1), coinOf("PEPE-USDT-SWAP", 9, 3, 1, 0))
+	e.set(at(15, 50))
+	e.step()
+	m = e.chats.steers[1].msg
+	for _, want := range []string{"新进池 PEPE（第 9）", "成交额排名快速上升 ENA（20 → 4）", "掉出池 WIF"} {
+		if !strings.Contains(m, want) {
+			t.Fatalf("second patrol lacks %q:\n%s", want, m)
+		}
+	}
+	e.chats.finish("ok", 0)
+	e.step()
+	// a signal run has no board; a fire on a locked coin is dropped
+	e.trades.mu.Lock()
+	e.trades.locked = map[string]bool{btc: true}
+	e.trades.mu.Unlock()
+	e.set(at(16, 20))
+	e.fire("surge", btc, "BTC 15 分钟内 +1.2%")
+	e.fire("surge", ena, "ENA 15 分钟内 +4.1%")
+	if its := e.s.pendingInbox(); len(its) != 1 || its[0].InstID != ena {
+		t.Fatalf("inbox %+v: the locked coin must not be in it", its)
+	}
+	e.set(at(16, 23))
+	e.step()
+	if m = e.chats.steers[2].msg; strings.Contains(m, "【监控池热榜】") || !strings.Contains(m, "只看上面触发信号的币") {
+		t.Fatalf("signal run brief:\n%s", m)
 	}
 }
 

@@ -121,6 +121,8 @@ type Trades interface {
 	Get(id int64) (realtrade.Proposal, error)
 	List(q realtrade.ListQuery) ([]realtrade.Proposal, error)
 	WakeContext(chat int64, insts []string, posID int64) string
+	// Locked reports whether the owner locked the instrument and side (the agent may not act on it).
+	Locked(instID, side string) bool
 }
 
 // Market is the price and fact-panel data a decision is stamped with and followed on.
@@ -128,6 +130,8 @@ type Market interface {
 	Known(instID string) bool
 	Quote(instID string) (px float64, ts int64, ok bool)
 	Values(instID string) (map[string]float64, bool)
+	// Pool is the active monitored pool now, each coin with its rank and fact-panel values.
+	Pool() []PoolCoin
 	// Bars1m are the confirmed 1m bars with from ≤ open time < to, oldest first.
 	Bars1m(instID string, from, to int64) []signals.Bar
 }
@@ -296,6 +300,10 @@ func (s *Service) OnFire(d signals.Delivery, sub signals.Subscription) {
 	}
 	n := 0
 	for _, h := range d.Hits {
+		// a coin the owner locked: the agent can do nothing with it, so a fire there would only spend a run
+		if s.trades.Locked(h.InstID, "long") || s.trades.Locked(h.InstID, "short") {
+			continue
+		}
 		text := h.Text
 		if text == "" {
 			text = d.Matched
