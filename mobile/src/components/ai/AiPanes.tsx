@@ -262,7 +262,8 @@ export function ProposalsPane({ onClose }: { onClose: () => void }) {
               {tg ? ` · Telegram ${tg.enabled ? tg.state || "已开启" : "未开启"}` : ""}
             </Text>
           ) : null}
-          {cfg.data ? <TradeControls cfg={cfg.data} mode={mode} /> : null}
+          {/* a config cached before the server had the switches (the query cache outlives app launches) has no `auto` yet */}
+          {cfg.data?.auto ? <TradeControls cfg={cfg.data} mode={mode} /> : null}
           {recent === null && !pending.length ? <Loading text="加载提议" /> : null}
           {recent !== null && !list.length ? <EmptyState icon="receipt-outline" text="还没有交易提议" /> : null}
           {list.map((p) => <ProposalCard key={p.id} p={p} />)}
