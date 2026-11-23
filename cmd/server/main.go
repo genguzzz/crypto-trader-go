@@ -161,6 +161,13 @@ func main() {
 		Spec: func(id string) (okxorder.Spec, bool) {
 			i, ok := eng.InstrumentMeta(id)
 			return okxorder.Spec{CtVal: i.CtVal, LotSz: i.LotSz, MinSz: i.MinSz, TickSz: i.TickSz, MaxLever: i.MaxLever}, ok
+		},
+		Noise: func(id string) (float64, bool) {
+			bars, err := eng.BarsTF(id, "1H", 15)
+			if err != nil {
+				return 0, false
+			}
+			return realtrade.ATRPct(bars, 14)
 		}})
 	if err != nil {
 		log.Fatal(err)

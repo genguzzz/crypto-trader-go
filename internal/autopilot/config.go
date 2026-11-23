@@ -45,8 +45,9 @@ type Config struct {
 }
 
 // RiskConfig is how the owner sizes and how much loss he accepts per idea (owner, 2026-11-11: a usual
-// entry is about 120 USDT margin at 8×, a stop up to 20% of the margin, holding and adding while the
-// location is good up to 300 USDT margin per coin). The trade limits (internal/realtrade) still apply.
+// entry is about 120 USDT margin at 8×, holding and adding while the location is good up to 300 USDT
+// margin per coin; 2026-11-23: a stop up to 60% of the margin — 20% put 8× stops at 2.5%, inside alt
+// noise, and they were wicked out). The trade limits (internal/realtrade) still apply.
 type RiskConfig struct {
 	// Style: "aggressive" proposes on a good location with medium conviction; "steady" only on strong conviction.
 	Style      string  `json:"style"`
@@ -310,7 +311,7 @@ func (c Config) normalize() (Config, error) {
 		return nil
 	}
 	if err := errors.Join(fdef(&c.Risk.MarginUSDT, 120, 10, 5000, "risk.marginUsdt"), def(&c.Risk.Leverage, 8, 1, 50, "risk.leverage"),
-		fdef(&c.Risk.MaxLossPct, 20, 1, 80, "risk.maxLossPct"), fdef(&c.Risk.MaxMarginUSDT, 300, 10, 20000, "risk.maxMarginUsdt")); err != nil {
+		fdef(&c.Risk.MaxLossPct, 60, 1, 80, "risk.maxLossPct"), fdef(&c.Risk.MaxMarginUSDT, 300, 10, 20000, "risk.maxMarginUsdt")); err != nil {
 		return c, err
 	}
 	if c.Risk.MaxMarginUSDT < c.Risk.MarginUSDT {

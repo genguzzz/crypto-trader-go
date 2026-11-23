@@ -29,14 +29,18 @@ type Limits struct {
 	MaxPending    int     `json:"maxPending"`    // proposals waiting at once
 	MaxAdds       int     `json:"maxAdds"`       // adds per position
 	LimitMaxMin   int     `json:"limitMaxMin"`   // the longest a limit order rests before the server cancels it, minutes
+	// MinStopATR: a new or tightened stop is at least this many 1H ATR(14) from the price (noise floor);
+	// 0 = off.
+	MinStopATR float64 `json:"minStopAtr"`
 }
 
 var DefaultLimits = Limits{Limits: okxorder.DefaultLimits, MaxOpen: 2, DailyLossUSDT: 50, MaxDriftPct: 1, ExpiryMin: 15, MaxPending: 5,
-	MaxAdds: 2, LimitMaxMin: 1440}
+	MaxAdds: 2, LimitMaxMin: 1440, MinStopATR: 1}
 
 // LimitsFromEnv reads CTG_TRADE_MIN_LEVERAGE, CTG_TRADE_MAX_LEVERAGE, CTG_TRADE_MIN_MARGIN, CTG_TRADE_MAX_MARGIN,
 // CTG_TRADE_MIN_RR, CTG_TRADE_MAX_OPEN, CTG_TRADE_DAILY_LOSS, CTG_TRADE_MAX_DRIFT_PCT, CTG_TRADE_EXPIRY_MIN,
-// CTG_TRADE_MAX_ADDS, CTG_TRADE_LIMIT_MAX_MIN (≤ 1440) and CTG_TRADE_MAX_LIMIT_PCT; unset or invalid keeps the default.
+// CTG_TRADE_MAX_ADDS, CTG_TRADE_LIMIT_MAX_MIN (≤ 1440), CTG_TRADE_MAX_LIMIT_PCT and CTG_TRADE_MIN_STOP_ATR;
+// unset or invalid keeps the default.
 func LimitsFromEnv() Limits {
 	l := DefaultLimits
 	f := func(k string, dst *float64) {
@@ -62,6 +66,7 @@ func LimitsFromEnv() Limits {
 	i("CTG_TRADE_LIMIT_MAX_MIN", &l.LimitMaxMin)
 	l.LimitMaxMin = min(l.LimitMaxMin, 1440)
 	f("CTG_TRADE_MAX_LIMIT_PCT", &l.MaxLimitPct)
+	f("CTG_TRADE_MIN_STOP_ATR", &l.MinStopATR)
 	return l
 }
 
@@ -84,6 +89,8 @@ type Options struct {
 	// Quote is the latest trade price and its time (ms); Spec the instrument's sizing metadata.
 	Quote func(instID string) (px float64, ts int64, ok bool)
 	Spec  func(instID string) (okxorder.Spec, bool)
+	// Noise is the instrument's 1H ATR(14) in % of its price (the MinStopATR floor); nil or !ok = unchecked.
+	Noise func(instID string) (atrPct float64, ok bool)
 	// PublicURL is the web origin for 🔍 links, e.g. https://ctg.gugenzzz.top.
 	PublicURL string
 	// Settle is how long after a live market execution the chat is told (the fill and its TP/SL then show

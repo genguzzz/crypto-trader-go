@@ -275,7 +275,7 @@ func (s *Service) brief(cfg Config, in briefInput) string {
 	b.WriteString("2. 每个认真看过的币都用 desk_journal 记一笔决策（open / add / reduce / close / adjust / hold / watch / skip），写清方向、把握、" +
 		"一句话理由、关键价位和失效条件——包括决定不做的，这是以后复盘的依据。\n" +
 		"3. 要交易只能 propose_trade（" + approval + "），并把 proposalId 写进那笔 desk_journal。" + proposeRule(cfg.Risk) + "\n" +
-		"   已有仓位和挂单同样要管：改止盈止损用 adjust，减仓 / 平仓用 reduce / close，撤掉或修改自己的限价挂单用 cancel / amend——都通过 propose_trade；该动就提，不要只在文字里建议。带 🔒 的是主人锁定的仓位，不要对它提议任何操作。\n" +
+		"   已有仓位和挂单同样要管：改止盈止损用 adjust（按上面的移动止损规则，不要每次信号都收紧），减仓 / 平仓用 reduce / close，撤掉或修改自己的限价挂单用 cancel / amend——都通过 propose_trade；该动就提，不要只在文字里建议。带 🔒 的是主人锁定的仓位，不要对它提议任何操作。\n" +
 		"4. 还差一步的用 subscribe_signal 盯具体条件；【待复盘】里的用 desk_review 写结论；能复用的经验用 desk_remember 存成长期记忆（每轮都会带给你，宁少勿滥）。\n" +
 		"5. 回答从简：先一句结论，再每个币一两行。\n" +
 		"（这是自动触发的交易台运行，主人此刻不一定在看。" + footer + "）")
@@ -293,7 +293,10 @@ func riskText(r RiskConfig) string {
 	}
 	return fmt.Sprintf("\n【主人的风险风格】%s。\n"+
 		"· 仓位：一笔通常保证金约 %s U、%d×（名义约 %s U）。\n"+
-		"· 止损：最多亏保证金的 %s%%（%d× 下约 %s%% 的价格距离，约 %s U）；按结构放在失效位外，结构止损更远就降杠杆或减保证金，不要硬放宽。\n"+
+		"· 止损位置先看结构和波动：放在失效位（摆动高/低点、清算密集区）外，再留 0.5×1H ATR 缓冲；离入场至少 1.5×1H ATR（不到 1×1H ATR 的止损服务器直接拒绝），山寨币通常 4–10%%。"+
+		"最多亏保证金的 %s%%（%d× 下约 %s%% 的价格距离，约 %s U）是上限不是目标：结构止损超过它就减保证金或降杠杆，再不行就不做——绝不为了凑上限把止损挪进噪音区。\n"+
+		"· 移动止损（adjust）：浮盈不到 1.5R、还没在 TP1 减过仓之前，不动止损；之后只移到最近一个 1H 摆动高/低点外 + 0.5×1H ATR，且离现价不少于 1.5×1H ATR。"+
+		"急涨急跌、放量下杀这类信号触发时最容易插针：要锁利就用 reduce 先落袋一部分，不要把剩下仓位的止损贴到价格边上；同一仓位一根 1H K 线内最多收紧一次。\n"+
 		"· 扛单：位置好、逻辑没被破坏时可以扛住浮亏，不必一回撤就砍；可以在更好的价格补仓（add），同一个币含补仓的保证金合计不超过 %s U，"+
 		"补仓后按新均价重算止损，整体亏损仍不超过整体保证金的 %s%%。逻辑被破坏（失效条件触发）就认错，不补仓摊平。\n",
 		style, fmtNum(r.MarginUSDT), r.Leverage, fmtNum(r.MarginUSDT*float64(r.Leverage)),

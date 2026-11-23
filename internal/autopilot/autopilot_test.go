@@ -1106,7 +1106,7 @@ func TestRestartClosesInterruptedRun(t *testing.T) {
 func TestRiskStyleInBrief(t *testing.T) {
 	c := DefaultConfig()
 	got := riskText(c.Risk) + proposeRule(c.Risk)
-	for _, want := range []string{"略偏激进", "120 U、8×", "960 U", "保证金的 20%", "2.5% 的价格距离", "24 U", "不超过 300 U", "盈亏比 ≥ 1.5"} {
+	for _, want := range []string{"略偏激进", "120 U、8×", "960 U", "保证金的 60%", "7.5% 的价格距离", "1.5×1H ATR", "浮盈不到 1.5R", "72 U", "不超过 300 U", "盈亏比 ≥ 1.5"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}

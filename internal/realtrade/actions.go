@@ -13,6 +13,7 @@ import (
 
 	"crypto-trader-go/internal/okxacct"
 	"crypto-trader-go/internal/okxorder"
+	"crypto-trader-go/internal/store"
 )
 
 // ---------- creation ----------
@@ -142,6 +143,9 @@ func (s *Service) propose(ctx context.Context, in ProposeInput) (Proposal, error
 	if err != nil {
 		return Proposal{}, err
 	}
+	if err := s.noiseFloor(a, b, px); err != nil {
+		return Proposal{}, err
+	}
 	if err := s.policy(ctx, a, b.pos, b.posID, 0, true); err != nil {
 		return Proposal{}, err
 	}
@@ -178,6 +182,48 @@ func (s *Service) store(in ProposeInput, px float64, b built, z okxorder.Sizing,
 	}
 	s.audit(id, "created", fmt.Sprintf("%s · %s", sourceText(p), summary(p)), sourceText(p))
 	return p, nil
+}
+
+// noiseFloor refuses a stop placed inside the instrument's normal noise: closer to the entry (open / add)
+// or the current price (adjust) than MinStopATR × 1H ATR(14). An adjust is only checked when it moves
+// the stop closer, so changing the target alone keeps working on a position whose stop is already tight.
+// Checked at creation only: an approved proposal is not refused because volatility rose meanwhile.
+func (s *Service) noiseFloor(a action, b built, px float64) error {
+	k := s.opts.Limits.MinStopATR
+	if k <= 0 || s.opts.Noise == nil || !(b.sl > 0) || (a.Kind != KindOpen && a.Kind != KindAdd && a.Kind != KindAdjust) {
+		return nil
+	}
+	if a.Kind == KindAdjust && !tightens(a.Side, b.sl, b.pos) {
+		return nil
+	}
+	atr, ok := s.opts.Noise(a.InstID)
+	if !ok || !(atr > 0) {
+		return nil
+	}
+	ref := px
+	if a.OrdType == okxorder.Limit && b.px > 0 {
+		ref = b.px
+	}
+	dist := math.Abs(ref-b.sl) / ref * 100
+	if need := k * atr; dist < need-1e-9 {
+		return fmt.Errorf("the stop %s is %.2f%% from %s, inside the normal noise: 1H ATR(14) of %s is %.2f%%, so a stop needs at least %.2f%% (%g× ATR). "+
+			"Put it beyond the structure at least that far, use less margin or leverage, or keep the current stop (protect profit with a reduce instead)",
+			okxorder.FormatPx(b.sl), dist, okxorder.FormatPx(ref), a.InstID, atr, need, k)
+	}
+	return nil
+}
+
+// tightens reports whether sl is closer to the price than every full stop the position has (true when it has none).
+func tightens(side string, sl float64, pos okxacct.Position) bool {
+	for _, t := range pos.SL {
+		if !t.Full || !(t.Px > 0) {
+			continue
+		}
+		if (side == "long" && sl <= t.Px) || (side == "short" && sl >= t.Px) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) freshQuote(inst string) (float64, error) {
@@ -577,4 +623,23 @@ func (s *Service) restingIn(inst string) []Proposal {
 		}
 	}
 	return out
+}
+
+// ATRPct is the mean true range of the last n bars (oldest first) in % of the last close; false with
+// fewer than n+1 bars.
+func ATRPct(bars []store.Bar, n int) (float64, bool) {
+	if n < 1 || len(bars) < n+1 {
+		return 0, false
+	}
+	bars = bars[len(bars)-n-1:]
+	sum := 0.0
+	for i := 1; i < len(bars); i++ {
+		b, prev := bars[i], bars[i-1].C
+		sum += math.Max(b.H, prev) - math.Min(b.L, prev)
+	}
+	last := bars[len(bars)-1].C
+	if !(last > 0) {
+		return 0, false
+	}
+	return sum / float64(n) / last * 100, true
 }

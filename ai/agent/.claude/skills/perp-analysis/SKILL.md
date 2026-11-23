@@ -34,7 +34,7 @@ Consider both setups: continuation with the move, and a fade against an extended
 Take the side with the stronger evidence. Do not stand aside just because both sides have points; stand aside only for a concrete reason (event within 24 h, no structural edge, reward/risk < 1.5), and give the plan that applies once the trigger hits.
 
 Plan rules:
-- Continuation: stop beyond the nearest swing point or liquidation cluster, roughly 1.5 × 4H ATR. Reversal: stop just beyond the extreme (wick high/low + ~0.5 ATR of the signal timeframe); tighter stop, larger reward/risk. State the distance either way.
+- Continuation: stop beyond the nearest swing point or liquidation cluster, roughly 1.5 × 4H ATR. Reversal: stop just beyond the extreme (wick high/low + ~0.5 × 1H ATR). Either way at least 1.5 × 1H ATR from the entry — tighter stops are wicked out, and the server refuses one within 1 × 1H ATR. State the distance either way.
 - TP1 at the next support/resistance or liquidation band with reward/risk ≥ 1.5; TP2 at the next one.
 - Leverage = the owner's preference from his notes. If liquidation would sit closer than 2 × the stop distance, or danger ≥ 50 / control ≥ 60, add one sentence after the plan (smaller size, wick risk); the plan itself keeps his leverage.
 - Risk per trade ≤ 1% of equity. A red event (hack, delisting, large unlock, FOMC/CPI within 24 h) goes first and usually means stand aside.
